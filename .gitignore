@@ -1,0 +1,50 @@
+﻿# Unreal Engine Ignore Rules
+# ===========================
+
+# Unreal Engine generated directories
+[Bb]inaries/
+[Dd]erivedDataCache/
+[Ii]ntermediate/
+[Ss]aved/
+Build/
+Package/
+Staged/
+ArchivedBuilds/
+
+# Plugins generated directories
+Plugins/*/[Bb]inaries/
+Plugins/*/[Dd]erivedDataCache/
+Plugins/*/[Ii]ntermediate/
+Plugins/*/[Ss]aved/
+
+# Visual Studio / Rider / IDE solution files
+.vs/
+.idea/
+.vscode/
+*.sln
+*.slnx
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.VC.db-shm
+*.VC.db-wal
+
+# Xcode / macOS IDE files
+*.xcodeproj
+*.xcworkspace
+
+# CMake files
+CMakeLists.txt
+CMakeCache.txt
+CMakeFiles/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Crash reports
+CrashReportClient/
