@@ -11,9 +11,12 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
 #include "EbbingRainbow.h"
+#include "DrawDebugHelpers.h"
 
 AEbbingRainbowCharacter::AEbbingRainbowCharacter()
 {
+	PrimaryActorTick.bCanEverTick = true;
+
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 		
@@ -26,16 +29,17 @@ AEbbingRainbowCharacter::AEbbingRainbowCharacter()
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f);
 
-	// Note: For faster iteration times these variables, and many more, can be tweaked in the Character Blueprint
-	// instead of recompiling to adjust them
-	GetCharacterMovement()->JumpZVelocity = 500.f;
+	GetCharacterMovement()->JumpZVelocity = 550.f;
 	GetCharacterMovement()->AirControl = 0.35f;
-	GetCharacterMovement()->MaxWalkSpeed = 500.f;
+	GetCharacterMovement()->MaxWalkSpeed = JogSpeed;
 	GetCharacterMovement()->MinAnalogWalkSpeed = 20.f;
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 	GetCharacterMovement()->BrakingDecelerationFalling = 1500.0f;
 
-	// Create a camera boom (pulls in towards the player if there is a collision)
+	DefaultGravityScale = GetCharacterMovement()->GravityScale;
+	DefaultAirControl = GetCharacterMovement()->AirControl;
+
+	// Create a camera boom
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 400.0f;
@@ -45,66 +49,171 @@ AEbbingRainbowCharacter::AEbbingRainbowCharacter()
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+}
 
-	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
-	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
+void AEbbingRainbowCharacter::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (bIsClimbing)
+	{
+		UpdateClimbingMovement(DeltaTime);
+	}
+	else
+	{
+		// 空中运动模式检查
+		if (GetCharacterMovement()->IsFalling())
+		{
+			// 1. 空中且有前向意图时，检测是否贴近可攀爬墙壁
+			FHitResult WallHit;
+			if (CheckClimbableWall(WallHit))
+			{
+				// 角色处于空中向前贴墙，自动吸附开始攀爬
+				StartClimbing(WallHit);
+				return;
+			}
+
+			// 2. 缓降中的物理维持
+			if (bIsGliding)
+			{
+				FVector CurrentVel = GetCharacterMovement()->Velocity;
+
+				// 垂直下沉速度平缓限制：减缓下降速度（浮力托举）
+				if (CurrentVel.Z < GlideMaxSinkSpeed)
+				{
+					CurrentVel.Z = FMath::FInterpTo(CurrentVel.Z, GlideMaxSinkSpeed, DeltaTime, 8.0f);
+				}
+
+				// 水平方向平移处理：
+				// 没有按 WASD 时：不会有平移，只会竖直下降
+				// 按了 WASD 时：沿输入方向缓降 + 移动
+				const FVector InputVector = GetLastMovementInputVector();
+				FVector CurrentHorizontalVel = FVector(CurrentVel.X, CurrentVel.Y, 0.0f);
+
+				if (InputVector.IsNearlyZero(0.01f))
+				{
+					// 无 WASD 输入：水平速度迅速制动归零，保持纯竖直下降
+					CurrentHorizontalVel = FMath::VInterpTo(CurrentHorizontalVel, FVector::ZeroVector, DeltaTime, GlideBrakingFriction);
+				}
+				else
+				{
+					// 有 WASD 输入：平滑加速至目标平移速度
+					const FVector TargetHorizontalVel = InputVector.GetSafeNormal() * GlideHorizontalMoveSpeed;
+					CurrentHorizontalVel = FMath::VInterpTo(CurrentHorizontalVel, TargetHorizontalVel, DeltaTime, 6.0f);
+				}
+
+				CurrentVel.X = CurrentHorizontalVel.X;
+				CurrentVel.Y = CurrentHorizontalVel.Y;
+
+				GetCharacterMovement()->Velocity = CurrentVel;
+
+				// 贴地检测：接近地面自动收起缓降
+				FHitResult GroundHit;
+				FCollisionQueryParams Params;
+				Params.AddIgnoredActor(this);
+				const FVector Start = GetActorLocation();
+				const FVector End = Start - FVector(0.0f, 0.0f, 40.0f);
+				if (GetWorld()->LineTraceSingleByChannel(GroundHit, Start, End, ECC_Visibility, Params))
+				{
+					StopGliding();
+				}
+			}
+		}
+	}
+}
+
+void AEbbingRainbowCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	if (bIsGliding)
+	{
+		StopGliding();
+	}
+
+	if (bIsClimbing)
+	{
+		StopClimbing();
+	}
+}
+
+void AEbbingRainbowCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
+{
+	Super::OnMovementModeChanged(PrevMovementMode, PreviousCustomMode);
+
+	if (PrevMovementMode == MOVE_Falling && !GetCharacterMovement()->IsFalling() && bIsGliding)
+	{
+		StopGliding();
+	}
 }
 
 void AEbbingRainbowCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
-	// Set up action bindings
-	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent)) {
-		
-		// Jumping
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+	{
+		// Jumping / Gliding / WallJump
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &AEbbingRainbowCharacter::DoJumpStart);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &AEbbingRainbowCharacter::DoJumpEnd);
 
 		// Moving
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AEbbingRainbowCharacter::Move);
 		EnhancedInputComponent->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &AEbbingRainbowCharacter::Look);
-
-		// Looking
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AEbbingRainbowCharacter::Look);
+
+		// Sprint (按住 Shift 疾跑，松开恢复)
+		if (SprintAction)
+		{
+			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AEbbingRainbowCharacter::StartSprint);
+			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Triggered, this, &AEbbingRainbowCharacter::StartSprint);
+			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AEbbingRainbowCharacter::StopSprint);
+			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Canceled, this, &AEbbingRainbowCharacter::StopSprint);
+		}
 	}
 	else
 	{
-		UE_LOG(LogEbbingRainbow, Error, TEXT("'%s' Failed to find an Enhanced Input component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
+		UE_LOG(LogEbbingRainbow, Error, TEXT("'%s' Failed to find an Enhanced Input component!"), *GetNameSafe(this));
 	}
+
+	// 原生按键兜底绑定（双保险：确保无论IMC是否配置，按住LeftShift或RightShift即可疾跑，松开即恢复）
+	PlayerInputComponent->BindKey(EKeys::LeftShift, IE_Pressed, this, &AEbbingRainbowCharacter::StartSprint);
+	PlayerInputComponent->BindKey(EKeys::LeftShift, IE_Released, this, &AEbbingRainbowCharacter::StopSprint);
+	PlayerInputComponent->BindKey(EKeys::RightShift, IE_Pressed, this, &AEbbingRainbowCharacter::StartSprint);
+	PlayerInputComponent->BindKey(EKeys::RightShift, IE_Released, this, &AEbbingRainbowCharacter::StopSprint);
 }
 
 void AEbbingRainbowCharacter::Move(const FInputActionValue& Value)
 {
-	// input is a Vector2D
 	FVector2D MovementVector = Value.Get<FVector2D>();
-
-	// route the input
 	DoMove(MovementVector.X, MovementVector.Y);
 }
 
 void AEbbingRainbowCharacter::Look(const FInputActionValue& Value)
 {
-	// input is a Vector2D
 	FVector2D LookAxisVector = Value.Get<FVector2D>();
-
-	// route the input
 	DoLook(LookAxisVector.X, LookAxisVector.Y);
 }
 
 void AEbbingRainbowCharacter::DoMove(float Right, float Forward)
 {
+	if (bIsClimbing)
+	{
+		// 处于攀爬状态：沿当前墙面的切向平面二维移动
+		const FVector ClimbUp = FVector::UpVector;
+		const FVector ClimbRight = FVector::CrossProduct(WallNormal, FVector::UpVector).GetSafeNormal();
+
+		const FVector DesiredClimbVelocity = (ClimbUp * Forward + ClimbRight * Right) * ClimbSpeed;
+		GetCharacterMovement()->Velocity = DesiredClimbVelocity;
+		return;
+	}
+
 	if (GetController() != nullptr)
 	{
-		// find out which way is forward
 		const FRotator Rotation = GetController()->GetControlRotation();
 		const FRotator YawRotation(0, Rotation.Yaw, 0);
 
-		// get forward vector
 		const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-
-		// get right vector 
 		const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
 
-		// add movement 
 		AddMovementInput(ForwardDirection, Forward);
 		AddMovementInput(RightDirection, Right);
 	}
@@ -114,7 +223,6 @@ void AEbbingRainbowCharacter::DoLook(float Yaw, float Pitch)
 {
 	if (GetController() != nullptr)
 	{
-		// add yaw and pitch input to controller
 		AddControllerYawInput(Yaw);
 		AddControllerPitchInput(Pitch);
 	}
@@ -122,12 +230,263 @@ void AEbbingRainbowCharacter::DoLook(float Yaw, float Pitch)
 
 void AEbbingRainbowCharacter::DoJumpStart()
 {
-	// signal the character to jump
+	// 1. 如果处于爬墙状态：按空格触发向后蹬墙跳
+	if (bIsClimbing)
+	{
+		PerformWallJump();
+		return;
+	}
+
+	// 2. 如果处于空中下落状态：点按空格进入缓降，再次点按空格退出变回自由落体
+	if (GetCharacterMovement()->IsFalling())
+	{
+		if (bIsGliding)
+		{
+			StopGliding(); // 再次点按空格：退出缓降，变回自由落体
+			return;
+		}
+		else if (CanGlide())
+		{
+			StartGliding(); // 点按空格：进入缓降状态，减缓下降速度
+			return;
+		}
+	}
+
+	// 3. 正常地面起跳
 	Jump();
 }
 
 void AEbbingRainbowCharacter::DoJumpEnd()
 {
-	// signal the character to stop jumping
 	StopJumping();
+}
+
+// -------------------------------------------------------------
+// 疾跑 (Hold to Sprint)
+// -------------------------------------------------------------
+void AEbbingRainbowCharacter::StartSprint()
+{
+	if (!bIsSprinting)
+	{
+		bIsSprinting = true;
+		if (!bIsClimbing && !bIsGliding)
+		{
+			GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+		}
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(1001, 1.5f, FColor::Green, FString::Printf(TEXT("[Shift Active] Sprinting -> Speed: %.0f"), GetCharacterMovement()->MaxWalkSpeed));
+		}
+	}
+}
+
+void AEbbingRainbowCharacter::StopSprint()
+{
+	if (bIsSprinting)
+	{
+		bIsSprinting = false;
+		if (!bIsClimbing && !bIsGliding)
+		{
+			GetCharacterMovement()->MaxWalkSpeed = JogSpeed;
+		}
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(1001, 1.5f, FColor::Yellow, FString::Printf(TEXT("[Shift Released] Normal -> Speed: %.0f"), GetCharacterMovement()->MaxWalkSpeed));
+		}
+	}
+}
+
+// -------------------------------------------------------------
+// 滑翔 (Gliding)
+// -------------------------------------------------------------
+bool AEbbingRainbowCharacter::CanGlide() const
+{
+	if (!GetCharacterMovement()->IsFalling() || bIsClimbing)
+	{
+		return false;
+	}
+
+	// 离地高度检查
+	FHitResult GroundHit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	const FVector Start = GetActorLocation();
+	const FVector End = Start - FVector(0.0f, 0.0f, MinGlideHeightAboveGround);
+
+	if (GetWorld()->LineTraceSingleByChannel(GroundHit, Start, End, ECC_Visibility, Params))
+	{
+		return false; // 离地过近，不触发滑翔
+	}
+
+	return true;
+}
+
+void AEbbingRainbowCharacter::StartGliding()
+{
+	if (bIsGliding) return;
+
+	bIsGliding = true;
+	GetCharacterMovement()->GravityScale = GlideGravityScale;
+	GetCharacterMovement()->AirControl = GlideAirControl;
+
+	// 展开缓降瞬间，如果正在快速下坠，将垂直速度平稳缓冲至 GlideMaxSinkSpeed
+	FVector CurrentVel = GetCharacterMovement()->Velocity;
+	if (CurrentVel.Z < GlideMaxSinkSpeed)
+	{
+		CurrentVel.Z = GlideMaxSinkSpeed;
+	}
+	GetCharacterMovement()->Velocity = CurrentVel;
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(1002, 2.0f, FColor::Cyan, TEXT("[Glide Active] Slow Fall - Space to Drop, WASD to Move"));
+	}
+}
+
+void AEbbingRainbowCharacter::StopGliding()
+{
+	if (!bIsGliding) return;
+
+	bIsGliding = false;
+	GetCharacterMovement()->GravityScale = DefaultGravityScale;
+	GetCharacterMovement()->AirControl = DefaultAirControl;
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(1002, 1.5f, FColor::Orange, TEXT("[Glide Cancelled] Free Falling"));
+	}
+}
+
+// -------------------------------------------------------------
+// 爬墙 (Climbing)
+// -------------------------------------------------------------
+bool AEbbingRainbowCharacter::CheckClimbableWall(FHitResult& OutHit)
+{
+	const FVector Start = GetActorLocation();
+	const FVector ForwardVector = GetActorForwardVector();
+	const FVector End = Start + ForwardVector * ClimbTraceDistance;
+
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+
+	FCollisionShape SphereShape = FCollisionShape::MakeSphere(ClimbTraceRadius);
+	const bool bHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_WorldStatic, SphereShape, Params);
+
+	if (bHit)
+	{
+		// 判定表面法线：垂直墙体法线 Z 接近 0
+		const float AbsZ = FMath::Abs(OutHit.ImpactNormal.Z);
+		if (AbsZ < 0.25f)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void AEbbingRainbowCharacter::StartClimbing(const FHitResult& WallHit)
+{
+	if (bIsClimbing) return;
+
+	if (bIsGliding)
+	{
+		StopGliding();
+	}
+
+	bIsClimbing = true;
+	WallNormal = WallHit.ImpactNormal;
+	WallLocation = WallHit.ImpactPoint;
+
+	// 切换为 Flying 模式实现沿墙面任意方向攀爬且不受重力下坠
+	GetCharacterMovement()->SetMovementMode(MOVE_Flying);
+	GetCharacterMovement()->Velocity = FVector::ZeroVector;
+
+	// 角色朝向正对墙面
+	const FRotator TargetRot = (-WallNormal).Rotation();
+	SetActorRotation(FRotator(0.0f, TargetRot.Yaw, 0.0f));
+}
+
+void AEbbingRainbowCharacter::StopClimbing()
+{
+	if (!bIsClimbing) return;
+
+	bIsClimbing = false;
+	WallNormal = FVector::ZeroVector;
+	GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+}
+
+void AEbbingRainbowCharacter::PerformWallJump()
+{
+	const FVector JumpDirection = WallNormal;
+	StopClimbing();
+
+	const FVector LaunchVelocity = JumpDirection * WallJumpHorizontalImpulse + FVector::UpVector * WallJumpVerticalImpulse;
+	LaunchCharacter(LaunchVelocity, true, true);
+
+	// 转身背对原墙面
+	SetActorRotation(JumpDirection.Rotation());
+}
+
+void AEbbingRainbowCharacter::UpdateClimbingMovement(float DeltaTime)
+{
+	// 持续向前方检测墙壁，确保没有脱离墙壁
+	FHitResult Hit;
+	const FVector Start = GetActorLocation();
+	const FVector End = Start - WallNormal * (WallOffset + 20.0f);
+
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+
+	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params))
+	{
+		// 更新法线与位置
+		WallNormal = Hit.ImpactNormal;
+		WallLocation = Hit.ImpactPoint;
+
+		// 约束角色贴合墙面间距
+		const FVector DesiredLocation = WallLocation + WallNormal * WallOffset;
+		const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), FVector(DesiredLocation.X, DesiredLocation.Y, GetActorLocation().Z), DeltaTime, 10.0f);
+		SetActorLocation(NewLocation, true);
+
+		// 约束角色面朝墙壁
+		const FRotator TargetRot = (-WallNormal).Rotation();
+		SetActorRotation(FRotator(0.0f, TargetRot.Yaw, 0.0f));
+
+		// 检查登顶（Ledge Mantle 检测）：头顶上方无碰撞且上方前向下方有水平地面
+		const FVector HeadStart = GetActorLocation() + FVector(0.0f, 0.0f, 70.0f);
+		const FVector HeadForward = HeadStart - WallNormal * (WallOffset + 30.0f);
+		FHitResult HeadHit;
+		if (!GetWorld()->LineTraceSingleByChannel(HeadHit, HeadStart, HeadForward, ECC_WorldStatic, Params))
+		{
+			// 前方头部无阻挡，向下探测是否有平台
+			const FVector LedgeDownEnd = HeadForward - FVector(0.0f, 0.0f, 60.0f);
+			FHitResult LedgeHit;
+			if (GetWorld()->LineTraceSingleByChannel(LedgeHit, HeadForward, LedgeDownEnd, ECC_WorldStatic, Params))
+			{
+				if (LedgeHit.ImpactNormal.Z > 0.7f)
+				{
+					// 到达墙顶水平平台，登顶翻越
+					SetActorLocation(LedgeHit.ImpactPoint + FVector(0.0f, 0.0f, 96.0f));
+					StopClimbing();
+					GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+					return;
+				}
+			}
+		}
+	}
+	else
+	{
+		// 失去墙体接触，脱离攀爬
+		StopClimbing();
+	}
+}
+
+EOpenWorldMovementMode AEbbingRainbowCharacter::GetOpenWorldMovementMode() const
+{
+	if (bIsClimbing) return EOpenWorldMovementMode::Climbing;
+	if (bIsGliding) return EOpenWorldMovementMode::Gliding;
+	if (GetCharacterMovement()->IsFalling()) return EOpenWorldMovementMode::Falling;
+	if (bIsSprinting) return EOpenWorldMovementMode::Sprinting;
+	return EOpenWorldMovementMode::Walking;
 }

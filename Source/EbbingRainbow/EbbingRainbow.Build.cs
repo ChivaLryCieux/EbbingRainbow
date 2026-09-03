@@ -18,7 +18,10 @@ public class EbbingRainbow : ModuleRules
 			"StateTreeModule",
 			"GameplayStateTreeModule",
 			"UMG",
-			"Slate"
+			"Slate",
+			"MotionWarping",
+			"PoseSearch",
+			"MotionTrajectory"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
