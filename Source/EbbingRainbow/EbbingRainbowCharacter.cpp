@@ -12,6 +12,20 @@
 #include "InputActionValue.h"
 #include "EbbingRainbow.h"
 #include "DrawDebugHelpers.h"
+#include "Components/StaticMeshComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimSingleNodeInstance.h"
+#include "TimerManager.h"
+
+struct FAimContext
+{
+	bool bIsAiming = false;
+	TWeakObjectPtr<UStaticMeshComponent> PistolMesh = nullptr;
+	FTimerHandle EquipTimerHandle;
+};
+static TMap<TWeakObjectPtr<const AEbbingRainbowCharacter>, FAimContext> GAimContextMap;
 
 AEbbingRainbowCharacter::AEbbingRainbowCharacter()
 {
@@ -179,6 +193,10 @@ void AEbbingRainbowCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 	PlayerInputComponent->BindKey(EKeys::LeftShift, IE_Released, this, &AEbbingRainbowCharacter::StopSprint);
 	PlayerInputComponent->BindKey(EKeys::RightShift, IE_Pressed, this, &AEbbingRainbowCharacter::StartSprint);
 	PlayerInputComponent->BindKey(EKeys::RightShift, IE_Released, this, &AEbbingRainbowCharacter::StopSprint);
+
+	// 原生按键绑定：按住鼠标右键掏枪瞄准，松开收枪取消瞄准
+	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AEbbingRainbowCharacter::StartAiming);
+	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &AEbbingRainbowCharacter::StopAiming);
 }
 
 void AEbbingRainbowCharacter::Move(const FInputActionValue& Value)
@@ -325,6 +343,11 @@ void AEbbingRainbowCharacter::StartGliding()
 {
 	if (bIsGliding) return;
 
+	if (IsAiming())
+	{
+		StopAiming();
+	}
+
 	bIsGliding = true;
 	GetCharacterMovement()->GravityScale = GlideGravityScale;
 	GetCharacterMovement()->AirControl = GlideAirControl;
@@ -388,6 +411,11 @@ bool AEbbingRainbowCharacter::CheckClimbableWall(FHitResult& OutHit)
 void AEbbingRainbowCharacter::StartClimbing(const FHitResult& WallHit)
 {
 	if (bIsClimbing) return;
+
+	if (IsAiming())
+	{
+		StopAiming();
+	}
 
 	if (bIsGliding)
 	{
@@ -489,4 +517,79 @@ EOpenWorldMovementMode AEbbingRainbowCharacter::GetOpenWorldMovementMode() const
 	if (GetCharacterMovement()->IsFalling()) return EOpenWorldMovementMode::Falling;
 	if (bIsSprinting) return EOpenWorldMovementMode::Sprinting;
 	return EOpenWorldMovementMode::Walking;
+}
+
+// -------------------------------------------------------------
+// 持枪与瞄准 (Pistol Aiming)
+// -------------------------------------------------------------
+void AEbbingRainbowCharacter::StartAiming()
+{
+	if (bIsClimbing || bIsGliding)
+	{
+		return;
+	}
+
+	if (!bIsAiming)
+	{
+		bIsAiming = true;
+
+		// 瞄准行走移动速度（保持角色原本朝向独立）
+		GetCharacterMovement()->MaxWalkSpeed = 350.0f;
+
+		// 确保手枪道具已创建并挂载到右手
+		FAimContext& Context = GAimContextMap.FindOrAdd(this);
+		if (!Context.PistolMesh.IsValid())
+		{
+			UStaticMeshComponent* PistolComp = NewObject<UStaticMeshComponent>(this, TEXT("PistolPropMesh"));
+			if (PistolComp)
+			{
+				PistolComp->RegisterComponent();
+				PistolComp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, TEXT("hand_r"));
+				
+				UStaticMesh* BaseMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+				if (BaseMesh)
+				{
+					PistolComp->SetStaticMesh(BaseMesh);
+					PistolComp->SetRelativeLocation(FVector(10.0f, 4.0f, -2.0f));
+					PistolComp->SetRelativeRotation(FRotator(0.0f, 90.0f, 0.0f));
+					PistolComp->SetRelativeScale3D(FVector(0.18f, 0.05f, 0.12f));
+				}
+				PistolComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				Context.PistolMesh = PistolComp;
+			}
+		}
+
+		if (Context.PistolMesh.IsValid())
+		{
+			Context.PistolMesh->SetVisibility(true);
+		}
+
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(1003, 2.0f, FColor::Emerald, TEXT("[Aiming Active] BS_Pistol_Locomotion Engaged"));
+		}
+	}
+}
+
+void AEbbingRainbowCharacter::StopAiming()
+{
+	if (bIsAiming)
+	{
+		bIsAiming = false;
+
+		// 恢复常规移动速度
+		GetCharacterMovement()->MaxWalkSpeed = bIsSprinting ? SprintSpeed : JogSpeed;
+
+		// 收枪：隐藏右手手枪模型
+		FAimContext* ContextPtr = GAimContextMap.Find(this);
+		if (ContextPtr && ContextPtr->PistolMesh.IsValid())
+		{
+			ContextPtr->PistolMesh->SetVisibility(false);
+		}
+
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(1003, 1.5f, FColor::Orange, TEXT("[Aiming Ended] Unarmed Restored"));
+		}
+	}
 }

@@ -253,6 +253,26 @@ protected:
 	FVector WallLocation = FVector::ZeroVector;
 
 	// -------------------------------------------------------------
+	// 开放世界 3C 功能：手枪瞄准与掏枪 (Pistol Aiming)
+	// -------------------------------------------------------------
+public:
+	/** 按住右键开始掏枪瞄准 */
+	UFUNCTION(BlueprintCallable, Category="Combat")
+	void StartAiming();
+
+	/** 松开右键收枪取消瞄准 */
+	UFUNCTION(BlueprintCallable, Category="Combat")
+	void StopAiming();
+
+	/** 是否正在瞄准 */
+	UFUNCTION(BlueprintPure, Category="Combat")
+	bool IsAiming() const { return bIsAiming; }
+
+protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+	bool bIsAiming = false;
+
+	// -------------------------------------------------------------
 	// 综合状态与蓝图事件通知
 	// -------------------------------------------------------------
 public:
