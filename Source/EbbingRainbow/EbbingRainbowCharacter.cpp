@@ -18,6 +18,9 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSingleNodeInstance.h"
 #include "TimerManager.h"
+#include "Motorcycle/MotorcyclePawn.h"
+#include "EngineUtils.h"
+#include "Engine/OverlapResult.h"
 
 struct FAimContext
 {
@@ -182,11 +185,20 @@ void AEbbingRainbowCharacter::SetupPlayerInputComponent(UInputComponent* PlayerI
 			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AEbbingRainbowCharacter::StopSprint);
 			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Canceled, this, &AEbbingRainbowCharacter::StopSprint);
 		}
+
+		// Interact (按 F 交互/骑乘摩托车)
+		if (InteractAction)
+		{
+			EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &AEbbingRainbowCharacter::DoInteract);
+		}
 	}
 	else
 	{
 		UE_LOG(LogEbbingRainbow, Error, TEXT("'%s' Failed to find an Enhanced Input component!"), *GetNameSafe(this));
 	}
+
+	// 原生按键绑定：按 F 触发交互（靠近摩托车按 F 上车）
+	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &AEbbingRainbowCharacter::DoInteract);
 
 	// 原生按键兜底绑定（双保险：确保无论IMC是否配置，按住LeftShift或RightShift即可疾跑，松开即恢复）
 	PlayerInputComponent->BindKey(EKeys::LeftShift, IE_Pressed, this, &AEbbingRainbowCharacter::StartSprint);
@@ -277,6 +289,78 @@ void AEbbingRainbowCharacter::DoJumpStart()
 void AEbbingRainbowCharacter::DoJumpEnd()
 {
 	StopJumping();
+}
+
+void AEbbingRainbowCharacter::DoInteract()
+{
+	// 查找并尝试骑乘附近可交互的摩托车
+	if (AMotorcyclePawn* NearbyMotorcycle = FindNearbyMotorcycle(280.0f))
+	{
+		NearbyMotorcycle->MountRider(this);
+	}
+}
+
+AMotorcyclePawn* AEbbingRainbowCharacter::FindNearbyMotorcycle(float SearchRadius) const
+{
+	if (!GetWorld())
+	{
+		return nullptr;
+	}
+
+	const FVector MyLoc = GetActorLocation();
+	AMotorcyclePawn* BestMotorcycle = nullptr;
+	float ClosestDistSq = MAX_flt;
+
+	// 1. 优先通过空间重叠通道探测摩托车
+	TArray<FOverlapResult> Overlaps;
+	FCollisionShape SphereShape = FCollisionShape::MakeSphere(SearchRadius);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(FindNearbyMotorcycle), false, this);
+
+	GetWorld()->OverlapMultiByChannel(
+		Overlaps,
+		MyLoc,
+		FQuat::Identity,
+		ECC_Pawn,
+		SphereShape,
+		QueryParams
+	);
+
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		if (AMotorcyclePawn* Moto = Cast<AMotorcyclePawn>(Overlap.GetActor()))
+		{
+			if (Moto->CanMount(const_cast<AEbbingRainbowCharacter*>(this)))
+			{
+				float DistSq = FVector::DistSquared(MyLoc, Moto->GetActorLocation());
+				if (DistSq < ClosestDistSq)
+				{
+					ClosestDistSq = DistSq;
+					BestMotorcycle = Moto;
+				}
+			}
+		}
+	}
+
+	// 2. 场景 Actor 双保险遍历检测 (确保任何通道设置下均可准确识别)
+	if (!BestMotorcycle)
+	{
+		const float SearchRadiusSq = FMath::Square(SearchRadius);
+		for (TActorIterator<AMotorcyclePawn> It(GetWorld()); It; ++It)
+		{
+			AMotorcyclePawn* Moto = *It;
+			if (Moto && Moto->CanMount(const_cast<AEbbingRainbowCharacter*>(this)))
+			{
+				float DistSq = FVector::DistSquared(MyLoc, Moto->GetActorLocation());
+				if (DistSq <= SearchRadiusSq && DistSq < ClosestDistSq)
+				{
+					ClosestDistSq = DistSq;
+					BestMotorcycle = Moto;
+				}
+			}
+		}
+	}
+
+	return BestMotorcycle;
 }
 
 // -------------------------------------------------------------

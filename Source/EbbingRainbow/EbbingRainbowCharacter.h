@@ -67,6 +67,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* SprintAction;
 
+	/** Interact Input Action (Press F to interact / ride vehicle) */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* InteractAction;
+
 public:
 
 	/** Constructor */
@@ -104,6 +108,14 @@ public:
 	/** Handles jump pressed inputs from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
+
+	/** Handles interact pressed inputs (e.g. Press F to ride nearby motorcycle) */
+	UFUNCTION(BlueprintCallable, Category="Interaction")
+	virtual void DoInteract();
+
+	/** 寻找附近可乘骑的摩托车 */
+	UFUNCTION(BlueprintCallable, Category="Interaction")
+	class AMotorcyclePawn* FindNearbyMotorcycle(float SearchRadius = 260.0f) const;
 
 	// -------------------------------------------------------------
 	// 开放世界 3C 功能：疾跑 (Sprint)
