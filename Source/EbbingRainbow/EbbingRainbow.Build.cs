@@ -28,6 +28,7 @@ public class EbbingRainbow : ModuleRules
 
 		PublicIncludePaths.AddRange(new string[] {
 			"EbbingRainbow",
+			"EbbingRainbow/Environment",
 			"EbbingRainbow/Variant_Platforming",
 			"EbbingRainbow/Variant_Platforming/Animation",
 			"EbbingRainbow/Variant_Combat",
