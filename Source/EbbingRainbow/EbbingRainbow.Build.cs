@@ -21,7 +21,8 @@ public class EbbingRainbow : ModuleRules
 			"Slate",
 			"MotionWarping",
 			"PoseSearch",
-			"MotionTrajectory"
+			"MotionTrajectory",
+			"AssetRegistry"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
@@ -41,7 +42,8 @@ public class EbbingRainbow : ModuleRules
 			"EbbingRainbow/Variant_SideScrolling/AI",
 			"EbbingRainbow/Variant_SideScrolling/Gameplay",
 			"EbbingRainbow/Variant_SideScrolling/Interfaces",
-			"EbbingRainbow/Variant_SideScrolling/UI"
+			"EbbingRainbow/Variant_SideScrolling/UI",
+			"EbbingRainbow/WFC"
 		});
 
 		// Uncomment if you are using Slate UI
