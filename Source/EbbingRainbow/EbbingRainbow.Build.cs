@@ -22,7 +22,9 @@ public class EbbingRainbow : ModuleRules
 			"MotionWarping",
 			"PoseSearch",
 			"MotionTrajectory",
-			"AssetRegistry"
+			"AssetRegistry",
+			"NavigationSystem",
+			"SlateCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
@@ -43,7 +45,15 @@ public class EbbingRainbow : ModuleRules
 			"EbbingRainbow/Variant_SideScrolling/Gameplay",
 			"EbbingRainbow/Variant_SideScrolling/Interfaces",
 			"EbbingRainbow/Variant_SideScrolling/UI",
-			"EbbingRainbow/WFC"
+			"EbbingRainbow/WFC",
+			"EbbingRainbow/Battle",
+			"EbbingRainbow/Battle/Core",
+			"EbbingRainbow/Battle/Arena",
+			"EbbingRainbow/Battle/Units",
+			"EbbingRainbow/Battle/Player",
+			"EbbingRainbow/Battle/UI",
+			"EbbingRainbow/Hall",
+			"EbbingRainbow/Hall/UI"
 		});
 
 		// Uncomment if you are using Slate UI

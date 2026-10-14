@@ -101,6 +101,99 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|Constraints")
 	bool bEnforceGroundFloor = true;
 
+	/** 是否开启多层立体空间楼梯强连通保证 (相邻楼层之间必定有至少一处可通行的楼梯井相连) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|MultiStory")
+	bool bEnsureStairConnectivity = true;
+
+	/** 每两层之间最少保证生成的楼梯数量 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|MultiStory", meta = (ClampMin = "1", ClampMax = "4"))
+	int32 StairsPerFloorTransition = 1;
+
+	/** 是否包含天花板/顶层封顶板 (构建 4 层平整地板/天花板结构) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|MultiStory")
+	bool bIncludeCeilings = true;
+
+	// ==========================================
+	// 超大型鸟巢/商场贯通中庭空间配置 (Mega Atrium / Stadium)
+	// ==========================================
+
+	/** 是否开启大型鸟巢/商场通高中庭预设模式 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|MegaAtrium")
+	bool bMegaAtriumMode = false;
+
+	/** 环形漫游回廊与建筑在墙体周边的进深 (单位：格子数，例如 4~6 格，中间区域留作通高中庭) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|MegaAtrium", meta = (ClampMin = "2", ClampMax = "12"))
+	int32 AtriumWalkwayDepth = 4;
+
+	/** 中庭是否采用鸟巢式椭圆/圆角流线形态 (若为 false 则为矩形开敞中庭) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|MegaAtrium")
+	bool bOvalAtriumShape = true;
+
+	// ==========================================
+	// 螺旋花园高塔预设配置 (Spiral Garden Tower) - 巨构尺度
+	// 设计意象：一条 112m 高的巨型螺旋缎带盘旋 3.9 圈 —— 没有桶状墙体、没有中央立柱，
+	// 只有联通的 24m 宽延伸地板 + 地板边缘的栏杆 + 地板上的立方体踏步。
+	// 拓扑由 WFC 约束驱动：中央 36m 贯通天井 + 逐层旋转 25° 的 49° 扇形缎带 +
+	// 缎带内外缘与端头栏杆 + 层间交错楼梯/坡道 + 局部外扩悬浮耳台。
+	// ==========================================
+
+	/** 开启螺旋花园高塔模式 (Generate3DSpace 将按螺旋拓扑构建初始约束) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden")
+	bool bSpiralGardenMode = false;
+
+	/** 每层缎带绕塔心旋转角 (度)。整塔累计旋转 = 圈数 x 360 (默认 25°/层，56 层盘旋约 3.9 圈，每圈上升 28.8m 保证圈层次分明) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "5.0", ClampMax = "120.0"))
+	float SpiralTwistPerLayer = 25.0f;
+
+	/** 相邻层爬升段重叠角 (度)。缎带弧宽 = 每层旋转角 + 重叠角，重叠区即楼梯落脚处，保证动线连续 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "6.0", ClampMax = "80.0"))
+	float SpiralArcOverlapDeg = 24.0f;
+
+	/** 缎带内缘半径 (格)。此半径以内为贯通全塔的中央天井 (36m 宽，高空俯瞰的震撼核心) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "3", ClampMax = "16"))
+	int32 SpiralRibbonInnerRadius = 9;
+
+	/** 缎带外缘半径 (格)。缎带宽度 = 外缘 - 内缘 (默认 12 格 = 24m 宽步道)，越宽越气势恢宏 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "4", ClampMax = "30"))
+	int32 SpiralRibbonOuterRadius = 21;
+
+	/** 局部外扩耳台出现概率 (每层独立判定：缎带某一层向外多悬挑 5 格，形成错落轮廓) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float SpiralRibbonWidenChance = 0.35f;
+
+	// ==========================================
+	// 螺旋缎带点缀 (拱门/门 + 花坛) - 单一 Cube 拼装形态的概率化布置
+	// 形态定义见 SetupSpiralGardenPreset，布置逻辑见 Generate3DSpace 螺旋约束第 4 阶段
+	// ==========================================
+
+	/** 是否在缎带路面上概率生成 "拱门(门)" 形态 (双立柱+横梁+顶石，中部门洞敞开可穿行) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden")
+	bool bGenerateSpiralArchways = true;
+
+	/** 拱门在缎带核心地面格上的单格生成概率 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float SpiralArchwayChance = 0.07f;
+
+	/** 拱门之间的最小间距 (格，切比雪夫距离，避免门挨门) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "1", ClampMax = "12"))
+	int32 SpiralArchwayMinSpacing = 3;
+
+	/** 是否在缎带路面上概率生成 "花坛" 形态 (抬升土床+围檐+花丛，约 71cm 高不遮挡动线) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden")
+	bool bGenerateSpiralPlanters = true;
+
+	/** 花坛在缎带边缘格 (紧邻栏杆/虚空的格) 的生成概率 —— 边缘高概率形成临栏绿带 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float SpiralPlanterEdgeChance = 0.22f;
+
+	/** 花坛在缎带中央格的生成概率 (低概率保持步道通畅) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float SpiralPlanterChance = 0.04f;
+
+	/** 花坛之间的最小间距 (格，切比雪夫距离) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "WFC|SpiralGarden", meta = (ClampMin = "1", ClampMax = "12"))
+	int32 SpiralPlanterMinSpacing = 2;
+
 public:
 	// ==========================================
 	// 编辑器一键操作 (CallInEditor)
@@ -111,6 +204,35 @@ public:
 	 */
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "WFC Operations")
 	void SetupDungeonPreset();
+
+	/**
+	 * [按钮] 一键装载 FBX_Export 模块化组件规则系统 (自动匹配 200cm 模数、地面/墙体/门洞/转角/立柱/天花板插槽方向)
+	 */
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "WFC Operations")
+	void SetupModularKitPreset();
+
+	/**
+	 * [按钮] 一键装载【三层空间四层地板】立体地牢预设 (配置 8x8x3 网格、层间必有楼梯连通、第4层顶层封顶)
+	 */
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "WFC Operations")
+	void SetupThreeStoryPreset();
+
+	/**
+	 * [按钮] 一键装载【超大型鸟巢/商场贯通中庭】预设 (44x44x10 超百倍体积、中间通高中庭、环形蔓延回廊与立体阶梯)
+	 */
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "WFC Operations")
+	void SetupMegaAtriumPreset();
+
+	/**
+	 * [按钮] 一键装载【螺旋花园高塔】预设：
+	 * 40 米高 20 层悬浮巨塔，中央巨木树干，环形回廊以 18°/层 盘旋而上 (整塔盘旋一周)；
+	 * 全程无天花板向天空敞开，每层弧心交错布设楼梯与坡道，形成真实可攀爬的螺旋动线；
+	 * 约 4 成概率随机外扩宽阔露台，每 7 层出现 "花园口袋层" 交由 WFC 自由发挥；
+	 * 底层为悬浮岛式基座广场，顶层观景平台点缀立柱、三角鳍饰与世界树尖顶；
+	 * 塔身挂满真实植被 (冷杉/花丛/灌木)，每次生成轮廓与植被分布都不同。
+	 */
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "WFC Operations")
+	void SetupSpiralGardenPreset();
 
 	/**
 	 * [按钮] 一键扫描指定目录下的所有 StaticMesh 并加载为模块
@@ -135,6 +257,14 @@ public:
 	 */
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "WFC Operations")
 	void StepCollapse();
+
+	/** 最近一次 Generate3DSpace 是否成功求解并渲染 */
+	UFUNCTION(BlueprintPure, Category = "WFC Operations")
+	bool WasLastGenerationSuccessful() const { return bLastGenerationSucceeded; }
+
+private:
+	bool bLastGenerationSucceeded = false;
+
 
 private:
 	/** 准备并编译模块数据 */

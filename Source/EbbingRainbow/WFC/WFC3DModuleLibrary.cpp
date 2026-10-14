@@ -105,23 +105,24 @@ bool UWFC3DModuleLibrary::AreSocketsCompatible(FName SocketA, FName SocketB) con
 		return true;
 	}
 
-	if (CustomCompatibilityPairs.Num() > 0)
+	if (SocketA == SocketB)
 	{
-		for (const FWFC3DSocketCompatibilityPair& Pair : CustomCompatibilityPairs)
-		{
-			if (Pair.SocketA == SocketA && Pair.SocketB == SocketB)
-			{
-				return true;
-			}
-			if (Pair.bBidirectional && Pair.SocketA == SocketB && Pair.SocketB == SocketA)
-			{
-				return true;
-			}
-		}
-		return false;
+		return true;
 	}
 
-	return (SocketA == SocketB);
+	for (const FWFC3DSocketCompatibilityPair& Pair : CustomCompatibilityPairs)
+	{
+		if (Pair.SocketA == SocketA && Pair.SocketB == SocketB)
+		{
+			return true;
+		}
+		if (Pair.bBidirectional && Pair.SocketA == SocketB && Pair.SocketB == SocketA)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 bool UWFC3DModuleLibrary::CompileLibrary(

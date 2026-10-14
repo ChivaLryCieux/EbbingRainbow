@@ -106,6 +106,23 @@ private:
 	/** 计算指定 Slot 的香农熵 */
 	float CalculateEntropy(const TBitArray<>& Candidates) const;
 
+	/** 高效从未坍缩列表中移除指定 Slot (O(1) swap-remove) */
+	FORCEINLINE void RemoveUncollapsedSlot(int32 SlotIndex)
+	{
+		if (SlotToUncollapsedIndex.IsValidIndex(SlotIndex))
+		{
+			const int32 Pos = SlotToUncollapsedIndex[SlotIndex];
+			if (Pos != INDEX_NONE && UncollapsedSlots.IsValidIndex(Pos))
+			{
+				const int32 LastSlot = UncollapsedSlots.Last();
+				UncollapsedSlots[Pos] = LastSlot;
+				SlotToUncollapsedIndex[LastSlot] = Pos;
+				UncollapsedSlots.Pop(EAllowShrinking::No);
+				SlotToUncollapsedIndex[SlotIndex] = INDEX_NONE;
+			}
+		}
+	}
+
 private:
 	FIntVector Dimensions = FIntVector::ZeroValue;
 	int32 TotalCells = 0;
@@ -116,6 +133,10 @@ private:
 
 	TArray<FWFCSlot3D> Slots;
 	TArray<int32> PropagationQueue;
+	TBitArray<> InPropagationQueue;
+
+	TArray<int32> UncollapsedSlots;
+	TArray<int32> SlotToUncollapsedIndex;
 
 	FRandomStream RandomStream;
 	float InitialEntropy = 0.0f;

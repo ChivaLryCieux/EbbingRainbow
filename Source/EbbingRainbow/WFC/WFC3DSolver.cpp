@@ -31,11 +31,18 @@ void FWFC3DSolver::Initialize(
 void FWFC3DSolver::ResetGrid()
 {
 	Slots.SetNum(TotalCells);
+	UncollapsedSlots.SetNumUninitialized(TotalCells);
+	SlotToUncollapsedIndex.SetNumUninitialized(TotalCells);
+
 	for (int32 i = 0; i < TotalCells; ++i)
 	{
 		Slots[i].Initialize(TotalModules, InitialEntropy);
+		UncollapsedSlots[i] = i;
+		SlotToUncollapsedIndex[i] = i;
 	}
+
 	PropagationQueue.Empty();
+	InPropagationQueue.Init(false, TotalCells);
 }
 
 float FWFC3DSolver::CalculateEntropy(const TBitArray<>& Candidates) const
@@ -65,15 +72,23 @@ float FWFC3DSolver::CalculateEntropy(const TBitArray<>& Candidates) const
 
 int32 FWFC3DSolver::FindMinEntropySlot()
 {
+	if (UncollapsedSlots.Num() == 0)
+	{
+		return INDEX_NONE;
+	}
+
 	float MinEntropy = MAX_FLT;
 	int32 BestSlotIndex = INDEX_NONE;
 
-	for (int32 i = 0; i < TotalCells; ++i)
+	for (int32 i = 0; i < UncollapsedSlots.Num(); ++i)
 	{
-		FWFCSlot3D& Slot = Slots[i];
+		const int32 SlotIdx = UncollapsedSlots[i];
+		FWFCSlot3D& Slot = Slots[SlotIdx];
 
 		if (Slot.bCollapsed)
 		{
+			RemoveUncollapsedSlot(SlotIdx);
+			--i;
 			continue;
 		}
 
@@ -95,6 +110,8 @@ int32 FWFC3DSolver::FindMinEntropySlot()
 					break;
 				}
 			}
+			RemoveUncollapsedSlot(SlotIdx);
+			--i;
 			continue;
 		}
 
@@ -105,7 +122,7 @@ int32 FWFC3DSolver::FindMinEntropySlot()
 		if (PerturbedEntropy < MinEntropy)
 		{
 			MinEntropy = PerturbedEntropy;
-			BestSlotIndex = i;
+			BestSlotIndex = SlotIdx;
 		}
 	}
 
@@ -175,8 +192,14 @@ bool FWFC3DSolver::CollapseSlot(int32 SlotIndex)
 	Slot.FinalModuleIndex = ChosenIndex;
 	Slot.CachedEntropy = 0.0f;
 
+	RemoveUncollapsedSlot(SlotIndex);
+
 	// 入队触发传播
-	PropagationQueue.Add(SlotIndex);
+	if (!InPropagationQueue[SlotIndex])
+	{
+		InPropagationQueue[SlotIndex] = true;
+		PropagationQueue.Add(SlotIndex);
+	}
 	return true;
 }
 
@@ -187,6 +210,8 @@ bool FWFC3DSolver::Propagate()
 	while (PropagationQueue.Num() > 0)
 	{
 		const int32 CurrentIndex = PropagationQueue.Pop(EAllowShrinking::No);
+		InPropagationQueue[CurrentIndex] = false;
+
 		const FIntVector CurrentCoord = IndexToCoord(CurrentIndex);
 		const FWFCSlot3D& CurrentSlot = Slots[CurrentIndex];
 
@@ -268,10 +293,15 @@ bool FWFC3DSolver::Propagate()
 							break;
 						}
 					}
+					RemoveUncollapsedSlot(NeighborIndex);
 				}
 
-				// 将受到波及的邻居加入队列继续向外扩散
-				PropagationQueue.AddUnique(NeighborIndex);
+				// 将受到波及的邻居加入队列继续向外扩散 (O(1) 查重入队)
+				if (!InPropagationQueue[NeighborIndex])
+				{
+					InPropagationQueue[NeighborIndex] = true;
+					PropagationQueue.Add(NeighborIndex);
+				}
 			}
 		}
 	}
@@ -281,18 +311,8 @@ bool FWFC3DSolver::Propagate()
 
 EWFCStepResult FWFC3DSolver::Step()
 {
-	// 检查是否已经全部坍缩完成
-	bool bAllCollapsed = true;
-	for (int32 i = 0; i < TotalCells; ++i)
-	{
-		if (!Slots[i].bCollapsed)
-		{
-			bAllCollapsed = false;
-			break;
-		}
-	}
-
-	if (bAllCollapsed)
+	// 检查是否已经全部坍缩完成 (O(1))
+	if (UncollapsedSlots.Num() == 0)
 	{
 		return EWFCStepResult::Completed;
 	}
@@ -300,18 +320,7 @@ EWFCStepResult FWFC3DSolver::Step()
 	const int32 MinSlot = FindMinEntropySlot();
 	if (MinSlot == INDEX_NONE)
 	{
-		// 再次验证是否全部已完成
-		bool bStillUncollapsed = false;
-		for (int32 i = 0; i < TotalCells; ++i)
-		{
-			if (!Slots[i].bCollapsed)
-			{
-				bStillUncollapsed = true;
-				break;
-			}
-		}
-
-		return bStillUncollapsed ? EWFCStepResult::Contradiction : EWFCStepResult::Completed;
+		return (UncollapsedSlots.Num() > 0) ? EWFCStepResult::Contradiction : EWFCStepResult::Completed;
 	}
 
 	if (!CollapseSlot(MinSlot))
@@ -324,7 +333,7 @@ EWFCStepResult FWFC3DSolver::Step()
 		return EWFCStepResult::Contradiction;
 	}
 
-	return EWFCStepResult::InProgress;
+	return (UncollapsedSlots.Num() == 0) ? EWFCStepResult::Completed : EWFCStepResult::InProgress;
 }
 
 bool FWFC3DSolver::ClampSlot(int32 SlotIndex, int32 ModuleIndex)
@@ -342,7 +351,13 @@ bool FWFC3DSolver::ClampSlot(int32 SlotIndex, int32 ModuleIndex)
 	Slot.FinalModuleIndex = ModuleIndex;
 	Slot.CachedEntropy = 0.0f;
 
-	PropagationQueue.Add(SlotIndex);
+	RemoveUncollapsedSlot(SlotIndex);
+
+	if (!InPropagationQueue[SlotIndex])
+	{
+		InPropagationQueue[SlotIndex] = true;
+		PropagationQueue.Add(SlotIndex);
+	}
 	return Propagate();
 }
 
@@ -361,14 +376,43 @@ bool FWFC3DSolver::Solve(int32 MaxRetries, int32 Seed, const TMap<int32, int32>&
 		RandomStream.Initialize(BaseSeed + Attempt * 1013);
 		ResetGrid();
 
-		// 应用初始固定插槽约束 (例如底层全量固定为地面)
+		// 应用初始固定插槽约束 (例如底层全量固定为地面，或中庭开敞挑空)
 		bool bClampsValid = true;
 		for (const auto& Pair : InitialClamps)
 		{
-			if (!ClampSlot(Pair.Key, Pair.Value))
+			const int32 SlotIndex = Pair.Key;
+			const int32 ModuleIndex = Pair.Value;
+			if (!Slots.IsValidIndex(SlotIndex) || !CompiledModules.IsValidIndex(ModuleIndex))
+			{
+				continue;
+			}
+
+			FWFCSlot3D& Slot = Slots[SlotIndex];
+			Slot.Candidates.Init(false, TotalModules);
+			Slot.Candidates[ModuleIndex] = true;
+			Slot.RemainingCandidatesCount = 1;
+			Slot.bCollapsed = true;
+			Slot.FinalModuleIndex = ModuleIndex;
+			Slot.CachedEntropy = 0.0f;
+
+			RemoveUncollapsedSlot(SlotIndex);
+
+			if (!InPropagationQueue[SlotIndex])
+			{
+				InPropagationQueue[SlotIndex] = true;
+				PropagationQueue.Add(SlotIndex);
+			}
+		}
+
+		if (InitialClamps.Num() > 0)
+		{
+			if (!Propagate())
 			{
 				bClampsValid = false;
-				break;
+				if (Attempt == 0)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[WFC] Initial clamps batch propagation contradiction on attempt %d!"), Attempt + 1);
+				}
 			}
 		}
 

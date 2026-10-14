@@ -1,0 +1,78 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/GameModeBase.h"
+#include "Battle/Core/BattleTypes.h"
+#include "BattleGameMode.generated.h"
+
+class ABattleArena;
+class ABattleUnit;
+class UBattleManager;
+
+/** 回合制战斗 GameMode: 负责在开局创建竞技场、按出生点生成双方单位并初始化战斗管理器 */
+UCLASS()
+class EBBINGRAINBOW_API ABattleGameMode : public AGameModeBase
+{
+	GENERATED_BODY()
+
+public:
+	ABattleGameMode();
+
+	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
+	virtual void StartPlay() override;
+
+	/** 竞技场类 (默认 ABattleArena,可在蓝图中替换以调整参数) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
+	TSubclassOf<ABattleArena> ArenaClass;
+
+	/** 单位类 (默认 ABattleUnit) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
+	TSubclassOf<ABattleUnit> UnitClass;
+
+	/** 竞技场原点 (WFC 网格 (0,0,0) 所在位置) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
+	FVector ArenaOrigin = FVector::ZeroVector;
+
+	/** 我方 / 敌方名单 (每个条目对应一个出生点,按顺序) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
+	TArray<FBattleUnitStats> PlayerRoster;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
+	TArray<FBattleUnitStats> EnemyRoster;
+
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	ABattleArena* GetArena() const { return Arena; }
+
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	UBattleManager* GetBattleManager() const { return BattleManager; }
+
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	const TArray<ABattleUnit*>& GetPlayerUnits() const { return PlayerUnits; }
+
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	const TArray<ABattleUnit*>& GetEnemyUnits() const { return EnemyUnits; }
+
+	/** 竞技场与单位全部就绪 */
+	DECLARE_MULTICAST_DELEGATE(FOnBattleSetupComplete);
+	FOnBattleSetupComplete OnBattleSetupComplete;
+
+	bool IsBattleSetupComplete() const { return bSetupComplete; }
+
+private:
+	UFUNCTION()
+	void HandleArenaGenerated(bool bSuccess);
+
+	void SpawnTeam(const TArray<FBattleUnitStats>& Roster, const TArray<FVector>& Points, EBattleTeam Team, TArray<ABattleUnit*>& OutUnits);
+
+	UPROPERTY(Transient)
+	TObjectPtr<ABattleArena> Arena = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBattleManager> BattleManager = nullptr;
+
+	TArray<ABattleUnit*> PlayerUnits;
+	TArray<ABattleUnit*> EnemyUnits;
+	bool bSetupComplete = false;
+};
