@@ -71,9 +71,11 @@ bool AWFC3DArenaGeneratorBase::Generate(const FWFCGenerationRequest& Request)
 		return false;
 	}
 
-	// 5) 后处理 + 渲染
-	PostProcess(Seed);
+	// 5) 渲染 + 后处理
+	// 先渲染 WFC 模块，再让风格在已有点实例上叠加装饰（树、花坛、灯等）；
+	// RenderResult 会清空旧实例，所以装饰必须放在它之后。
 	RenderResult();
+	PostProcess(Seed);
 
 	const double DurationMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
 
