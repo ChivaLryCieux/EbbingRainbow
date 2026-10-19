@@ -17,4 +17,7 @@ class EBBINGRAINBOW_API AHallGameMode : public AGameModeBase
 
 public:
 	AHallGameMode();
+
+	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
+	virtual APawn* SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform) override;
 };

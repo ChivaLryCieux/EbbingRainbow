@@ -19,7 +19,7 @@ class SVerticalBox;
  * 1. 顶部栏: 系统按钮、实时日期时间走字、电池电量、三合一货币资源槽 (信用点/合成玉/源石)
  * 2. 左侧空间: 留空展示 3D 悬浮空间站与星球, 配备指挥官等级徽章与“全屏观景(隐藏UI)”功能
  * 3. 右侧面板: 经典的明日方舟大磁贴交互仪表盘:
- *    - 核心磁贴 [Terminal 战术终端 / 作战出击] (直通战斗关卡 L_Battle)
+ *    - 核心磁贴 [Terminal 战术终端 / 作战出击] (直通战斗关卡 Lvl_Battle)
  *    - 次级磁贴 [Squads 编队] (可展开4人特勤小队属性弹窗)
  *    - 次级磁贴 [Operator 干员与卡组]
  *    - 商业磁贴 [Store 采购中心] & [Recruitment 公开招募]
@@ -28,7 +28,10 @@ class SVerticalBox;
 class EBBINGRAINBOW_API SHallMainOverlay : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS(SHallMainOverlay) {}
+	SLATE_BEGIN_ARGS(SHallMainOverlay)
+		: _OwningWorld(nullptr)
+	{}
+		SLATE_ARGUMENT(UWorld*, OwningWorld)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
@@ -42,10 +45,12 @@ public:
 	/** 打开/关闭编队详情弹窗 */
 	void ToggleSquadsModal();
 
-	/** 发起出击进入战斗关卡 L_Battle */
+	/** 发起出击进入战斗关卡 Lvl_Battle */
 	void LaunchBattleLevel();
 
 private:
+	TWeakObjectPtr<UWorld> OwningWorld;
+	UWorld* FindPlayWorld() const;
 	// 动态时钟文本
 	TSharedPtr<STextBlock> TimeTextBlock;
 

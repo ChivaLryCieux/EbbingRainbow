@@ -6,6 +6,7 @@
 #include "Battle/Core/BattleManager.h"
 #include "Battle/Units/BattleUnit.h"
 #include "Battle/Player/BattlePlayerController.h"
+#include "Hall/UI/HallMainWidget.h"
 #include "Engine/Canvas.h"
 
 ABattleHUD::ABattleHUD()
@@ -15,6 +16,25 @@ ABattleHUD::ABattleHUD()
 void ABattleHUD::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 防御性保护：若意外在 Hall 关卡下运行了 BattleHUD，自动回退显示大厅 UI，避免用户看到战斗黑屏或错误界面
+	if (GetWorld() && GetWorld()->GetMapName().Contains(TEXT("Hall")))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BattleHUD] Hall level detected under BattleHUD! Spawning HallMainWidget fallback."));
+		if (APlayerController* PC = GetOwningPlayerController())
+		{
+			PC->bShowMouseCursor = true;
+			PC->bEnableClickEvents = true;
+			PC->bEnableMouseOverEvents = true;
+
+			if (UHallMainWidget* HallWidget = CreateWidget<UHallMainWidget>(PC))
+			{
+				HallWidget->AddToViewport(10);
+			}
+		}
+		return;
+	}
+
 	TryInitWidget();
 }
 
@@ -98,6 +118,11 @@ bool ABattleHUD::HandleMouseClick(const FVector2D& MousePos)
 void ABattleHUD::DrawHUD()
 {
 	Super::DrawHUD();
+
+	if (GetWorld() && GetWorld()->GetMapName().Contains(TEXT("Hall")))
+	{
+		return;
+	}
 
 	// 确保在世界与关卡准备完毕后挂载 UMG
 	if (!bWidgetInitialized)

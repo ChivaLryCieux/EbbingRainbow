@@ -1,27 +1,52 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 #include "Hall/HallCameraPawn.h"
 #include "Camera/CameraComponent.h"
+#include "Components/ArrowComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 
 AHallCameraPawn::AHallCameraPawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
+
+	bUseControllerRotationPitch = false;
+	bUseControllerRotationYaw = false;
+	bUseControllerRotationRoll = false;
+
+	AutoPossessPlayer = EAutoReceiveInput::Player0;
 
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 
 	CameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraComponent"));
 	CameraComponent->SetupAttachment(RootComponent);
 	CameraComponent->SetFieldOfView(65.0f);
+	CameraComponent->bUsePawnControlRotation = false;
+
+#if WITH_EDITORONLY_DATA
+	DirectionArrow = CreateEditorOnlyDefaultSubobject<UArrowComponent>(TEXT("DirectionArrow"));
+	if (DirectionArrow)
+	{
+		DirectionArrow->SetupAttachment(RootComponent);
+		DirectionArrow->ArrowColor = FColor(70, 160, 255);
+		DirectionArrow->ArrowSize = 2.0f;
+		DirectionArrow->bIsScreenSizeScaled = true;
+	}
+#endif
 }
 
 void AHallCameraPawn::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 忠实记录关卡设计中人工摆放的初始机位与朝向
 	BaseRotation = GetActorRotation();
 	BaseLocation = GetActorLocation();
+
+	if (AController* C = GetController())
+	{
+		C->SetControlRotation(BaseRotation);
+	}
 }
 
 void AHallCameraPawn::Tick(float DeltaSeconds)

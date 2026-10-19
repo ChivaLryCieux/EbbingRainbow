@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Arena/BattleArena.h"
-#include "WFC3DGenerator.h"
+#include "WFC3DArenaHost.h"
+#include "WFC3DStyleTable.h"
+#include "Styles/WFC3DArenaGenerator_Style0.h"
 #include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -29,15 +31,16 @@ void ABattleArena::BeginPlay()
 FBox ABattleArena::GetArenaBounds() const
 {
 	const FVector Origin = GetActorLocation();
-	const FVector Size(GridCells.X * CellWorldSize, GridCells.Y * CellWorldSize, GridCells.Z * CellWorldSize);
+	const FVector Cell = UsedCellWorldSize.IsNearlyZero() ? FVector(CellWorldSize) : UsedCellWorldSize;
+	const FVector Size(GridCells.X * Cell.X, GridCells.Y * Cell.Y, GridCells.Z * Cell.Z);
 	return FBox(Origin, Origin + Size);
 }
 
-AWFC3DGenerator* ABattleArena::EnsureGenerator()
+AWFC3DArenaHost* ABattleArena::EnsureHost()
 {
-	if (Generator && IsValid(Generator))
+	if (ArenaHost && IsValid(ArenaHost))
 	{
-		return Generator;
+		return ArenaHost;
 	}
 
 	UWorld* World = GetWorld();
@@ -46,33 +49,31 @@ AWFC3DGenerator* ABattleArena::EnsureGenerator()
 		return nullptr;
 	}
 
-	const float Scale = CellWorldSize / 100.0f; // 内置 Dungeon 预设单元格为 100cm
 	FActorSpawnParameters Params;
 	Params.Owner = this;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	Generator = World->SpawnActor<AWFC3DGenerator>(
-		AWFC3DGenerator::StaticClass(),
-		FTransform(FRotator::ZeroRotator, GetActorLocation(), FVector(Scale)),
+
+	// 格子世界尺寸由风格生成器决定，Host/生成器本身不允许再被 Actor 缩放
+	FTransform HostTransform = GetActorTransform();
+	HostTransform.SetScale3D(FVector::OneVector);
+
+	ArenaHost = World->SpawnActor<AWFC3DArenaHost>(
+		AWFC3DArenaHost::StaticClass(),
+		HostTransform,
 		Params);
 
-	if (Generator)
+	if (ArenaHost)
 	{
-		Generator->bAutoGenerateOnBeginPlay = false;
-		Generator->SetupDungeonPreset();
-		Generator->GridSize = GridCells; // 预设默认 8x8x1,覆盖为竞技场尺寸
-		Generator->AirWeight = 1.0f;
-		if (Generator->ModuleLibrary)
-		{
-			for (FWFC3DModuleDefinition& Mod : Generator->ModuleLibrary->Modules)
-			{
-				if (Mod.ModuleId == FName(TEXT("Room_Floor")))
-				{
-					Mod.Weight = 6.0f; // 提升开阔地面权重
-				}
-			}
-		}
+		ArenaHost->StyleTable = StyleTable;
+		ArenaHost->FallbackGeneratorClass = AWFC3DArenaGenerator_Style0::StaticClass();
+		ArenaHost->bAutoGenerateOnBeginPlay = false;
+
+		// 编辑器预览参数与竞技场默认保持一致
+		ArenaHost->PreviewRequest.Style = Style;
+		ArenaHost->PreviewRequest.Scale = GridCells;
 	}
-	return Generator;
+
+	return ArenaHost;
 }
 
 bool ABattleArena::GenerateArena()
@@ -89,9 +90,9 @@ bool ABattleArena::GenerateArena()
 		return false;
 	}
 
-	if (!EnsureGenerator())
+	if (!EnsureHost())
 	{
-		UE_LOG(LogBattleArena, Error, TEXT("Failed to create WFC generator."));
+		UE_LOG(LogBattleArena, Error, TEXT("Failed to create WFC arena host."));
 		OnArenaGenerated.Broadcast(false);
 		return false;
 	}
@@ -132,13 +133,22 @@ bool ABattleArena::GenerateArena()
 
 bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 {
-	Generator->RandomSeed = Seed;
-	Generator->Generate3DSpace();
-	if (!Generator->WasLastGenerationSuccessful())
+	FWFCGenerationRequest Request;
+	Request.Style = Style;
+	Request.Scale = GridCells;
+	Request.Seed = Seed;
+
+	if (!ArenaHost->Generate(Request))
 	{
-		UE_LOG(LogBattleArena, Warning, TEXT("WFC solve failed for seed %d."), Seed);
+		UE_LOG(LogBattleArena, Warning, TEXT("WFC generation failed for seed %d (style %d)."),
+			Seed, static_cast<int32>(Style));
 		return false;
 	}
+
+	const FWFCGenerationResult& GenResult = ArenaHost->GetLastResult();
+	UsedCellWorldSize = GenResult.CellWorldSize.IsNearlyZero()
+		? FVector(CellWorldSize)
+		: GenResult.CellWorldSize;
 
 	// 同步重建导航网格,保证后续查询基于最新地形
 	NavSys->Build();
@@ -149,8 +159,8 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	}
 
 	const FBox Bounds = GetArenaBounds();
-	const float SearchRadius = Bounds.GetSize().Size2D() * 2.0f;
-	constexpr float CellDedupe = 200.0f;
+	const float SearchRadius = Bounds.GetSize().Size2D();
+	const float CellDedupe = FMath::Max(50.0f, static_cast<float>(UsedCellWorldSize.X));
 
 	// 多个锚点中选可达面积最大的一块,避开孤立小口袋
 	TArray<FVector> BestPoints;
@@ -158,7 +168,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	for (int32 AnchorTry = 0; AnchorTry < 8; ++AnchorTry)
 	{
 		FNavLocation Anchor;
-		if (!NavSys->GetRandomPoint(Anchor))
+		if (!NavSys->GetRandomPoint(Anchor) || !Bounds.IsInsideOrOn(Anchor.Location))
 		{
 			continue;
 		}
@@ -170,6 +180,10 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 			FNavLocation P;
 			if (NavSys->GetRandomReachablePointInRadius(Anchor.Location, SearchRadius, P))
 			{
+				if (!Bounds.IsInsideOrOn(P.Location))
+				{
+					continue;
+				}
 				Points.Add(P.Location);
 				Cells.Add(FIntPoint(FMath::FloorToInt(P.Location.X / CellDedupe), FMath::FloorToInt(P.Location.Y / CellDedupe)));
 			}

@@ -46,6 +46,7 @@ public class EbbingRainbow : ModuleRules
 			"EbbingRainbow/Variant_SideScrolling/Interfaces",
 			"EbbingRainbow/Variant_SideScrolling/UI",
 			"EbbingRainbow/WFC",
+			"EbbingRainbow/WFC/Styles",
 			"EbbingRainbow/Battle",
 			"EbbingRainbow/Battle/Core",
 			"EbbingRainbow/Battle/Arena",

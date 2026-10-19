@@ -230,6 +230,21 @@ bool FWFC3DSolver::Propagate()
 
 			if (NeighborSlot.bCollapsed)
 			{
+				// 如果当前格也已坍缩，必须显式校验这对固定格；
+				// 否则两个 clamp（或先坍缩的格子）之间的冲突会被静默跳过。
+				if (CurrentSlot.bCollapsed)
+				{
+					const int32 CurrentModule = CurrentSlot.FinalModuleIndex;
+					const int32 NeighborModule = NeighborSlot.FinalModuleIndex;
+					if (!CompiledModules.IsValidIndex(CurrentModule)
+						|| !CompiledModules.IsValidIndex(NeighborModule)
+						|| !CompatibilityTable[CurrentModule][DirIdx][NeighborModule])
+					{
+						UE_LOG(LogTemp, Warning, TEXT("[WFC] Contradiction between collapsed cells (%d,%d,%d) dir %d."),
+							CurrentCoord.X, CurrentCoord.Y, CurrentCoord.Z, DirIdx);
+						return false;
+					}
+				}
 				continue;
 			}
 
@@ -377,7 +392,6 @@ bool FWFC3DSolver::Solve(int32 MaxRetries, int32 Seed, const TMap<int32, int32>&
 		ResetGrid();
 
 		// 应用初始固定插槽约束 (例如底层全量固定为地面，或中庭开敞挑空)
-		bool bClampsValid = true;
 		for (const auto& Pair : InitialClamps)
 		{
 			const int32 SlotIndex = Pair.Key;
@@ -408,17 +422,11 @@ bool FWFC3DSolver::Solve(int32 MaxRetries, int32 Seed, const TMap<int32, int32>&
 		{
 			if (!Propagate())
 			{
-				bClampsValid = false;
-				if (Attempt == 0)
-				{
-					UE_LOG(LogTemp, Warning, TEXT("[WFC] Initial clamps batch propagation contradiction on attempt %d!"), Attempt + 1);
-				}
+				// 固定约束在一次 Solve 内是常量，换 seed 不可能解决冲突，直接失败。
+				UE_LOG(LogTemp, Warning, TEXT("[WFC] Initial clamp propagation contradiction (seed %d, clamps=%d)."),
+					BaseSeed + Attempt * 1013, InitialClamps.Num());
+				return false;
 			}
-		}
-
-		if (!bClampsValid)
-		{
-			continue;
 		}
 
 		bool bSuccess = true;

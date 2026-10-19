@@ -171,12 +171,12 @@ bool UWFC3DModuleLibrary::CompileLibrary(
 				RotMod.VariantId = FName(*FString::Printf(TEXT("%s_Rot%d"), *Def.ModuleId.ToString(), FMath::RoundToInt(RotAngles[RotIdx])));
 				RotMod.Mesh = Def.Mesh;
 				
-				FRotator CombinedRot = Def.AdditionalRotation;
-				CombinedRot.Yaw += RotAngles[RotIdx];
-				RotMod.LocalTransform = FTransform(CombinedRot, Def.AdditionalOffset, Def.MeshScale);
+				// 旋转整个基础变换（包括 AdditionalOffset），而不是只旋转网格和插槽；
+				// 否则墙体变体仍会停留在原来的格子边缘。
+				const FRotator YawRot(0.0f, RotAngles[RotIdx], 0.0f);
+				RotMod.LocalTransform = FTransform(YawRot) * BaseMod.LocalTransform;
 				RotMod.Weight = FMath::Max(0.01f, Def.Weight);
 
-				const FRotator YawRot(0.0f, RotAngles[RotIdx], 0.0f);
 				for (const FWFC3DMeshPart& Part : Def.AdditionalParts)
 				{
 					FCompiledWFC3DMeshPart CompiledPart;

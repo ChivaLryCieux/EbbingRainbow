@@ -2,13 +2,18 @@
 
 #include "Battle/Core/BattleGameMode.h"
 #include "Battle/Arena/BattleArena.h"
+#include "WFC3DStyleTable.h"
 #include "Battle/Player/BattlePlayerController.h"
 #include "Battle/Player/TacticalCameraPawn.h"
 #include "Battle/Units/BattleUnit.h"
 #include "Battle/Core/BattleManager.h"
 #include "Battle/UI/BattleHUD.h"
+#include "Hall/HallCameraPawn.h"
+#include "Hall/HallPlayerController.h"
+#include "Hall/HallHUD.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
+#include "EngineUtils.h"
 
 ABattleGameMode::ABattleGameMode()
 {
@@ -37,6 +42,17 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 {
 	Super::InitGame(MapName, Options, ErrorMessage);
 
+	// 防御性保护：如果当前地图是 Hall/大厅 地图，自动重定向到大厅专属 Pawn 与控制器，并绝对不生成战斗竞技场
+	const FString CurrentMap = GetWorld() ? GetWorld()->GetMapName() : MapName;
+	if (MapName.Contains(TEXT("Hall")) || CurrentMap.Contains(TEXT("Hall")))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BattleGameMode] BattleGameMode loaded in Hall map '%s'! Redirecting classes to HallCameraPawn."), *CurrentMap);
+		DefaultPawnClass = AHallCameraPawn::StaticClass();
+		PlayerControllerClass = AHallPlayerController::StaticClass();
+		HUDClass = AHallHUD::StaticClass();
+		return;
+	}
+
 	// 在玩家 Pawn 出生之前创建竞技场 Actor (生成逻辑在其 BeginPlay 中执行)
 	if (UWorld* World = GetWorld())
 	{
@@ -46,6 +62,10 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 			FTransform(ArenaOrigin), Params);
 		if (Arena)
 		{
+			// 在 BeginPlay 生成之前写入本场战斗的三参数（后续可改为从 RunState 读取）
+			Arena->Style = ArenaStyle;
+			Arena->GridCells = ArenaScale;
+			Arena->StyleTable = WFCStyleTable;
 			Arena->OnArenaGenerated.AddDynamic(this, &ABattleGameMode::HandleArenaGenerated);
 		}
 	}
@@ -54,6 +74,12 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 void ABattleGameMode::StartPlay()
 {
 	Super::StartPlay();
+
+	const FString CurrentMap = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (CurrentMap.Contains(TEXT("Hall")))
+	{
+		return;
+	}
 
 	if (Arena && Arena->IsArenaReady() && !bSetupComplete)
 	{
@@ -115,4 +141,42 @@ void ABattleGameMode::SpawnTeam(const TArray<FBattleUnitStats>& Roster, const TA
 			OutUnits.Add(Unit);
 		}
 	}
+}
+
+AActor* ABattleGameMode::ChoosePlayerStart_Implementation(AController* Player)
+{
+	const FString CurrentMap = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (CurrentMap.Contains(TEXT("Hall")))
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AHallCameraPawn> It(World); It; ++It)
+			{
+				if (AHallCameraPawn* ExistingPawn = *It)
+				{
+					return ExistingPawn;
+				}
+			}
+		}
+	}
+	return Super::ChoosePlayerStart_Implementation(Player);
+}
+
+APawn* ABattleGameMode::SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform)
+{
+	const FString CurrentMap = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (CurrentMap.Contains(TEXT("Hall")))
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AHallCameraPawn> It(World); It; ++It)
+			{
+				if (AHallCameraPawn* ExistingPawn = *It)
+				{
+					return ExistingPawn;
+				}
+			}
+		}
+	}
+	return Super::SpawnDefaultPawnAtTransform_Implementation(NewPlayer, SpawnTransform);
 }

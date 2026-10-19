@@ -12,9 +12,12 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
 #include "Rendering/SlateRenderTransform.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
 
 void SHallMainOverlay::Construct(const FArguments& InArgs)
 {
+	OwningWorld = InArgs._OwningWorld;
 	// -----------------------------------------------------------------
 	// 样式画刷初始化 (深色半透明亚克力 / 科技高对比度)
 	// -----------------------------------------------------------------
@@ -304,7 +307,7 @@ void SHallMainOverlay::Construct(const FArguments& InArgs)
 							+ SVerticalBox::Slot().AutoHeight()
 							[
 								SNew(STextBlock)
-								.Text(FText::FromString(TEXT("弦智客")))
+								.Text(FText::FromString(TEXT("玩家")))
 								.Font(FCoreStyle::GetDefaultFontStyle("Bold", 20))
 								.ColorAndOpacity(FLinearColor::White)
 							]
@@ -425,105 +428,106 @@ void SHallMainOverlay::Construct(const FArguments& InArgs)
 						.AutoHeight()
 						.Padding(0.0f, 0.0f, 0.0f, 10.0f)
 						[
-							SNew(SButton)
-							.ButtonStyle(FCoreStyle::Get(), "NoBorder")
-							.OnClicked(this, &SHallMainOverlay::HandleTerminalClicked)
+							SNew(SBorder)
+							.BorderImage(&TerminalBgBrush)
+							.Padding(FMargin(16.0f, 12.0f))
 							[
-								SNew(SBorder)
-								.BorderImage(&TerminalBgBrush)
-								.Padding(FMargin(16.0f, 12.0f))
+								SNew(SHorizontalBox)
+
+								// 左侧: 理智/能量环形状态
+								+ SHorizontalBox::Slot()
+								.AutoWidth()
+								.VAlign(VAlign_Center)
 								[
-									SNew(SHorizontalBox)
-
-									// 左侧: 理智/能量环形状态
-									+ SHorizontalBox::Slot()
-									.AutoWidth()
-									.VAlign(VAlign_Center)
-									[
-										SNew(SBorder)
-										.BorderImage(&TopBarPillBrush)
-										.Padding(FMargin(14.0f, 10.0f))
-										[
-											SNew(SVerticalBox)
-											+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
-											[
-												SNew(STextBlock)
-												.Text(FText::FromString(TEXT("5")))
-												.Font(FCoreStyle::GetDefaultFontStyle("Bold", 24))
-												.ColorAndOpacity(FLinearColor(1.0f, 0.85f, 0.2f))
-											]
-											+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
-											[
-												SNew(STextBlock)
-												.Text(FText::FromString(TEXT("SANITY 205")))
-												.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
-												.ColorAndOpacity(FLinearColor(0.85f, 0.45f, 0.2f))
-											]
-										]
-									]
-
-									// 中间: Terminal 标题与状态
-									+ SHorizontalBox::Slot()
-									.FillWidth(1.0f)
-									.VAlign(VAlign_Center)
-									.Padding(18.0f, 0.0f, 0.0f, 0.0f)
+									SNew(SBorder)
+									.BorderImage(&TopBarPillBrush)
+									.Padding(FMargin(14.0f, 10.0f))
 									[
 										SNew(SVerticalBox)
-										+ SVerticalBox::Slot().AutoHeight()
-										[
-											SNew(SHorizontalBox)
-											+ SHorizontalBox::Slot().AutoWidth()
-											[
-												SNew(STextBlock)
-												.Text(FText::FromString(TEXT("Terminal")))
-												.Font(FCoreStyle::GetDefaultFontStyle("Bold", 22))
-												.ColorAndOpacity(FLinearColor::White)
-											]
-											+ SHorizontalBox::Slot().AutoWidth().Padding(10.0f, 4.0f, 0.0f, 0.0f)
-											[
-												SNew(SBorder)
-												.BorderImage(&TopBarPillBrush)
-												.Padding(FMargin(6.0f, 1.0f))
-												[
-													SNew(STextBlock)
-													.Text(FText::FromString(TEXT("RP 战术终端")))
-													.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
-													.ColorAndOpacity(FLinearColor(0.9f, 0.3f, 0.2f))
-												]
-											]
-										]
-										+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 0.0f)
+										+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
 										[
 											SNew(STextBlock)
-											.Text(FText::FromString(TEXT("● 当前 · 全部完成 (ALL CLEAR)")))
-											.Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
-											.ColorAndOpacity(FLinearColor(0.5f, 0.65f, 0.8f))
+											.Text(FText::FromString(TEXT("5")))
+											.Font(FCoreStyle::GetDefaultFontStyle("Bold", 24))
+											.ColorAndOpacity(FLinearColor(1.0f, 0.85f, 0.2f))
+										]
+										+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
+										[
+											SNew(STextBlock)
+											.Text(FText::FromString(TEXT("SANITY 205")))
+											.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+											.ColorAndOpacity(FLinearColor(0.85f, 0.45f, 0.2f))
 										]
 									]
+								]
 
-									// 右侧: [作战出击 / START SORTIE] 醒目大按钮
-									+ SHorizontalBox::Slot()
-									.AutoWidth()
-									.VAlign(VAlign_Center)
+								// 中间: Terminal 标题与状态
+								+ SHorizontalBox::Slot()
+								.FillWidth(1.0f)
+								.VAlign(VAlign_Center)
+								.Padding(18.0f, 0.0f, 0.0f, 0.0f)
+								[
+									SNew(SVerticalBox)
+									+ SVerticalBox::Slot().AutoHeight()
+									[
+										SNew(SHorizontalBox)
+										+ SHorizontalBox::Slot().AutoWidth()
+										[
+											SNew(STextBlock)
+											.Text(FText::FromString(TEXT("Terminal")))
+											.Font(FCoreStyle::GetDefaultFontStyle("Bold", 22))
+											.ColorAndOpacity(FLinearColor::White)
+										]
+										+ SHorizontalBox::Slot().AutoWidth().Padding(10.0f, 4.0f, 0.0f, 0.0f)
+										[
+											SNew(SBorder)
+											.BorderImage(&TopBarPillBrush)
+											.Padding(FMargin(6.0f, 1.0f))
+											[
+												SNew(STextBlock)
+												.Text(FText::FromString(TEXT("RP 战术终端")))
+												.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+												.ColorAndOpacity(FLinearColor(0.9f, 0.3f, 0.2f))
+											]
+										]
+									]
+									+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 0.0f)
+									[
+										SNew(STextBlock)
+										.Text(FText::FromString(TEXT("● 待命 · 战术准备就绪 (STANDBY)")))
+										.Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+										.ColorAndOpacity(FLinearColor(0.5f, 0.65f, 0.8f))
+									]
+								]
+
+								// 右侧: [占位：开始战斗 / START BATTLE] 明确点击跳转按钮
+								+ SHorizontalBox::Slot()
+								.AutoWidth()
+								.VAlign(VAlign_Center)
+								[
+									SNew(SButton)
+									.ButtonStyle(FCoreStyle::Get(), "NoBorder")
+									.OnClicked(this, &SHallMainOverlay::HandleTerminalClicked)
+									.Cursor(EMouseCursor::Hand)
 									[
 										SNew(SBorder)
 										.BorderImage(&StoreBgBrush)
-										.Padding(FMargin(18.0f, 14.0f))
+										.Padding(FMargin(20.0f, 12.0f))
 										[
 											SNew(SVerticalBox)
 											+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
 											[
 												SNew(STextBlock)
-												.Text(FText::FromString(TEXT("作战出击")))
+												.Text(FText::FromString(TEXT("▶ 开始战斗 (占位)")))
 												.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
 												.ColorAndOpacity(FLinearColor::White)
 											]
-											+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
+											+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0.0f, 2.0f, 0.0f, 0.0f)
 											[
 												SNew(STextBlock)
-												.Text(FText::FromString(TEXT("START SORTIE >>")))
+												.Text(FText::FromString(TEXT("START BATTLE >>")))
 												.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
-												.ColorAndOpacity(FLinearColor(1.0f, 0.9f, 0.5f))
+												.ColorAndOpacity(FLinearColor(1.0f, 0.92f, 0.6f))
 											]
 										]
 									]
@@ -1029,16 +1033,46 @@ void SHallMainOverlay::ToggleSquadsModal()
 	}
 }
 
+UWorld* SHallMainOverlay::FindPlayWorld() const
+{
+	if (OwningWorld.IsValid())
+	{
+		return OwningWorld.Get();
+	}
+	if (GEngine)
+	{
+		for (const FWorldContext& Context : GEngine->GetWorldContexts())
+		{
+			if (Context.WorldType == EWorldType::PIE || Context.WorldType == EWorldType::Game)
+			{
+				if (UWorld* CandidateWorld = Context.World())
+				{
+					return CandidateWorld;
+				}
+			}
+		}
+		return GEngine->GetCurrentPlayWorld();
+	}
+	return nullptr;
+}
+
 void SHallMainOverlay::LaunchBattleLevel()
 {
-	if (UWorld* World = GEngine ? GEngine->GetCurrentPlayWorld() : nullptr)
+	UWorld* World = FindPlayWorld();
+	if (World)
 	{
-		UGameplayStatics::OpenLevel(World, FName("/Game/Battle/Maps/L_Battle?game=/Script/EbbingRainbow.BattleGameMode"));
+		UE_LOG(LogTemp, Log, TEXT("[Hall] Launching Battle Level (/Game/Battle/Maps/Lvl_Battle)..."));
+		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Battle")), true, TEXT("game=/Script/EbbingRainbow.BattleGameMode"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Hall] LaunchBattleLevel failed: could not resolve active UWorld!"));
 	}
 }
 
 FReply SHallMainOverlay::HandleTerminalClicked()
 {
+	UE_LOG(LogTemp, Log, TEXT("[Hall] Start Battle button clicked."));
 	LaunchBattleLevel();
 	return FReply::Handled();
 }

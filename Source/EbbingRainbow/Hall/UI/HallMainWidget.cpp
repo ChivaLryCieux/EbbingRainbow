@@ -13,6 +13,6 @@ void UHallMainWidget::ToggleZenMode()
 
 TSharedRef<SWidget> UHallMainWidget::RebuildWidget()
 {
-	SlateOverlay = SNew(SHallMainOverlay);
+	SlateOverlay = SNew(SHallMainOverlay).OwningWorld(GetWorld());
 	return SlateOverlay.ToSharedRef();
 }

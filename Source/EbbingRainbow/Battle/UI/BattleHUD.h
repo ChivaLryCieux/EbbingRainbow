@@ -34,6 +34,7 @@ public:
 	bool IsMouseOverUI() const;
 
 	/** 添加屏幕状态日志 */
+	UFUNCTION()
 	void AddBattleLog(const FString& Message);
 
 	UBattleMainWidget* GetMainWidget() const { return MainWidget; }

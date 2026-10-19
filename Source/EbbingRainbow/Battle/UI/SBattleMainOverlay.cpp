@@ -448,9 +448,23 @@ void SBattleMainOverlay::Construct(const FArguments& InArgs)
 					SNew(SButton)
 					.ButtonStyle(FCoreStyle::Get(), "NoBorder")
 					.OnClicked_Lambda([this]() {
-						if (UWorld* World = GEngine ? GEngine->GetCurrentPlayWorld() : nullptr)
+						UWorld* World = nullptr;
+						if (PlayerController.IsValid()) World = PlayerController->GetWorld();
+						else if (BattleManager.IsValid()) World = BattleManager->GetWorld();
+						if (!World && GEngine)
 						{
-							UGameplayStatics::OpenLevel(World, FName("/Game/Battle/Maps/Lvl_Hall?game=/Script/EbbingRainbow.HallGameMode"));
+							for (const FWorldContext& Context : GEngine->GetWorldContexts())
+							{
+								if (Context.WorldType == EWorldType::PIE || Context.WorldType == EWorldType::Game)
+								{
+									if (UWorld* Cand = Context.World()) { World = Cand; break; }
+								}
+							}
+						}
+						if (World)
+						{
+							UE_LOG(LogTemp, Log, TEXT("[Battle] Returning to Hall level..."));
+							UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")), true, TEXT("game=/Script/EbbingRainbow.HallGameMode"));
 						}
 						return FReply::Handled();
 					})
