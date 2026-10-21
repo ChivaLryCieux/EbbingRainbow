@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "Battle/Core/BattleTypes.h"
+#include "Battle/Skills/BattleSkillTypes.h"
 #include "BattleUnit.generated.h"
 
 class UTextRenderComponent;
@@ -34,25 +35,39 @@ public:
 	/** 初始化数值与阵营 */
 	void InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam);
 
-	// ---------- 数值 ----------
-	UPROPERTY(BlueprintReadOnly, Category = "Battle")
+	// ---------- 核心数值 (8大属性与运行时状态) ----------
+	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
 	FBattleUnitStats Stats;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Battle")
+	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
 	EBattleTeam Team = EBattleTeam::Player;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Battle")
+	/** 当前完整度 (生命值，Float) */
+	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
+	float Integrity = 0.0f;
+
+	/** 临时护盾 / 屏障 (优先于完整度吸收伤害) */
+	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
+	float Barrier = 0.0f;
+
+	/** 当前行动点 (整型 AP) */
+	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
+	int32 AP = 0;
+
+	/** 兼容旧代码的整数 HP 视图 */
+	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
 	int32 HP = 0;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Battle")
-	float AP = 0.0f;
+	/** 基础转化率系数: 1 点先攻值兑换的移动厘米数 (默认 25cm/点先攻) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Movement")
+	float CmPerInitiativeUnit = 25.0f;
 
-	/** 1 点 AP 可移动的距离 (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
-	float CmPerAP = 200.0f;
+	/** 1 点 AP 可移动的距离 (cm): 由先攻值与转化系数决定 */
+	UFUNCTION(BlueprintPure, Category = "Battle|Movement")
+	float GetCmPerAP() const;
 
 	UFUNCTION(BlueprintPure, Category = "Battle")
-	bool IsAlive() const { return HP > 0; }
+	bool IsAlive() const { return Integrity > 0.0f; }
 
 	UFUNCTION(BlueprintPure, Category = "Battle")
 	bool IsMoving() const { return bMoving; }
@@ -60,18 +75,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	void ResetAP();
 
+	/** 赋予临时护盾 */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void AddBarrier(float Amount);
+
+	/** 修改指定核心属性 (支持 8 项属性与护盾，带浮动文字反馈) */
+	UFUNCTION(BlueprintCallable, Category = "Battle|Attributes")
+	void ApplyAttributeModifier(ETargetAttributeType AttrType, float Value, EAttributeModifierOp Op = EAttributeModifierOp::AddFlat, ABattleUnit* InInstigator = nullptr, EDamageType DamageType = EDamageType::Kinetic);
+
 	// ---------- 移动 ----------
 
 	/**
-	 * 规划到目标点的路径,并按剩余 AP 截断。
-	 * @param OutPath    截断后的路径点 (含起点)
-	 * @param OutCostAP  走完 OutPath 需要的 AP
+	 * 规划到目标点的路径, 并按剩余 AP 截断。
+	 * @param OutPath       截断后的路径点 (含起点)
+	 * @param OutCostAP     走完 OutPath 需要的整型 AP (向上取整)
 	 * @param bOutTruncated 目标超出 AP 可达范围时为 true
 	 * @return 是否存在有效路径
 	 */
+	bool PlanMove(const FVector& Destination, TArray<FVector>& OutPath, int32& OutCostAP, bool& bOutTruncated) const;
+
+	/** 兼容旧浮点引用的 PlanMove 重载 */
 	bool PlanMove(const FVector& Destination, TArray<FVector>& OutPath, float& OutCostAP, bool& bOutTruncated) const;
 
-	/** 规划并立即开始移动。成功开始返回 true,AP 在开始时一次性扣除 */
+	/** 规划并立即开始移动。成功开始返回 true, AP 在开始时一次性扣除 */
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	bool MoveTo(const FVector& Destination);
 
@@ -90,6 +116,14 @@ public:
 
 	// ---------- 技能与战斗 ----------
 
+	/** 已装备的技能数据资产 (若存在则优先执行) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Skills")
+	TArray<TObjectPtr<class UBattleSkillData>> EquippedSkills;
+
+	/** 动态装备技能资产 (自动同步至 UI 技能栏) */
+	UFUNCTION(BlueprintCallable, Category = "Battle|Skills")
+	void EquipSkillData(UBattleSkillData* InSkillData);
+
 	/** 检查是否可对目标使用技能 */
 	bool CanUseSkill(int32 SkillIndex, const ABattleUnit* Target, FString& OutReason) const;
 
@@ -97,9 +131,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	bool ExecuteSkill(int32 SkillIndex, ABattleUnit* Target);
 
-	/** 受击并扣除 HP */
+	/** 
+	 * 受击并扣除护盾与完整度
+	 * 结算流程: 1.闪避判定 -> 2.对应抗性减免 -> 3.护盾吸收 -> 4.扣除完整度 -> 5.死亡判定
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Battle")
-	int32 TakeBattleDamage(int32 DamageAmount, ABattleUnit* Attacker);
+	float TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType = EDamageType::Kinetic);
 
 	// ---------- 视觉状态 ----------
 

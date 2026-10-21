@@ -23,18 +23,18 @@ ABattleGameMode::ABattleGameMode()
 	ArenaClass = ABattleArena::StaticClass();
 	UnitClass = ABattleUnit::StaticClass();
 
-	// 默认名单 (HP, 行动值, 速度)。数值可在编辑器中调整
+	// 默认名单 (名称, 完整度, AP, 先攻值, 闪避率, 力学抗性, 热学抗性, 电学抗性, 化学抗性)
 	PlayerRoster = {
-		FBattleUnitStats(TEXT("Warrior"), 40, 10.0f, 8),
-		FBattleUnitStats(TEXT("Ranger"), 28, 12.0f, 14),
-		FBattleUnitStats(TEXT("Mage"), 22, 10.0f, 10),
-		FBattleUnitStats(TEXT("Cleric"), 26, 10.0f, 9),
+		FBattleUnitStats(TEXT("Warrior"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 战士: 重甲高力抗, 弱电导
+		FBattleUnitStats(TEXT("Ranger"),  38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 游侠: 高先攻大跑动距离, 高闪避
+		FBattleUnitStats(TEXT("Mage"),    32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 法师: 弱力学, 强元素抗性
+		FBattleUnitStats(TEXT("Cleric"),  45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 牧师: 均衡, 高化学抗性
 	};
 	EnemyRoster = {
-		FBattleUnitStats(TEXT("Goblin"), 20, 10.0f, 12),
-		FBattleUnitStats(TEXT("Orc"), 30, 10.0f, 6),
-		FBattleUnitStats(TEXT("Archer"), 20, 12.0f, 11),
-		FBattleUnitStats(TEXT("Shaman"), 22, 10.0f, 9),
+		FBattleUnitStats(TEXT("Goblin"),  26.0f, 4, 13, 0.15f, -0.10f, -0.15f,  0.0f,   0.10f), // 哥布林: 灵敏脆弱
+		FBattleUnitStats(TEXT("Orc"),     65.0f, 3, 6,  0.02f,  0.25f, -0.20f, -0.10f,  0.0f),  // 兽人: 重肉盾, 行动慢, 弱热能
+		FBattleUnitStats(TEXT("Archer"),  28.0f, 4, 12, 0.10f,  0.0f,   0.0f,   0.0f,   0.0f),  // 射手: 远程游击
+		FBattleUnitStats(TEXT("Shaman"),  35.0f, 3, 9,  0.05f, -0.10f,  0.20f,  0.20f,  0.20f), // 萨满: 元素守卫
 	};
 }
 

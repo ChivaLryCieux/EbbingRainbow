@@ -51,13 +51,13 @@ void UBattleManager::StartNewRound()
 		}
 	}
 
-	// 按 Speed 降序排序 (先攻队列)
+	// 按 Initiative 降序排序 (先攻队列)
 	InitiativeQueue.Sort([](const ABattleUnit& A, const ABattleUnit& B) {
-		if (A.Stats.Speed != B.Stats.Speed)
+		if (A.Stats.Initiative != B.Stats.Initiative)
 		{
-			return A.Stats.Speed > B.Stats.Speed;
+			return A.Stats.Initiative > B.Stats.Initiative;
 		}
-		// 速度相同则按内存地址确保稳定排序
+		// 先攻相同则按内存地址确保稳定排序
 		return &A > &B;
 	});
 
@@ -106,8 +106,8 @@ void UBattleManager::AdvanceToNextTurn()
 
 	OnTurnStarted.Broadcast(ActiveUnit);
 	const FString TeamName = (ActiveUnit->Team == EBattleTeam::Player) ? TEXT("我方") : TEXT("敌方");
-	OnBattleStatusMessage.Broadcast(FString::Printf(TEXT(">> 轮到 [%s] (%s) 行动! AP: %.1f, SPD: %d"),
-		*ActiveUnit->Stats.DisplayName, *TeamName, ActiveUnit->AP, ActiveUnit->Stats.Speed));
+	OnBattleStatusMessage.Broadcast(FString::Printf(TEXT(">> 轮到 [%s] (%s) 行动! AP: %d, 先攻: %d"),
+		*ActiveUnit->Stats.DisplayName, *TeamName, ActiveUnit->AP, ActiveUnit->Stats.Initiative));
 
 	if (ActiveUnit->Team == EBattleTeam::Enemy)
 	{
@@ -165,8 +165,8 @@ bool UBattleManager::RequestSkill(ABattleUnit* Unit, int32 SkillIndex, ABattleUn
 	if (Unit->ExecuteSkill(SkillIndex, Target))
 	{
 		const FBattleSkillDef& Skill = Unit->GetSkills()[SkillIndex];
-		OnBattleStatusMessage.Broadcast(FString::Printf(TEXT("[%s] 对 [%s] 施放了 [%s], 造成 %d 伤害!"),
-			*Unit->Stats.DisplayName, *Target->Stats.DisplayName, *Skill.DisplayName, Skill.BaseDamage));
+		OnBattleStatusMessage.Broadcast(FString::Printf(TEXT("[%s] 对 [%s] 施放了 [%s] (%s)!"),
+			*Unit->Stats.DisplayName, *Target->Stats.DisplayName, *Skill.DisplayName, GetDamageTypeName(Skill.DamageType)));
 
 		CheckGameOver();
 		return true;
@@ -290,7 +290,7 @@ void UBattleManager::RunEnemyDecision()
 			RequestSkill(ActiveUnit, i, ClosestPlayer);
 
 			// 攻击完后如果还有 AP, 延迟 0.7 秒再思考一次
-			if (ActiveUnit->IsAlive() && ActiveUnit->AP >= 4.0f && CurrentState != EBattleState::BattleOver)
+			if (ActiveUnit->IsAlive() && ActiveUnit->AP >= 1 && CurrentState != EBattleState::BattleOver)
 			{
 				if (UWorld* World = GameModeRef ? GameModeRef->GetWorld() : nullptr)
 				{
@@ -304,7 +304,7 @@ void UBattleManager::RunEnemyDecision()
 	}
 
 	// 2. 如果技能打不到但有足够移动 AP, 朝目标移动
-	if (ActiveUnit->AP >= 1.0f)
+	if (ActiveUnit->AP >= 1)
 	{
 		const FVector TargetPos = ClosestPlayer->GetActorLocation();
 		if (RequestMove(ActiveUnit, TargetPos))

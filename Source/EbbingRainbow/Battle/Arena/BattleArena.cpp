@@ -3,7 +3,7 @@
 #include "Battle/Arena/BattleArena.h"
 #include "WFC3DArenaHost.h"
 #include "WFC3DStyleTable.h"
-#include "Styles/WFC3DArenaGenerator_Style0.h"
+#include "Styles/WFC3DArenaGenerator_SciFi01.h"
 #include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -65,7 +65,7 @@ AWFC3DArenaHost* ABattleArena::EnsureHost()
 	if (ArenaHost)
 	{
 		ArenaHost->StyleTable = StyleTable;
-		ArenaHost->FallbackGeneratorClass = AWFC3DArenaGenerator_Style0::StaticClass();
+		ArenaHost->FallbackGeneratorClass = AWFC3DArenaGenerator_SciFi01::StaticClass();
 		ArenaHost->bAutoGenerateOnBeginPlay = false;
 
 		// 编辑器预览参数与竞技场默认保持一致

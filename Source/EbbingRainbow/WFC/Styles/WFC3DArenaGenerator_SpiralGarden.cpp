@@ -24,9 +24,18 @@ bool AWFC3DArenaGenerator_SpiralGarden::BuildModules(
 
 	UStaticMesh* CubeMesh = Cast<UStaticMesh>(
 		StaticLoadObject(UStaticMesh::StaticClass(), nullptr, TEXT("/Game/WFC_Modules/Cube.Cube")));
+
 	if (!CubeMesh)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC SpiralGarden] /Game/WFC_Modules/Cube not found."));
+		// WFC_Modules 目录被重新用于 Style 资产后，旧 Cube 可能已不在；
+		// 用项目自带的 100cm SM_Cube 兜底，ComputedCubeEdge 会自动适配。
+		CubeMesh = Cast<UStaticMesh>(
+			StaticLoadObject(UStaticMesh::StaticClass(), nullptr, TEXT("/Game/LevelPrototyping/Meshes/SM_Cube.SM_Cube")));
+	}
+
+	if (!CubeMesh)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[WFC SpiralGarden] No cube mesh found (WFC_Modules/Cube or LevelPrototyping/SM_Cube)."));
 		return false;
 	}
 

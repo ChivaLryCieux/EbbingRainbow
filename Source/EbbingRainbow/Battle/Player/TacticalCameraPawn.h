@@ -50,7 +50,21 @@ public:
 	float MinArmLength = 800.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-	float MaxArmLength = 5000.0f;
+	float MaxArmLength = 9000.0f;
+
+	/** 中键轨道旋转：水平拖动每像素转多少度 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+	float OrbitYawSpeed = 0.22f;
+
+	/** 中键轨道旋转：垂直拖动每像素改多少俯仰 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+	float OrbitPitchSpeed = 0.12f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+	float MinPitch = -85.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+	float MaxPitch = -18.0f;
 
 	/** 屏幕边缘滚动 (像素宽度,0 关闭) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
@@ -65,6 +79,8 @@ protected:
 private:
 	void ZoomIn();
 	void ZoomOut();
+	void StartOrbit();
+	void StopOrbit();
 
 	UPROPERTY(VisibleAnywhere, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -76,7 +92,9 @@ private:
 	TObjectPtr<UCameraComponent> Camera;
 
 	FVector TargetLocation = FVector::ZeroVector;
-	float TargetArmLength = 2800.0f;
+	float TargetArmLength = 4200.0f;
 	float TargetYaw = 45.0f;
+	float TargetPitch = -60.0f;
+	bool bOrbiting = false;
 	FBox MoveBounds = FBox(ForceInit);
 };

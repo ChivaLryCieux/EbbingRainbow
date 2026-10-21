@@ -638,9 +638,9 @@ void SBattleMainOverlay::RebuildInitiativeBar()
 		ChipBrush->OutlineSettings.Color = FSlateColor(FrameColor);
 		ChipBrushes.Add(ChipBrush);
 
-		const float HPPercent = (Unit->Stats.MaxHP > 0) ? (float)Unit->HP / (float)Unit->Stats.MaxHP : 0.0f;
-		const FString UnitLabel = bIsAlive ? FString::Printf(TEXT("%s\nSPD %d"), *Unit->Stats.DisplayName, Unit->Stats.Speed)
-		                                   : FString::Printf(TEXT("%s\n[DEAD]"), *Unit->Stats.DisplayName);
+		const float HPPercent = (Unit->Stats.MaxIntegrity > 0.0f) ? (Unit->Integrity / Unit->Stats.MaxIntegrity) : 0.0f;
+		const FString UnitLabel = bIsAlive ? FString::Printf(TEXT("%s\n先攻 %d"), *Unit->Stats.DisplayName, Unit->Stats.Initiative)
+		                                   : FString::Printf(TEXT("%s\n[已损毁]"), *Unit->Stats.DisplayName);
 
 		InitiativeHBox->AddSlot()
 		.AutoWidth()
@@ -700,19 +700,26 @@ void SBattleMainOverlay::UpdateHeroPlate(ABattleUnit* Unit)
 
 	if (ActiveHeroHPText.IsValid())
 	{
-		ActiveHeroHPText->SetText(FText::FromString(FString::Printf(TEXT("生命值 HP: %d / %d"), Unit->HP, Unit->Stats.MaxHP)));
+		if (Unit->Barrier > 0.0f)
+		{
+			ActiveHeroHPText->SetText(FText::FromString(FString::Printf(TEXT("完整度: %.0f / %.0f (+%.0f护盾)"), Unit->Integrity, Unit->Stats.MaxIntegrity, Unit->Barrier)));
+		}
+		else
+		{
+			ActiveHeroHPText->SetText(FText::FromString(FString::Printf(TEXT("完整度: %.0f / %.0f"), Unit->Integrity, Unit->Stats.MaxIntegrity)));
+		}
 	}
 
 	if (ActiveHeroHPBar.IsValid())
 	{
-		const float Pct = (Unit->Stats.MaxHP > 0) ? (float)Unit->HP / (float)Unit->Stats.MaxHP : 0.0f;
+		const float Pct = (Unit->Stats.MaxIntegrity > 0.0f) ? (Unit->Integrity / Unit->Stats.MaxIntegrity) : 0.0f;
 		ActiveHeroHPBar->SetPercent(Pct);
 		ActiveHeroHPBar->SetFillColorAndOpacity(Pct > 0.3f ? FLinearColor(0.2f, 0.85f, 0.35f) : FLinearColor(0.9f, 0.25f, 0.15f));
 	}
 
 	if (ActiveHeroAPText.IsValid())
 	{
-		ActiveHeroAPText->SetText(FText::FromString(FString::Printf(TEXT("行动点 AP: %.1f / %.0f\n(1 AP = 200cm 自由寻路)"), Unit->AP, Unit->Stats.MaxAP)));
+		ActiveHeroAPText->SetText(FText::FromString(FString::Printf(TEXT("行动点 AP: %d / %d\n(先攻 %d -> 1 AP = %.0fcm 移动)"), Unit->AP, Unit->Stats.MaxAP, Unit->Stats.Initiative, Unit->GetCmPerAP())));
 	}
 }
 
@@ -748,10 +755,10 @@ void SBattleMainOverlay::RebuildHandCards(ABattleUnit* Unit)
 		TSharedPtr<SBattleSkillCardWidget> CardWidget = SNew(SBattleSkillCardWidget)
 			.CardIndex(i)
 			.Title(FText::FromString(Skill.DisplayName))
-			.Category(FText::FromString(FString::Printf(TEXT("射程 %.0fcm | 伤害 %d"), Skill.Range, Skill.BaseDamage)))
+			.Category(FText::FromString(FString::Printf(TEXT("射程 %.0fcm | 伤害 %d (%s)"), Skill.Range, Skill.BaseDamage, GetDamageTypeName(Skill.DamageType))))
 			.Description(FText::FromString(Skill.Description))
 			.HotkeyText(FText::FromString(Hotkey))
-			.APCost(Skill.APCost)
+			.APCost((float)Skill.APCost)
 			.bIsMoveCard(false)
 			.AccentColor(Skill.Color)
 			.OnClicked_Lambda([this, i]() {
@@ -772,7 +779,7 @@ void SBattleMainOverlay::RebuildHandCards(ABattleUnit* Unit)
 
 	// 2. 生成战术移动卡牌
 	{
-		const bool bCanAffordMove = (Unit->AP >= 0.5f);
+		const bool bCanAffordMove = (Unit->AP >= 1);
 		const bool bIsMoveSelected = (Mode == EPlayerInteractionMode::Moving);
 
 		TSharedPtr<SBattleSkillCardWidget> MoveCardWidget = SNew(SBattleSkillCardWidget)

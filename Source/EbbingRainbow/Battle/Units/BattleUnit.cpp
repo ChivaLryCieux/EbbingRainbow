@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Units/BattleUnit.h"
+#include "Battle/Skills/BattleSkillData.h"
 #include "Battle/UI/BattleFloatingText.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -111,18 +112,133 @@ float ABattleUnit::GetCapsuleHalfHeight() const
 	return GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 }
 
+float ABattleUnit::GetCmPerAP() const
+{
+	const int32 EffectiveInitiative = FMath::Max(1, Stats.Initiative);
+	return EffectiveInitiative * CmPerInitiativeUnit;
+}
+
+void ABattleUnit::AddBarrier(float Amount)
+{
+	if (Amount > 0.0f && IsAlive())
+	{
+		Barrier += Amount;
+		RefreshLabel();
+		const FVector FloatingLoc = GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, FString::Printf(TEXT("+%d 护盾"), FMath::RoundToInt(Amount)), FColor(80, 180, 255), 38.0f);
+	}
+}
+
+void ABattleUnit::ApplyAttributeModifier(ETargetAttributeType AttrType, float Value, EAttributeModifierOp Op, ABattleUnit* InInstigator, EDamageType DamageType)
+{
+	if (!IsAlive())
+	{
+		return;
+	}
+
+	const FVector FloatingLoc = GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f);
+
+	switch (AttrType)
+	{
+	case ETargetAttributeType::Integrity:
+		if (Value < 0.0f)
+		{
+			// 扣除完整度走完整的闪避与抗性减免流程
+			TakeBattleDamage(-Value, InInstigator, DamageType);
+		}
+		else if (Value > 0.0f)
+		{
+			// 修复 / 恢复完整度
+			const float HealAmount = FMath::Min(Value, Stats.MaxIntegrity - Integrity);
+			Integrity += HealAmount;
+			HP = FMath::RoundToInt(Integrity);
+			RefreshLabel();
+			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, FString::Printf(TEXT("+%d 完整度"), FMath::RoundToInt(HealAmount)), FColor(80, 255, 120), 38.0f);
+		}
+		break;
+
+	case ETargetAttributeType::Barrier:
+		AddBarrier(Value);
+		break;
+
+	case ETargetAttributeType::AP:
+		{
+			const int32 DeltaAP = FMath::RoundToInt(Value);
+			AP = FMath::Clamp(AP + DeltaAP, 0, Stats.MaxAP);
+			RefreshLabel();
+			const FString APStr = (DeltaAP >= 0) ? FString::Printf(TEXT("+%d AP"), DeltaAP) : FString::Printf(TEXT("%d AP"), DeltaAP);
+			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, APStr, FColor(100, 200, 255), 38.0f);
+		}
+		break;
+
+	case ETargetAttributeType::Initiative:
+		{
+			const int32 DeltaInit = FMath::RoundToInt(Value);
+			Stats.Initiative = FMath::Max(1, Stats.Initiative + DeltaInit);
+			RefreshLabel();
+			const FString InitStr = (DeltaInit >= 0) ? FString::Printf(TEXT("先攻 +%d"), DeltaInit) : FString::Printf(TEXT("先攻 %d"), DeltaInit);
+			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, InitStr, FColor(255, 210, 80), 38.0f);
+		}
+		break;
+
+	case ETargetAttributeType::EvasionRate:
+		{
+			Stats.EvasionRate = FMath::Clamp(Stats.EvasionRate + Value, 0.0f, 1.0f);
+			const FString EvaStr = FString::Printf(TEXT("闪避率 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
+			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, EvaStr, FColor(180, 180, 255), 36.0f);
+		}
+		break;
+
+	case ETargetAttributeType::KineticResistance:
+		{
+			Stats.KineticResistance = FMath::Clamp(Stats.KineticResistance + Value, -1.0f, 0.85f);
+			const FString ResStr = FString::Printf(TEXT("力学抗性 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
+			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Kinetic), 36.0f);
+		}
+		break;
+
+	case ETargetAttributeType::ThermalResistance:
+		{
+			Stats.ThermalResistance = FMath::Clamp(Stats.ThermalResistance + Value, -1.0f, 0.85f);
+			const FString ResStr = FString::Printf(TEXT("热学抗性 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
+			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Thermal), 36.0f);
+		}
+		break;
+
+	case ETargetAttributeType::ElectricResistance:
+		{
+			Stats.ElectricResistance = FMath::Clamp(Stats.ElectricResistance + Value, -1.0f, 0.85f);
+			const FString ResStr = FString::Printf(TEXT("电学抗性 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
+			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Electric), 36.0f);
+		}
+		break;
+
+	case ETargetAttributeType::ChemicalResistance:
+		{
+			Stats.ChemicalResistance = FMath::Clamp(Stats.ChemicalResistance + Value, -1.0f, 0.85f);
+			const FString ResStr = FString::Printf(TEXT("化学抗性 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
+			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Chemical), 36.0f);
+		}
+		break;
+	}
+}
+
 void ABattleUnit::InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam)
 {
 	Stats = InStats;
 	Team = InTeam;
-	HP = Stats.MaxHP;
+	Integrity = Stats.MaxIntegrity;
+	HP = FMath::RoundToInt(Integrity);
 	AP = Stats.MaxAP;
+	Barrier = 0.0f;
 
-	// 默认技能配置 (如果没有定制技能)
+	// 默认技能配置 (涵盖力学、热学、电学以供基础演示)
 	if (Stats.Skills.Num() == 0)
 	{
-		Stats.Skills.Add(FBattleSkillDef(TEXT("Slash"), TEXT("Slash (近战斩击)"), 4.0f, 250.0f, 12, TEXT("近身重击目标敌军"), FLinearColor(1.0f, 0.3f, 0.1f)));
-		Stats.Skills.Add(FBattleSkillDef(TEXT("Shoot"), TEXT("Shoot (远程射击)"), 5.0f, 1200.0f, 8, TEXT("远程射击敌军目标"), FLinearColor(0.2f, 0.9f, 0.4f)));
+		Stats.Skills.Add(FBattleSkillDef(TEXT("Slash"), TEXT("Slash (近战斩击)"), 1, 250.0f, 15, EDamageType::Kinetic, TEXT("近身重击目标敌军 (力学伤害)"), FLinearColor(1.0f, 0.4f, 0.1f)));
+		Stats.Skills.Add(FBattleSkillDef(TEXT("Shoot"), TEXT("Shoot (远程穿透)"), 2, 1200.0f, 12, EDamageType::Kinetic, TEXT("远程狙击敌军目标 (力学伤害)"), FLinearColor(0.2f, 0.9f, 0.4f)));
+		Stats.Skills.Add(FBattleSkillDef(TEXT("Overheat"), TEXT("Overheat (热能过载)"), 2, 650.0f, 18, EDamageType::Thermal, TEXT("向目标倾泻高热粒子 (热学伤害)"), FLinearColor(1.0f, 0.15f, 0.1f)));
+		Stats.Skills.Add(FBattleSkillDef(TEXT("Shock"), TEXT("Shock (电弧激荡)"), 1, 800.0f, 10, EDamageType::Electric, TEXT("发射高频电弧脉冲 (电学伤害)"), FLinearColor(0.2f, 0.7f, 1.0f)));
 	}
 
 	if (!BodyMID && BodyMesh)
@@ -203,24 +319,42 @@ void ABattleUnit::RefreshLabel()
 	{
 		if (!IsAlive())
 		{
-			Label->SetText(FText::FromString(FString::Printf(TEXT("%s\n[DEAD]"), *Stats.DisplayName)));
+			Label->SetText(FText::FromString(FString::Printf(TEXT("%s\n[已损毁]"), *Stats.DisplayName)));
 			Label->SetTextRenderColor(FColor(100, 100, 100));
 		}
 		else
 		{
-			Label->SetText(FText::FromString(FString::Printf(TEXT("%s\nHP %d/%d  AP %.1f/%.0f  SPD %d"),
-				*Stats.DisplayName, HP, Stats.MaxHP, AP, Stats.MaxAP, Stats.Speed)));
+			FString StatusStr;
+			if (Barrier > 0.0f)
+			{
+				StatusStr = FString::Printf(TEXT("%s\n完整度 %.0f/%.0f (+%.0f护盾)  AP %d/%d  先攻 %d"),
+					*Stats.DisplayName, Integrity, Stats.MaxIntegrity, Barrier, AP, Stats.MaxAP, Stats.Initiative);
+			}
+			else
+			{
+				StatusStr = FString::Printf(TEXT("%s\n完整度 %.0f/%.0f  AP %d/%d  先攻 %d"),
+					*Stats.DisplayName, Integrity, Stats.MaxIntegrity, AP, Stats.MaxAP, Stats.Initiative);
+			}
+			Label->SetText(FText::FromString(StatusStr));
 		}
 	}
 }
 
 bool ABattleUnit::PlanMove(const FVector& Destination, TArray<FVector>& OutPath, float& OutCostAP, bool& bOutTruncated) const
 {
+	int32 CostInt = 0;
+	const bool bRes = PlanMove(Destination, OutPath, CostInt, bOutTruncated);
+	OutCostAP = (float)CostInt;
+	return bRes;
+}
+
+bool ABattleUnit::PlanMove(const FVector& Destination, TArray<FVector>& OutPath, int32& OutCostAP, bool& bOutTruncated) const
+{
 	OutPath.Reset();
-	OutCostAP = 0.0f;
+	OutCostAP = 0;
 	bOutTruncated = false;
 
-	if (!IsAlive() || AP <= 0.05f)
+	if (!IsAlive() || AP <= 0)
 	{
 		return false;
 	}
@@ -256,8 +390,9 @@ bool ABattleUnit::PlanMove(const FVector& Destination, TArray<FVector>& OutPath,
 		return false;
 	}
 
-	// 按 AP 预算截断
-	const float BudgetCm = AP * CmPerAP;
+	// 转化率: 由先攻值决定 1 点 AP 可移动的最大距离 (cm)
+	const float CmPerAPVal = GetCmPerAP();
+	const float BudgetCm = (float)AP * CmPerAPVal;
 	float UsedCm = 0.0f;
 	OutPath.Add(NavPath->PathPoints[0]);
 	for (int32 i = 1; i < NavPath->PathPoints.Num(); ++i)
@@ -283,26 +418,32 @@ bool ABattleUnit::PlanMove(const FVector& Destination, TArray<FVector>& OutPath,
 		}
 	}
 
-	OutCostAP = UsedCm / CmPerAP;
-	return OutPath.Num() >= 2 && OutCostAP > 0.05f;
+	if (UsedCm <= 10.0f)
+	{
+		return false;
+	}
+
+	// 向上取整计算 AP 消耗: 例如移动 260cm, 每点 AP 能走 250cm, 则需消耗 2 点 AP
+	OutCostAP = FMath::Clamp(FMath::CeilToInt(UsedCm / CmPerAPVal), 1, AP);
+	return OutPath.Num() >= 2;
 }
 
 bool ABattleUnit::MoveTo(const FVector& Destination)
 {
-	if (bMoving || !IsAlive())
+	if (bMoving || !IsAlive() || AP <= 0)
 	{
 		return false;
 	}
 
 	TArray<FVector> Path;
-	float Cost = 0.0f;
+	int32 Cost = 0;
 	bool bTruncated = false;
-	if (!PlanMove(Destination, Path, Cost, bTruncated))
+	if (!PlanMove(Destination, Path, Cost, bTruncated) || Cost <= 0)
 	{
 		return false;
 	}
 
-	AP = FMath::Max(0.0f, AP - Cost);
+	AP = FMath::Max(0, AP - Cost);
 	MovePath = MoveTemp(Path);
 	MovePathIndex = 1;
 	bMoving = true;
@@ -331,13 +472,56 @@ void ABattleUnit::FinishMove()
 	OnMoveFinished.Broadcast(this);
 }
 
+void ABattleUnit::EquipSkillData(UBattleSkillData* InSkillData)
+{
+	if (!InSkillData)
+	{
+		return;
+	}
+
+	EquippedSkills.Add(InSkillData);
+
+	// 同步生成一份 FBattleSkillDef 供 UI 与控制器无缝展现
+	FBattleSkillDef SkillDef;
+	SkillDef.SkillId = InSkillData->SkillId;
+	SkillDef.DisplayName = InSkillData->DisplayName.IsEmpty() ? InSkillData->GetName() : InSkillData->DisplayName.ToString();
+	SkillDef.APCost = InSkillData->APCost;
+	SkillDef.Range = InSkillData->Range;
+	SkillDef.DamageType = InSkillData->GetDisciplineDamageType();
+	SkillDef.Description = InSkillData->Description.ToString();
+	SkillDef.Color = InSkillData->ThemeColor;
+
+	// 从 TargetEffects 中提取预估伤害数值供卡牌角标展示
+	for (const FAttributeEffectDef& Eff : InSkillData->TargetEffects)
+	{
+		if (Eff.TargetAttribute == ETargetAttributeType::Integrity && Eff.Value < 0.0f)
+		{
+			SkillDef.BaseDamage = FMath::RoundToInt(-Eff.Value * InSkillData->HitCount);
+			break;
+		}
+	}
+
+	Stats.Skills.Add(SkillDef);
+}
+
 bool ABattleUnit::CanUseSkill(int32 SkillIndex, const ABattleUnit* Target, FString& OutReason) const
 {
 	if (!IsAlive())
 	{
-		OutReason = TEXT("单位已死亡");
+		OutReason = TEXT("单位已损毁");
 		return false;
 	}
+
+	// 优先走技能资产验证
+	if (EquippedSkills.IsValidIndex(SkillIndex) && EquippedSkills[SkillIndex])
+	{
+		FBattleSkillExecutionContext Context;
+		Context.Caster = const_cast<ABattleUnit*>(this);
+		Context.Target = const_cast<ABattleUnit*>(Target);
+		Context.TargetLocation = Target ? Target->GetActorLocation() : FVector::ZeroVector;
+		return EquippedSkills[SkillIndex]->CanActivate(this, Context, OutReason);
+	}
+
 	if (!Stats.Skills.IsValidIndex(SkillIndex))
 	{
 		OutReason = TEXT("无效的技能索引");
@@ -346,12 +530,12 @@ bool ABattleUnit::CanUseSkill(int32 SkillIndex, const ABattleUnit* Target, FStri
 	const FBattleSkillDef& Skill = Stats.Skills[SkillIndex];
 	if (AP < Skill.APCost)
 	{
-		OutReason = FString::Printf(TEXT("行动值不足 (需要 %.0f, 剩余 %.1f)"), Skill.APCost, AP);
+		OutReason = FString::Printf(TEXT("行动点不足 (需要 %d, 剩余 %d)"), Skill.APCost, AP);
 		return false;
 	}
 	if (!Target || !Target->IsAlive())
 	{
-		OutReason = TEXT("目标不存在或已死亡");
+		OutReason = TEXT("目标不存在或已损毁");
 		return false;
 	}
 	if (Target->Team == Team)
@@ -378,8 +562,22 @@ bool ABattleUnit::ExecuteSkill(int32 SkillIndex, ABattleUnit* Target)
 		return false;
 	}
 
+	// 优先执行 UBattleSkillData 资产逻辑
+	if (EquippedSkills.IsValidIndex(SkillIndex) && EquippedSkills[SkillIndex])
+	{
+		UBattleSkillData* SkillAsset = EquippedSkills[SkillIndex];
+		AP = FMath::Max(0, AP - SkillAsset->APCost);
+		RefreshLabel();
+
+		FBattleSkillExecutionContext Context;
+		Context.Caster = this;
+		Context.Target = Target;
+		Context.TargetLocation = Target ? Target->GetActorLocation() : FVector::ZeroVector;
+		return SkillAsset->Execute(Context);
+	}
+
 	const FBattleSkillDef& Skill = Stats.Skills[SkillIndex];
-	AP = FMath::Max(0.0f, AP - Skill.APCost);
+	AP = FMath::Max(0, AP - Skill.APCost);
 	RefreshLabel();
 
 	// 面向目标
@@ -408,27 +606,86 @@ bool ABattleUnit::ExecuteSkill(int32 SkillIndex, ABattleUnit* Target)
 		DrawDebugSphere(World, HitLoc, 40.0f, 12, Skill.Color.ToFColor(true), false, 1.0f);
 	}
 
-	Target->TakeBattleDamage(Skill.BaseDamage, this);
+	Target->TakeBattleDamage(Skill.BaseDamage, this, Skill.DamageType);
 	return true;
 }
 
-int32 ABattleUnit::TakeBattleDamage(int32 DamageAmount, ABattleUnit* Attacker)
+float ABattleUnit::TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType)
 {
-	if (!IsAlive())
+	if (!IsAlive() || DamageAmount <= 0.0f)
 	{
-		return 0;
+		return 0.0f;
 	}
 
-	const int32 ActualDamage = FMath::Min(HP, DamageAmount);
-	HP -= ActualDamage;
-
-	// 生成 3D 战场浮动伤害跳字
 	const FVector FloatingLoc = GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f);
-	const FString DamageStr = FString::Printf(TEXT("-%d"), ActualDamage);
-	const FColor DamageColor = (Team == EBattleTeam::Player) ? FColor(255, 65, 65) : FColor(255, 215, 30);
-	ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, DamageStr, DamageColor, 42.0f);
 
-	// 简单受击闪烁
+	// 1. 闪避判定 (EvasionRate)
+	if (Stats.EvasionRate > 0.0f && FMath::FRand() < Stats.EvasionRate)
+	{
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, TEXT("闪避 (EVADED)"), FColor(120, 200, 255), 36.0f);
+		return 0.0f;
+	}
+
+	// 2. 抗性减免计算
+	float Resistance = 0.0f;
+	switch (DamageType)
+	{
+	case EDamageType::Kinetic:    Resistance = Stats.KineticResistance; break;
+	case EDamageType::Thermal:    Resistance = Stats.ThermalResistance; break;
+	case EDamageType::Electric:   Resistance = Stats.ElectricResistance; break;
+	case EDamageType::Chemical:   Resistance = Stats.ChemicalResistance; break;
+	case EDamageType::TrueDamage: Resistance = 0.0f; break;
+	}
+
+	// 抗性减免 [-1.0f, 0.85f]
+	Resistance = FMath::Clamp(Resistance, -1.0f, 0.85f);
+	float MitigatedDamage = DamageAmount * (1.0f - Resistance);
+	MitigatedDamage = FMath::Max(1.0f, MitigatedDamage);
+
+	// 3. 护盾吸收 (Barrier)
+	float BarrierAbsorbed = 0.0f;
+	if (Barrier > 0.0f)
+	{
+		BarrierAbsorbed = FMath::Min(Barrier, MitigatedDamage);
+		Barrier -= BarrierAbsorbed;
+		MitigatedDamage -= BarrierAbsorbed;
+	}
+
+	// 4. 扣除完整度 (Integrity)
+	const float ActualIntegrityDamage = FMath::Min(Integrity, MitigatedDamage);
+	Integrity -= ActualIntegrityDamage;
+	HP = FMath::RoundToInt(Integrity);
+
+	// 5. 飘字与反馈
+	const FColor DamageColor = GetDamageTypeColor(DamageType);
+	FString DamageText;
+	if (BarrierAbsorbed > 0.0f && ActualIntegrityDamage > 0.0f)
+	{
+		DamageText = FString::Printf(TEXT("-%d (护盾 -%d)"), FMath::RoundToInt(ActualIntegrityDamage), FMath::RoundToInt(BarrierAbsorbed));
+	}
+	else if (BarrierAbsorbed > 0.0f)
+	{
+		DamageText = FString::Printf(TEXT("[护盾吸收 %d]"), FMath::RoundToInt(BarrierAbsorbed));
+	}
+	else
+	{
+		if (Resistance <= -0.15f)
+		{
+			DamageText = FString::Printf(TEXT("-%d [弱点!]"), FMath::RoundToInt(ActualIntegrityDamage));
+		}
+		else if (Resistance >= 0.25f)
+		{
+			DamageText = FString::Printf(TEXT("-%d [抵抗]"), FMath::RoundToInt(ActualIntegrityDamage));
+		}
+		else
+		{
+			DamageText = FString::Printf(TEXT("-%d"), FMath::RoundToInt(ActualIntegrityDamage));
+		}
+	}
+
+	ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, DamageText, DamageColor, 40.0f);
+
+	// 受击闪烁
 	if (BodyMID)
 	{
 		BodyMID->SetVectorParameterValue(TEXT("Color"), FLinearColor::White);
@@ -438,11 +695,13 @@ int32 ABattleUnit::TakeBattleDamage(int32 DamageAmount, ABattleUnit* Attacker)
 		}, 0.15f, false);
 	}
 
-	OnUnitDamaged.Broadcast(this, ActualDamage);
+	OnUnitDamaged.Broadcast(this, FMath::RoundToInt(ActualIntegrityDamage));
 	RefreshLabel();
 
-	if (HP <= 0)
+	// 6. 阵亡结算
+	if (!IsAlive())
 	{
+		Integrity = 0.0f;
 		HP = 0;
 		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		if (GetMesh())
@@ -455,7 +714,7 @@ int32 ABattleUnit::TakeBattleDamage(int32 DamageAmount, ABattleUnit* Attacker)
 		OnUnitDied.Broadcast(this);
 	}
 
-	return ActualDamage;
+	return ActualIntegrityDamage + BarrierAbsorbed;
 }
 
 void ABattleUnit::Tick(float DeltaSeconds)

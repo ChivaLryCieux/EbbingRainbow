@@ -30,19 +30,19 @@ public:
 
 	// ---------- 配置 ----------
 
-	/** WFC 网格尺寸 (X, Y, Z 层数)。原型使用单层 */
+	/** WFC 网格尺寸 (X, Y, Z 层数)。SciFi01 使用 4m 格、两层（18x14x2，随机生长） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena")
-	FIntVector GridCells = FIntVector(14, 14, 1);
+	FIntVector GridCells = FIntVector(18, 14, 2);
 
 	/** 单个 WFC 单元格的世界尺寸 (cm)。生成前作为包围盒兜底值，生成后以生成器返回的 CellWorldSize 为准 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena", meta = (ClampMin = "50"))
-	float CellWorldSize = 200.0f;
+	float CellWorldSize = 400.0f;
 
 	/** 当前进度对应的建筑风格。后续由 RunState / Act 映射写入 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena|WFC")
 	EWFCBuildingStyle Style = EWFCBuildingStyle::Style0;
 
-	/** 可选的风格表；为空时回退到 Style 0 生成器 */
+	/** 可选的风格表；为空时回退到 SciFi01 生成器 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena|WFC")
 	TObjectPtr<UWFC3DStyleTable> StyleTable = nullptr;
 
@@ -70,15 +70,15 @@ public:
 
 	/** 出生区占可达区域 X 方向跨度的比例 (左侧=我方,右侧=敌方) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena|Spawn", meta = (ClampMin = "0.1", ClampMax = "0.5"))
-	float SpawnZoneFraction = 0.3f;
+	float SpawnZoneFraction = 0.35f;
 
-	/** 可达采样点去重 (按实际格子尺寸) 后至少需要的格数,用于判定地图是否够大 */
+	/** 可达采样点去重 (按实际格子尺寸) 后至少需要的格数,用于判定地图是否够大。4m 格下 10x10 房间内部约 64 格 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena|Validation")
-	int32 MinReachableCells = 60;
+	int32 MinReachableCells = 40;
 
-	/** 可达区域在 X 方向的跨度至少占竞技场宽度的比例 */
+	/** 可达区域在 X 方向的跨度至少占竞技场宽度的比例（随机有机布局用 0.35，避免团状布局被误杀） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena|Validation", meta = (ClampMin = "0.1", ClampMax = "1.0"))
-	float MinReachableSpanFraction = 0.5f;
+	float MinReachableSpanFraction = 0.35f;
 
 	/** 用于连通性估计的随机可达点采样数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena|Validation")

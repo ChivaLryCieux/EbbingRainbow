@@ -27,7 +27,7 @@ ATacticalCameraPawn::ATacticalCameraPawn()
 	SpringArm->bInheritYaw = false;
 	SpringArm->bInheritRoll = false;
 	SpringArm->TargetArmLength = TargetArmLength;
-	SpringArm->SetRelativeRotation(FRotator(-60.0f, TargetYaw, 0.0f));
+	SpringArm->SetRelativeRotation(FRotator(TargetPitch, TargetYaw, 0.0f));
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
@@ -74,6 +74,20 @@ void ATacticalCameraPawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 	PlayerInputComponent->BindKey(EKeys::MouseScrollUp, IE_Pressed, this, &ATacticalCameraPawn::ZoomIn);
 	PlayerInputComponent->BindKey(EKeys::MouseScrollDown, IE_Pressed, this, &ATacticalCameraPawn::ZoomOut);
+
+	// 中键按住拖动：围绕当前聚焦点做轨道旋转（博德之门 3 风格）
+	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &ATacticalCameraPawn::StartOrbit);
+	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Released, this, &ATacticalCameraPawn::StopOrbit);
+}
+
+void ATacticalCameraPawn::StartOrbit()
+{
+	bOrbiting = true;
+}
+
+void ATacticalCameraPawn::StopOrbit()
+{
+	bOrbiting = false;
 }
 
 void ATacticalCameraPawn::ZoomIn()
@@ -93,13 +107,28 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (PC)
 	{
+		// 中键轨道旋转：围绕当前聚焦点改变 Yaw/Pitch
+		if (bOrbiting && !PC->IsInputKeyDown(EKeys::MiddleMouseButton))
+		{
+			bOrbiting = false;
+		}
+		if (bOrbiting)
+		{
+			float MouseDeltaX = 0.0f;
+			float MouseDeltaY = 0.0f;
+			PC->GetInputMouseDelta(MouseDeltaX, MouseDeltaY);
+
+			TargetYaw += MouseDeltaX * OrbitYawSpeed;
+			TargetPitch = FMath::Clamp(TargetPitch - MouseDeltaY * OrbitPitchSpeed, MinPitch, MaxPitch);
+		}
+
 		FVector2D Input = FVector2D::ZeroVector;
 		if (PC->IsInputKeyDown(EKeys::W)) Input.X += 1.0f;
 		if (PC->IsInputKeyDown(EKeys::S)) Input.X -= 1.0f;
 		if (PC->IsInputKeyDown(EKeys::D)) Input.Y += 1.0f;
 		if (PC->IsInputKeyDown(EKeys::A)) Input.Y -= 1.0f;
 
-		if (EdgeScrollMargin > 0.0f)
+		if (EdgeScrollMargin > 0.0f && !bOrbiting)
 		{
 			float MX, MY;
 			int32 SX, SY;
@@ -135,5 +164,6 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 	SetActorLocation(FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaSeconds, FocusInterpSpeed));
 	SpringArm->TargetArmLength = FMath::FInterpTo(SpringArm->TargetArmLength, TargetArmLength, DeltaSeconds, 8.0f);
 	const float NewYaw = FMath::FInterpTo(SpringArm->GetRelativeRotation().Yaw, TargetYaw, DeltaSeconds, 8.0f);
-	SpringArm->SetRelativeRotation(FRotator(-60.0f, NewYaw, 0.0f));
+	const float NewPitch = FMath::FInterpTo(SpringArm->GetRelativeRotation().Pitch, TargetPitch, DeltaSeconds, 8.0f);
+	SpringArm->SetRelativeRotation(FRotator(NewPitch, NewYaw, 0.0f));
 }
