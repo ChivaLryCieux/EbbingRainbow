@@ -79,9 +79,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	void AddBarrier(float Amount);
 
-	/** 修改指定核心属性 (支持 8 项属性与护盾，带浮动文字反馈) */
+	/** 应用复合属性修饰包 (一次性影响多种属性，带浮动文字反馈) */
 	UFUNCTION(BlueprintCallable, Category = "Battle|Attributes")
-	void ApplyAttributeModifier(ETargetAttributeType AttrType, float Value, EAttributeModifierOp Op = EAttributeModifierOp::AddFlat, ABattleUnit* InInstigator = nullptr, EDamageType DamageType = EDamageType::Kinetic);
+	void ApplyModifierBundle(const FAttributeModifierBundle& Bundle, ABattleUnit* InInstigator = nullptr, EDamageType DamageType = EDamageType::Kinetic);
 
 	// ---------- 移动 ----------
 

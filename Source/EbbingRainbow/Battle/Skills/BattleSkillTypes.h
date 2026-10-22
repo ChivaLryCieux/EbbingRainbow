@@ -53,51 +53,63 @@ enum class ESkillTargetFilter : uint8
 	Any         UMETA(DisplayName = "无差别")
 };
 
-/** 目标属性类型 (对应 8 项核心战棋属性) */
-UENUM(BlueprintType)
-enum class ETargetAttributeType : uint8
-{
-	Integrity           UMETA(DisplayName = "完整度 (生命值)"),
-	AP                  UMETA(DisplayName = "行动点 (AP)"),
-	Initiative          UMETA(DisplayName = "先攻值"),
-	EvasionRate         UMETA(DisplayName = "闪避率"),
-	KineticResistance   UMETA(DisplayName = "力学抗性"),
-	ThermalResistance   UMETA(DisplayName = "热学抗性"),
-	ElectricResistance  UMETA(DisplayName = "电学抗性"),
-	ChemicalResistance  UMETA(DisplayName = "化学抗性"),
-	Barrier             UMETA(DisplayName = "护盾 (屏障)")
-};
-
-/** 属性修改方式 */
-UENUM(BlueprintType)
-enum class EAttributeModifierOp : uint8
-{
-	AddFlat             UMETA(DisplayName = "直接加减数值"),
-	AddPercentage       UMETA(DisplayName = "百分比修饰"),
-	Override            UMETA(DisplayName = "强制覆盖")
-};
-
-/** 技能对某项属性的具体效果配置 */
+/**
+ * 复合属性修饰包 (一次性修改/影响 8 大属性与护盾)
+ * 填 0 表示不影响；负数通常代表伤害/减益，正数代表治疗/强化
+ */
 USTRUCT(BlueprintType)
-struct FAttributeEffectDef
+struct FAttributeModifierBundle
 {
 	GENERATED_BODY()
 
-	/** 影响的目标属性 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect")
-	ETargetAttributeType TargetAttribute = ETargetAttributeType::Integrity;
+	// 1. 完整度变化 (负数为扣减完整度/受到伤害，正数为恢复完整度)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Integrity")
+	float IntegrityDelta = 0.0f;
 
-	/** 修改方式 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect")
-	EAttributeModifierOp Op = EAttributeModifierOp::AddFlat;
+	// 临时护盾变化 (正数为赋予护盾，负数为破坏护盾)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Integrity")
+	float BarrierDelta = 0.0f;
 
-	/** 基础数值 (攻击伤害/治疗为正，削弱抗性/扣减为负) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect")
-	float Value = 10.0f;
+	// 2. 行动点变化 (如扣除目标 1 AP，或技能返还 1 AP)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Action")
+	int32 APDelta = 0;
 
-	/** 持续回合数 (0 表示即时永久结算，>0 表示临时 Buff/Debuff) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect", meta = (ClampMin = "0"))
-	int32 DurationRounds = 0;
+	// 3. 先攻值变化 (正数为提速排前，负数为震荡推后行动顺位)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Action")
+	int32 InitiativeDelta = 0;
+
+	// 4. 闪避率变化 (如 -0.15 表示削弱 15% 闪避率)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Defense")
+	float EvasionDelta = 0.0f;
+
+	// 5. 力学抗性变化 (如 -0.2 表示破坏力学装甲，加深力学伤害)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Resistances")
+	float KineticResistanceDelta = 0.0f;
+
+	// 6. 热学抗性变化 (如 -0.25 造成过热/易燃)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Resistances")
+	float ThermalResistanceDelta = 0.0f;
+
+	// 7. 电学抗性变化 (如 -0.2 造成导电浸润)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Resistances")
+	float ElectricResistanceDelta = 0.0f;
+
+	// 8. 化学抗性变化 (如 -0.3 造成酸蚀溶解)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers|Resistances")
+	float ChemicalResistanceDelta = 0.0f;
+
+	bool HasAnyEffect() const
+	{
+		return !FMath::IsNearlyZero(IntegrityDelta)
+			|| !FMath::IsNearlyZero(BarrierDelta)
+			|| APDelta != 0
+			|| InitiativeDelta != 0
+			|| !FMath::IsNearlyZero(EvasionDelta)
+			|| !FMath::IsNearlyZero(KineticResistanceDelta)
+			|| !FMath::IsNearlyZero(ThermalResistanceDelta)
+			|| !FMath::IsNearlyZero(ElectricResistanceDelta)
+			|| !FMath::IsNearlyZero(ChemicalResistanceDelta);
+	}
 };
 
 /** 技能执行上下文 */

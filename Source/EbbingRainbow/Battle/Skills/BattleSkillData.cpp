@@ -143,23 +143,20 @@ bool UBattleSkillData::Execute(const FBattleSkillExecutionContext& Context)
 	}
 
 	// 4. 对施法者自身应用效果 (如护盾、增益)
-	for (const FAttributeEffectDef& Effect : SelfEffects)
+	if (SelfModifiers.HasAnyEffect())
 	{
-		ApplyAttributeEffect(Caster, Caster, Effect);
+		ApplyModifierBundle(Caster, Caster, SelfModifiers);
 	}
 
 	// 5. 对目标应用效果 (区分轻型多次打击与重型单次爆发)
-	if (Target)
+	if (Target && TargetModifiers.HasAnyEffect())
 	{
 		const int32 ActualHits = FMath::Max(1, HitCount);
 
 		if (ActualHits == 1)
 		{
 			// 重型 (单次高伤爆发) 或单发技能
-			for (const FAttributeEffectDef& Effect : TargetEffects)
-			{
-				ApplyAttributeEffect(Target, Caster, Effect);
-			}
+			ApplyModifierBundle(Target, Caster, TargetModifiers);
 		}
 		else
 		{
@@ -170,26 +167,20 @@ bool UBattleSkillData::Execute(const FBattleSkillExecutionContext& Context)
 				const float Delay = HitIdx * HitInterval;
 				if (Delay <= KINDA_SMALL_NUMBER)
 				{
-					for (const FAttributeEffectDef& Effect : TargetEffects)
-					{
-						ApplyAttributeEffect(Target, Caster, Effect);
-					}
+					ApplyModifierBundle(Target, Caster, TargetModifiers);
 				}
 				else
 				{
 					TWeakObjectPtr<ABattleUnit> WeakTarget = Target;
 					TWeakObjectPtr<ABattleUnit> WeakCaster = Caster;
-					TArray<FAttributeEffectDef> EffectsCopy = TargetEffects;
+					FAttributeModifierBundle ModifiersCopy = TargetModifiers;
 					EDamageType DmgType = GetDisciplineDamageType();
 
 					FTimerHandle HitHandle;
-					World->GetTimerManager().SetTimer(HitHandle, [WeakTarget, WeakCaster, EffectsCopy, this]() {
+					World->GetTimerManager().SetTimer(HitHandle, [WeakTarget, WeakCaster, ModifiersCopy, DmgType]() {
 						if (WeakTarget.IsValid() && WeakTarget->IsAlive() && WeakCaster.IsValid())
 						{
-							for (const FAttributeEffectDef& Effect : EffectsCopy)
-							{
-								const_cast<UBattleSkillData*>(this)->ApplyAttributeEffect(WeakTarget.Get(), WeakCaster.Get(), Effect);
-							}
+							WeakTarget->ApplyModifierBundle(ModifiersCopy, WeakCaster.Get(), DmgType);
 						}
 					}, Delay, false);
 				}
@@ -203,7 +194,7 @@ bool UBattleSkillData::Execute(const FBattleSkillExecutionContext& Context)
 	return true;
 }
 
-void UBattleSkillData::ApplyAttributeEffect(ABattleUnit* Receiver, ABattleUnit* Instigator, const FAttributeEffectDef& EffectDef)
+void UBattleSkillData::ApplyModifierBundle(ABattleUnit* Receiver, ABattleUnit* SourceUnit, const FAttributeModifierBundle& Bundle)
 {
 	if (!Receiver || !Receiver->IsAlive())
 	{
@@ -211,7 +202,7 @@ void UBattleSkillData::ApplyAttributeEffect(ABattleUnit* Receiver, ABattleUnit* 
 	}
 
 	const EDamageType DmgType = GetDisciplineDamageType();
-	Receiver->ApplyAttributeModifier(EffectDef.TargetAttribute, EffectDef.Value, EffectDef.Op, Instigator, DmgType);
+	Receiver->ApplyModifierBundle(Bundle, SourceUnit, DmgType);
 }
 
 #if WITH_EDITOR

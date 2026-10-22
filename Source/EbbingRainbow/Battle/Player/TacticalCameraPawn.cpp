@@ -19,6 +19,10 @@ ATacticalCameraPawn::ATacticalCameraPawn()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
 
+	TargetArmLength = DefaultArmLength;
+	TargetYaw = DefaultYaw;
+	TargetPitch = DefaultPitch;
+
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(SceneRoot);
 	SpringArm->bDoCollisionTest = false;
@@ -33,11 +37,38 @@ ATacticalCameraPawn::ATacticalCameraPawn()
 	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
 }
 
+#if WITH_EDITOR
+void ATacticalCameraPawn::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	if (SpringArm)
+	{
+		SpringArm->TargetArmLength = DefaultArmLength;
+		SpringArm->SetRelativeRotation(FRotator(DefaultPitch, DefaultYaw, 0.0f));
+	}
+}
+#endif
+
 void ATacticalCameraPawn::BeginPlay()
 {
 	Super::BeginPlay();
 
 	TargetLocation = GetActorLocation();
+	TargetArmLength = FMath::Clamp(DefaultArmLength, MinArmLength, MaxArmLength);
+	TargetYaw = DefaultYaw;
+	TargetPitch = FMath::Clamp(DefaultPitch, MinPitch, MaxPitch);
+
+	if (bEnableZoomPitchCoupling)
+	{
+		TargetPitch = FMath::Clamp(GetCoupledPitchForArmLength(TargetArmLength), MinPitch, MaxPitch);
+	}
+
+	if (SpringArm)
+	{
+		SpringArm->TargetArmLength = TargetArmLength;
+		SpringArm->SetRelativeRotation(FRotator(TargetPitch, TargetYaw, 0.0f));
+	}
 
 	// 竞技场范围由配置确定 (无需等待生成完成),直接聚焦其中心
 	for (TActorIterator<ABattleArena> It(GetWorld()); It; ++It)
@@ -46,6 +77,18 @@ void ATacticalCameraPawn::BeginPlay()
 		SnapTo(It->GetArenaCenter());
 		break;
 	}
+}
+
+void ATacticalCameraPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	StopOrbit();
+	Super::EndPlay(EndPlayReason);
+}
+
+void ATacticalCameraPawn::UnPossessed()
+{
+	StopOrbit();
+	Super::UnPossessed();
 }
 
 void ATacticalCameraPawn::SetMoveBounds(const FBox& InBounds)
@@ -72,6 +115,7 @@ void ATacticalCameraPawn::SnapTo(const FVector& WorldLocation)
 void ATacticalCameraPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
 	PlayerInputComponent->BindKey(EKeys::MouseScrollUp, IE_Pressed, this, &ATacticalCameraPawn::ZoomIn);
 	PlayerInputComponent->BindKey(EKeys::MouseScrollDown, IE_Pressed, this, &ATacticalCameraPawn::ZoomOut);
 
@@ -83,21 +127,69 @@ void ATacticalCameraPawn::SetupPlayerInputComponent(UInputComponent* PlayerInput
 void ATacticalCameraPawn::StartOrbit()
 {
 	bOrbiting = true;
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		float MX = 0.0f;
+		float MY = 0.0f;
+		if (PC->GetMousePosition(MX, MY))
+		{
+			InitialOrbitMousePos = FVector2D(MX, MY);
+			LastMousePos = FVector2D(MX, MY);
+		}
+		PC->bShowMouseCursor = false;
+	}
 }
 
 void ATacticalCameraPawn::StopOrbit()
 {
+	if (!bOrbiting)
+	{
+		return;
+	}
+
 	bOrbiting = false;
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		PC->bShowMouseCursor = true;
+
+		int32 SizeX = 0, SizeY = 0;
+		PC->GetViewportSize(SizeX, SizeY);
+		if (SizeX > 0 && SizeY > 0 && (InitialOrbitMousePos.X > 0.0f || InitialOrbitMousePos.Y > 0.0f))
+		{
+			const int32 SafeX = FMath::Clamp(FMath::RoundToInt(InitialOrbitMousePos.X), 5, SizeX - 5);
+			const int32 SafeY = FMath::Clamp(FMath::RoundToInt(InitialOrbitMousePos.Y), 5, SizeY - 5);
+			PC->SetMouseLocation(SafeX, SafeY);
+		}
+	}
+}
+
+float ATacticalCameraPawn::GetCoupledPitchForArmLength(float InArmLength) const
+{
+	if (!bEnableZoomPitchCoupling || MaxArmLength <= MinArmLength)
+	{
+		return TargetPitch;
+	}
+
+	const float Alpha = FMath::Clamp((InArmLength - MinArmLength) / (MaxArmLength - MinArmLength), 0.0f, 1.0f);
+	return FMath::Lerp(ClosePitch, FarPitch, Alpha);
 }
 
 void ATacticalCameraPawn::ZoomIn()
 {
 	TargetArmLength = FMath::Clamp(TargetArmLength - ZoomStep, MinArmLength, MaxArmLength);
+	if (bEnableZoomPitchCoupling)
+	{
+		TargetPitch = FMath::Clamp(GetCoupledPitchForArmLength(TargetArmLength) + ManualPitchOffset, MinPitch, MaxPitch);
+	}
 }
 
 void ATacticalCameraPawn::ZoomOut()
 {
 	TargetArmLength = FMath::Clamp(TargetArmLength + ZoomStep, MinArmLength, MaxArmLength);
+	if (bEnableZoomPitchCoupling)
+	{
+		TargetPitch = FMath::Clamp(GetCoupledPitchForArmLength(TargetArmLength) + ManualPitchOffset, MinPitch, MaxPitch);
+	}
 }
 
 void ATacticalCameraPawn::Tick(float DeltaSeconds)
@@ -107,19 +199,58 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (PC)
 	{
-		// 中键轨道旋转：围绕当前聚焦点改变 Yaw/Pitch
+		// 严密防御：若中键物理抬起，立即停止旋转
 		if (bOrbiting && !PC->IsInputKeyDown(EKeys::MiddleMouseButton))
 		{
-			bOrbiting = false;
+			StopOrbit();
 		}
+
+		// 基于屏幕绝对坐标计算帧间位移（无非零残留风险，永不狂转）
 		if (bOrbiting)
 		{
-			float MouseDeltaX = 0.0f;
-			float MouseDeltaY = 0.0f;
-			PC->GetInputMouseDelta(MouseDeltaX, MouseDeltaY);
+			float CurX = 0.0f;
+			float CurY = 0.0f;
+			if (PC->GetMousePosition(CurX, CurY))
+			{
+				int32 SizeX = 0;
+				int32 SizeY = 0;
+				PC->GetViewportSize(SizeX, SizeY);
 
-			TargetYaw += MouseDeltaX * OrbitYawSpeed;
-			TargetPitch = FMath::Clamp(TargetPitch - MouseDeltaY * OrbitPitchSpeed, MinPitch, MaxPitch);
+				if (SizeX > 0 && SizeY > 0)
+				{
+					const float DeltaX = CurX - LastMousePos.X;
+					const float DeltaY = CurY - LastMousePos.Y;
+
+					if (FMath::Abs(DeltaX) > 0.01f)
+					{
+						TargetYaw += DeltaX * OrbitYawSpeed;
+					}
+
+					if (FMath::Abs(DeltaY) > 0.01f)
+					{
+						const float PitchDelta = DeltaY * OrbitPitchSpeed * (bInvertOrbitPitch ? -1.0f : 1.0f);
+						TargetPitch = FMath::Clamp(TargetPitch - PitchDelta, MinPitch, MaxPitch);
+
+						if (bEnableZoomPitchCoupling)
+						{
+							ManualPitchOffset = TargetPitch - GetCoupledPitchForArmLength(TargetArmLength);
+						}
+					}
+
+					// 视口边缘回绕保护：当鼠标接近视口边缘（<=30 像素）时，无感移回中心继续累加，实现博德之门 3 式无限 360 度顺畅旋转
+					if (CurX <= 30.0f || CurX >= (float)SizeX - 30.0f || CurY <= 30.0f || CurY >= (float)SizeY - 30.0f)
+					{
+						const int32 CenterX = SizeX / 2;
+						const int32 CenterY = SizeY / 2;
+						PC->SetMouseLocation(CenterX, CenterY);
+						LastMousePos = FVector2D(CenterX, CenterY);
+					}
+					else
+					{
+						LastMousePos = FVector2D(CurX, CurY);
+					}
+				}
+			}
 		}
 
 		FVector2D Input = FVector2D::ZeroVector;
@@ -149,10 +280,11 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 			const FVector Forward = FRotationMatrix(YawRot).GetUnitAxis(EAxis::X);
 			const FVector Right = FRotationMatrix(YawRot).GetUnitAxis(EAxis::Y);
 			const FVector Dir = (Forward * Input.X + Right * Input.Y).GetSafeNormal();
-			// 缩放越远平移越快
-			const float ZoomFactor = SpringArm->TargetArmLength / 2800.0f;
+
+			// 缩放越远平移越快，基准臂长按 2000 归一化
+			const float ZoomFactor = FMath::Max(0.35f, SpringArm->TargetArmLength / 2000.0f);
 			FocusOn(TargetLocation + Dir * PanSpeed * ZoomFactor * DeltaSeconds);
-			// 手动平移时直接跟随,避免插值滞后
+			// 手动平移时直接跟随, 避免插值滞后
 			SetActorLocation(TargetLocation);
 		}
 
@@ -162,8 +294,11 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 
 	// 平滑聚焦 / 缩放 / 旋转
 	SetActorLocation(FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaSeconds, FocusInterpSpeed));
-	SpringArm->TargetArmLength = FMath::FInterpTo(SpringArm->TargetArmLength, TargetArmLength, DeltaSeconds, 8.0f);
-	const float NewYaw = FMath::FInterpTo(SpringArm->GetRelativeRotation().Yaw, TargetYaw, DeltaSeconds, 8.0f);
-	const float NewPitch = FMath::FInterpTo(SpringArm->GetRelativeRotation().Pitch, TargetPitch, DeltaSeconds, 8.0f);
+	SpringArm->TargetArmLength = FMath::FInterpTo(SpringArm->TargetArmLength, TargetArmLength, DeltaSeconds, ZoomInterpSpeed);
+
+	const float CurrentYaw = SpringArm->GetRelativeRotation().Yaw;
+	const float CurrentPitch = SpringArm->GetRelativeRotation().Pitch;
+	const float NewYaw = FMath::FInterpTo(CurrentYaw, TargetYaw, DeltaSeconds, RotateInterpSpeed);
+	const float NewPitch = FMath::FInterpTo(CurrentPitch, TargetPitch, DeltaSeconds, RotateInterpSpeed);
 	SpringArm->SetRelativeRotation(FRotator(NewPitch, NewYaw, 0.0f));
 }

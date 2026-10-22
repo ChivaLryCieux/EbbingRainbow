@@ -129,7 +129,7 @@ void ABattleUnit::AddBarrier(float Amount)
 	}
 }
 
-void ABattleUnit::ApplyAttributeModifier(ETargetAttributeType AttrType, float Value, EAttributeModifierOp Op, ABattleUnit* InInstigator, EDamageType DamageType)
+void ABattleUnit::ApplyModifierBundle(const FAttributeModifierBundle& Bundle, ABattleUnit* InInstigator, EDamageType DamageType)
 {
 	if (!IsAlive())
 	{
@@ -138,88 +138,88 @@ void ABattleUnit::ApplyAttributeModifier(ETargetAttributeType AttrType, float Va
 
 	const FVector FloatingLoc = GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f);
 
-	switch (AttrType)
+	// 1. 完整度修改 (负数为扣减/受击伤害，正数为修复完整度)
+	if (Bundle.IntegrityDelta < 0.0f)
 	{
-	case ETargetAttributeType::Integrity:
-		if (Value < 0.0f)
-		{
-			// 扣除完整度走完整的闪避与抗性减免流程
-			TakeBattleDamage(-Value, InInstigator, DamageType);
-		}
-		else if (Value > 0.0f)
-		{
-			// 修复 / 恢复完整度
-			const float HealAmount = FMath::Min(Value, Stats.MaxIntegrity - Integrity);
-			Integrity += HealAmount;
-			HP = FMath::RoundToInt(Integrity);
-			RefreshLabel();
-			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, FString::Printf(TEXT("+%d 完整度"), FMath::RoundToInt(HealAmount)), FColor(80, 255, 120), 38.0f);
-		}
-		break;
+		TakeBattleDamage(-Bundle.IntegrityDelta, InInstigator, DamageType);
+	}
+	else if (Bundle.IntegrityDelta > 0.0f)
+	{
+		const float HealAmount = FMath::Min(Bundle.IntegrityDelta, Stats.MaxIntegrity - Integrity);
+		Integrity += HealAmount;
+		HP = FMath::RoundToInt(Integrity);
+		RefreshLabel();
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, FString::Printf(TEXT("+%d 完整度"), FMath::RoundToInt(HealAmount)), FColor(80, 255, 120), 38.0f);
+	}
 
-	case ETargetAttributeType::Barrier:
-		AddBarrier(Value);
-		break;
+	// 若在受到伤害后已阵亡，无需继续结算后续附加状态
+	if (!IsAlive())
+	{
+		return;
+	}
 
-	case ETargetAttributeType::AP:
-		{
-			const int32 DeltaAP = FMath::RoundToInt(Value);
-			AP = FMath::Clamp(AP + DeltaAP, 0, Stats.MaxAP);
-			RefreshLabel();
-			const FString APStr = (DeltaAP >= 0) ? FString::Printf(TEXT("+%d AP"), DeltaAP) : FString::Printf(TEXT("%d AP"), DeltaAP);
-			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, APStr, FColor(100, 200, 255), 38.0f);
-		}
-		break;
+	// 2. 护盾修改
+	if (!FMath::IsNearlyZero(Bundle.BarrierDelta))
+	{
+		AddBarrier(Bundle.BarrierDelta);
+	}
 
-	case ETargetAttributeType::Initiative:
-		{
-			const int32 DeltaInit = FMath::RoundToInt(Value);
-			Stats.Initiative = FMath::Max(1, Stats.Initiative + DeltaInit);
-			RefreshLabel();
-			const FString InitStr = (DeltaInit >= 0) ? FString::Printf(TEXT("先攻 +%d"), DeltaInit) : FString::Printf(TEXT("先攻 %d"), DeltaInit);
-			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, InitStr, FColor(255, 210, 80), 38.0f);
-		}
-		break;
+	// 3. 行动点 AP 修改
+	if (Bundle.APDelta != 0)
+	{
+		AP = FMath::Clamp(AP + Bundle.APDelta, 0, Stats.MaxAP);
+		RefreshLabel();
+		const FString APStr = (Bundle.APDelta > 0) ? FString::Printf(TEXT("+%d AP"), Bundle.APDelta) : FString::Printf(TEXT("%d AP"), Bundle.APDelta);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, APStr, FColor(100, 200, 255), 38.0f);
+	}
 
-	case ETargetAttributeType::EvasionRate:
-		{
-			Stats.EvasionRate = FMath::Clamp(Stats.EvasionRate + Value, 0.0f, 1.0f);
-			const FString EvaStr = FString::Printf(TEXT("闪避率 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
-			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, EvaStr, FColor(180, 180, 255), 36.0f);
-		}
-		break;
+	// 4. 先攻值修改
+	if (Bundle.InitiativeDelta != 0)
+	{
+		Stats.Initiative = FMath::Max(1, Stats.Initiative + Bundle.InitiativeDelta);
+		RefreshLabel();
+		const FString InitStr = (Bundle.InitiativeDelta > 0) ? FString::Printf(TEXT("先攻 +%d"), Bundle.InitiativeDelta) : FString::Printf(TEXT("先攻 %d"), Bundle.InitiativeDelta);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, InitStr, FColor(255, 210, 80), 38.0f);
+	}
 
-	case ETargetAttributeType::KineticResistance:
-		{
-			Stats.KineticResistance = FMath::Clamp(Stats.KineticResistance + Value, -1.0f, 0.85f);
-			const FString ResStr = FString::Printf(TEXT("力学抗性 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
-			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Kinetic), 36.0f);
-		}
-		break;
+	// 5. 闪避率修改
+	if (!FMath::IsNearlyZero(Bundle.EvasionDelta))
+	{
+		Stats.EvasionRate = FMath::Clamp(Stats.EvasionRate + Bundle.EvasionDelta, 0.0f, 1.0f);
+		const FString EvaStr = FString::Printf(TEXT("闪避率 %s%.0f%%"), Bundle.EvasionDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.EvasionDelta * 100.0f);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, EvaStr, FColor(180, 180, 255), 36.0f);
+	}
 
-	case ETargetAttributeType::ThermalResistance:
-		{
-			Stats.ThermalResistance = FMath::Clamp(Stats.ThermalResistance + Value, -1.0f, 0.85f);
-			const FString ResStr = FString::Printf(TEXT("热学抗性 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
-			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Thermal), 36.0f);
-		}
-		break;
+	// 6. 力学抗性
+	if (!FMath::IsNearlyZero(Bundle.KineticResistanceDelta))
+	{
+		Stats.KineticResistance = FMath::Clamp(Stats.KineticResistance + Bundle.KineticResistanceDelta, -1.0f, 0.85f);
+		const FString ResStr = FString::Printf(TEXT("力学抗性 %s%.0f%%"), Bundle.KineticResistanceDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.KineticResistanceDelta * 100.0f);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Kinetic), 36.0f);
+	}
 
-	case ETargetAttributeType::ElectricResistance:
-		{
-			Stats.ElectricResistance = FMath::Clamp(Stats.ElectricResistance + Value, -1.0f, 0.85f);
-			const FString ResStr = FString::Printf(TEXT("电学抗性 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
-			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Electric), 36.0f);
-		}
-		break;
+	// 7. 热学抗性
+	if (!FMath::IsNearlyZero(Bundle.ThermalResistanceDelta))
+	{
+		Stats.ThermalResistance = FMath::Clamp(Stats.ThermalResistance + Bundle.ThermalResistanceDelta, -1.0f, 0.85f);
+		const FString ResStr = FString::Printf(TEXT("热学抗性 %s%.0f%%"), Bundle.ThermalResistanceDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.ThermalResistanceDelta * 100.0f);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Thermal), 36.0f);
+	}
 
-	case ETargetAttributeType::ChemicalResistance:
-		{
-			Stats.ChemicalResistance = FMath::Clamp(Stats.ChemicalResistance + Value, -1.0f, 0.85f);
-			const FString ResStr = FString::Printf(TEXT("化学抗性 %s%.0f%%"), Value >= 0.0f ? TEXT("+") : TEXT(""), Value * 100.0f);
-			ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Chemical), 36.0f);
-		}
-		break;
+	// 8. 电学抗性
+	if (!FMath::IsNearlyZero(Bundle.ElectricResistanceDelta))
+	{
+		Stats.ElectricResistance = FMath::Clamp(Stats.ElectricResistance + Bundle.ElectricResistanceDelta, -1.0f, 0.85f);
+		const FString ResStr = FString::Printf(TEXT("电学抗性 %s%.0f%%"), Bundle.ElectricResistanceDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.ElectricResistanceDelta * 100.0f);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Electric), 36.0f);
+	}
+
+	// 9. 化学抗性
+	if (!FMath::IsNearlyZero(Bundle.ChemicalResistanceDelta))
+	{
+		Stats.ChemicalResistance = FMath::Clamp(Stats.ChemicalResistance + Bundle.ChemicalResistanceDelta, -1.0f, 0.85f);
+		const FString ResStr = FString::Printf(TEXT("化学抗性 %s%.0f%%"), Bundle.ChemicalResistanceDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.ChemicalResistanceDelta * 100.0f);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Chemical), 36.0f);
 	}
 }
 
@@ -491,14 +491,10 @@ void ABattleUnit::EquipSkillData(UBattleSkillData* InSkillData)
 	SkillDef.Description = InSkillData->Description.ToString();
 	SkillDef.Color = InSkillData->ThemeColor;
 
-	// 从 TargetEffects 中提取预估伤害数值供卡牌角标展示
-	for (const FAttributeEffectDef& Eff : InSkillData->TargetEffects)
+	// 从 TargetModifiers 中提取预估伤害数值供卡牌角标展示
+	if (InSkillData->TargetModifiers.IntegrityDelta < 0.0f)
 	{
-		if (Eff.TargetAttribute == ETargetAttributeType::Integrity && Eff.Value < 0.0f)
-		{
-			SkillDef.BaseDamage = FMath::RoundToInt(-Eff.Value * InSkillData->HitCount);
-			break;
-		}
+		SkillDef.BaseDamage = FMath::RoundToInt(-InSkillData->TargetModifiers.IntegrityDelta * InSkillData->HitCount);
 	}
 
 	Stats.Skills.Add(SkillDef);

@@ -11,7 +11,7 @@ class ABattleUnit;
 
 /**
  * 战棋技能定义基类 (UPrimaryDataAsset)
- * 基于 4 维正交分类枚举，承载对敌我双方 8 项核心战棋属性的修改
+ * 基于 4 维正交分类枚举，承载对敌我双方 8 项核心战棋属性的复合修改
  */
 UCLASS(Blueprintable, BlueprintType)
 class EBBINGRAINBOW_API UBattleSkillData : public UPrimaryDataAsset
@@ -28,7 +28,7 @@ public:
 
 	// ---------------- 1. 核心四大枚举 ----------------
 
-	/** 技能学派 / 派系 */
+	/** 技能学派 / 派系 (力学、热学、电学、化学) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Skill|Classification")
 	ESkillDiscipline Discipline = ESkillDiscipline::Kinetic;
 
@@ -91,15 +91,15 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Skill|Delivery", meta = (ClampMin = "0.05"))
 	float HitInterval = 0.15f;
 
-	// ---------------- 4. 对 8 项核心属性的影响配置 ----------------
+	// ---------------- 4. 对 8 项核心属性的影响配置 (同时影响多种属性) ----------------
 
-	/** 对目标生效的属性修改列表 (如扣减完整度、削弱抗性、剥夺先攻等) */
+	/** 对目标生效的复合属性修改 (支持同时影响完整度、抗性、AP、先攻等) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Skill|Effects")
-	TArray<FAttributeEffectDef> TargetEffects;
+	FAttributeModifierBundle TargetModifiers;
 
-	/** 对施法者自身生效的属性修改列表 (如获得护盾、提高闪避、增加先攻等) */
+	/** 对施法者自身生效的复合属性修改 (如自身获得护盾、增加先攻、修改抗性等) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Skill|Effects")
-	TArray<FAttributeEffectDef> SelfEffects;
+	FAttributeModifierBundle SelfModifiers;
 
 	// ---------------- 5. 表现与动画 ----------------
 
@@ -125,8 +125,8 @@ public:
 	static FLinearColor GetDisciplineDefaultColor(ESkillDiscipline InDiscipline);
 
 protected:
-	/** 应用单一属性修改到指定单位 */
-	virtual void ApplyAttributeEffect(ABattleUnit* Receiver, ABattleUnit* Instigator, const FAttributeEffectDef& EffectDef);
+	/** 应用复合属性修改包到指定单位 */
+	virtual void ApplyModifierBundle(ABattleUnit* Receiver, ABattleUnit* SourceUnit, const FAttributeModifierBundle& Bundle);
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
