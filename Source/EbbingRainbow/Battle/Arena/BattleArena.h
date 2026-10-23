@@ -30,9 +30,9 @@ public:
 
 	// ---------- 配置 ----------
 
-	/** WFC 网格尺寸 (X, Y, Z 层数)。SciFi01 使用 4m 格、两层（18x14x2，随机生长） */
+	/** WFC 网格尺寸 (X, Y, Z 层数)。Arch Atrium 使用 4m 格、19x19、两层（十字中庭 + 夹层） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena")
-	FIntVector GridCells = FIntVector(18, 14, 2);
+	FIntVector GridCells = FIntVector(19, 19, 2);
 
 	/** 单个 WFC 单元格的世界尺寸 (cm)。生成前作为包围盒兜底值，生成后以生成器返回的 CellWorldSize 为准 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena", meta = (ClampMin = "50"))
@@ -135,6 +135,9 @@ private:
 
 	/** 生成器实际使用的格子世界尺寸；用于包围盒、出生区与采样去重 */
 	FVector UsedCellWorldSize = FVector::ZeroVector;
+
+	/** 生成器实际使用的网格尺寸；风格可能忽略请求的 GridCells（例如 Atrium 固定 19x19） */
+	FIntVector UsedGridCells = FIntVector::ZeroValue;
 
 	bool bArenaReady = false;
 };

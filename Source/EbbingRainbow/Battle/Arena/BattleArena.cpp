@@ -3,8 +3,11 @@
 #include "Battle/Arena/BattleArena.h"
 #include "WFC3DArenaHost.h"
 #include "WFC3DStyleTable.h"
-#include "Styles/WFC3DArenaGenerator_SciFi01.h"
+#include "Arch/WFC3DArenaGenerator_Atrium.h"
 #include "NavigationSystem.h"
+#include "NavMesh/NavMeshBoundsVolume.h"
+#include "Components/BrushComponent.h"
+#include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 
@@ -32,7 +35,8 @@ FBox ABattleArena::GetArenaBounds() const
 {
 	const FVector Origin = GetActorLocation();
 	const FVector Cell = UsedCellWorldSize.IsNearlyZero() ? FVector(CellWorldSize) : UsedCellWorldSize;
-	const FVector Size(GridCells.X * Cell.X, GridCells.Y * Cell.Y, GridCells.Z * Cell.Z);
+	const FIntVector BoundsCells = (UsedGridCells.X > 0) ? UsedGridCells : GridCells;
+	const FVector Size(BoundsCells.X * Cell.X, BoundsCells.Y * Cell.Y, BoundsCells.Z * Cell.Z);
 	return FBox(Origin, Origin + Size);
 }
 
@@ -65,7 +69,7 @@ AWFC3DArenaHost* ABattleArena::EnsureHost()
 	if (ArenaHost)
 	{
 		ArenaHost->StyleTable = StyleTable;
-		ArenaHost->FallbackGeneratorClass = AWFC3DArenaGenerator_SciFi01::StaticClass();
+		ArenaHost->FallbackGeneratorClass = AWFC3DArenaGenerator_Atrium::StaticClass();
 		ArenaHost->bAutoGenerateOnBeginPlay = false;
 
 		// 编辑器预览参数与竞技场默认保持一致
@@ -149,6 +153,25 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	UsedCellWorldSize = GenResult.CellWorldSize.IsNearlyZero()
 		? FVector(CellWorldSize)
 		: GenResult.CellWorldSize;
+	UsedGridCells = (GenResult.UsedScale.X > 0) ? GenResult.UsedScale : GridCells;
+
+	// 生成器可能忽略请求的 GridCells（Atrium 固定 19x19），把关卡里的
+	// NavMeshBoundsVolume 同步放大，避免出生/可达性只覆盖旧版 18x14 区域。
+	const FBox NavBoundsBox = GetArenaBounds();
+	for (TActorIterator<ANavMeshBoundsVolume> It(GetWorld()); It; ++It)
+	{
+		ANavMeshBoundsVolume* NavVolume = *It;
+		const FVector Center = NavBoundsBox.GetCenter();
+		const FVector Extent = NavBoundsBox.GetExtent() + FVector(1000.0f);
+		NavVolume->SetActorLocation(FVector(Center.X, Center.Y, 0.0f));
+		NavVolume->SetActorScale3D(FVector(Extent.X / 100.0f, Extent.Y / 100.0f, 10.0f));
+		if (UBrushComponent* Brush = NavVolume->GetBrushComponent())
+		{
+			Brush->UpdateBounds();
+			Brush->MarkRenderStateDirty();
+		}
+		NavSys->OnNavigationBoundsUpdated(NavVolume);
+	}
 
 	// 同步重建导航网格,保证后续查询基于最新地形
 	NavSys->Build();

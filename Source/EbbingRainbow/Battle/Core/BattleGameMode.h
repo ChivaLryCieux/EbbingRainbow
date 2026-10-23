@@ -43,11 +43,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
 	EWFCBuildingStyle ArenaStyle = EWFCBuildingStyle::Style0;
 
-	/** 本场战斗的 WFC 规模（X/Y/Z 格数）。SciFi01 两层随机结构使用 18x14x2（约 72m x 56m x 6m） */
+	/** 本场战斗的 WFC 规模（X/Y/Z 格数）。Arch Atrium 使用 19x19x2（约 76m x 76m，8m 十字中庭 + 4m 夹层） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
-	FIntVector ArenaScale = FIntVector(18, 14, 2);
+	FIntVector ArenaScale = FIntVector(19, 19, 2);
 
-	/** 风格表：把 ArenaStyle 映射到具体 WFC 生成器类。为空时回退到 SciFi01 */
+	/** 风格表：把 ArenaStyle 映射到具体 WFC 生成器类。为空时回退到 Arch Atrium */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
 	TObjectPtr<UWFC3DStyleTable> WFCStyleTable = nullptr;
 
