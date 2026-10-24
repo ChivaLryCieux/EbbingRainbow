@@ -13,7 +13,8 @@ enum class EArchCellKind : uint8
 	Apse,
 	Transept,
 	Aisle,
-	Room
+	Room,
+	Corridor
 };
 
 /** Inclusive integer rectangle in plan space (X east, Y north). */
@@ -74,14 +75,24 @@ struct FArchCell
 	bool bUColumn = false;
 };
 
+/** A monumental stair core placed on the plan (occupies 1x2 cells). */
+struct FArchStair
+{
+	int32 X = 0;
+	int32 Y = 0;
+	FName Tile = NAME_None;
+};
+
 /** Complete macro plan produced by the space grammar. */
 struct FArchPlan
 {
 	int32 W = 19;
 	int32 H = 19;
 	int32 Seed = 0;
+	int32 AisleWidth = 2;
 	TArray<FArchCell> Cells;
 	TArray<FArchRoom> Rooms;
+	TArray<FArchStair> Stairs;
 
 	void Init(int32 InW, int32 InH, int32 InSeed)
 	{
@@ -91,6 +102,7 @@ struct FArchPlan
 		Cells.Reset();
 		Cells.SetNumZeroed(W * H);
 		Rooms.Reset();
+		Stairs.Reset();
 	}
 
 	FORCEINLINE int32 Index(int32 X, int32 Y) const { return Y * W + X; }

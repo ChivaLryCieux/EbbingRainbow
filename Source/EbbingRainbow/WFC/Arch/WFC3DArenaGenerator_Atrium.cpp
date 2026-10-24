@@ -4,6 +4,7 @@
 #include "WFCArchGrammar.h"
 #include "Engine/StaticMesh.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "HAL/PlatformTime.h"
 
@@ -47,6 +48,10 @@ UStaticMesh* AWFC3DArenaGenerator_Atrium::LoadTileMesh(const FName& TileId)
 	else if (Id.StartsWith(TEXT("prop_")))
 	{
 		Folder = TEXT("Props");
+	}
+	else if (Id.StartsWith(TEXT("stair_")))
+	{
+		Folder = TEXT("Stairs");
 	}
 	else
 	{
@@ -93,6 +98,40 @@ void AWFC3DArenaGenerator_Atrium::AddTile(const FName& TileId, int32 X, int32 Y,
 	}
 }
 
+void AWFC3DArenaGenerator_Atrium::AddStairs(const FArchPlan& Plan)
+{
+	UStaticMesh* Mesh = LoadTileMesh(FName(TEXT("stair_core")));
+	if (!Mesh)
+	{
+		return;
+	}
+
+	UInstancedStaticMeshComponent* Comp = GetOrCreateInstancedComponent(Mesh);
+	if (!Comp)
+	{
+		return;
+	}
+
+	// The stair mesh is authored in centimetres (400 x 800 x 508 uu), unlike
+	// the kit modules which import at 4 uu. It is placed at scale 1 and its
+	// collision is handled by the explicit ramp/landing boxes below.
+	Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Comp->SetCanEverAffectNavigation(false);
+
+	for (const FArchStair& S : Plan.Stairs)
+	{
+		// The FBX import flips Y, so yaw 180 makes the stair rise toward -Y
+		// (north) and places its footprint in [X, X+1] x [Y-1, Y] cells.
+		const FVector Location(
+			static_cast<float>(S.X) * CellSize + CellSize,
+			static_cast<float>(GridH - S.Y) * CellSize,
+			0.0f);
+		Comp->AddInstance(
+			FTransform(FRotator(0.0f, 180.0f, 0.0f), Location, FVector(1.0f)),
+			false);
+	}
+}
+
 void AWFC3DArenaGenerator_Atrium::BuildCollision(const FArchPlan& Plan)
 {
 	UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -126,11 +165,26 @@ void AWFC3DArenaGenerator_Atrium::BuildCollision(const FArchPlan& Plan)
 			const float BaseX = static_cast<float>(X) * CellSize;
 			const float BaseY = static_cast<float>(GridH - Y) * CellSize;
 
-			// Floor slab at z=8 cm (16 cm thick); supports NavMesh.
-			CollisionHISM->AddInstance(FTransform(
-				FRotator::ZeroRotator,
-				FVector(BaseX + 200.0f, BaseY - 200.0f, 8.0f),
-				FloorScale), false);
+			// Floor slab at z=8 cm (16 cm thick); supports NavMesh. Void cells
+			// are left without a slab so irregular room-graph layouts do not
+			// get a full 19x19 base plate.
+			if (C.Kind != EArchCellKind::Void)
+			{
+				CollisionHISM->AddInstance(FTransform(
+					FRotator::ZeroRotator,
+					FVector(BaseX + 200.0f, BaseY - 200.0f, 8.0f),
+					FloorScale), false);
+			}
+
+			// Mezzanine slab at +4 m, only on cells that actually carry an
+			// upper floor tile. The open cross remains a two-storey void.
+			if (!C.UFloor.IsNone())
+			{
+				CollisionHISM->AddInstance(FTransform(
+					FRotator::ZeroRotator,
+					FVector(BaseX + 200.0f, BaseY - 200.0f, 408.0f),
+					FloorScale), false);
+			}
 
 			// Walls, windows and half walls block; doors / passages / arches do not.
 			for (int32 Side = 0; Side < 4; ++Side)
@@ -176,6 +230,56 @@ void AWFC3DArenaGenerator_Atrium::BuildCollision(const FArchPlan& Plan)
 			}
 		}
 	}
+
+	// Stair ramps: one invisible walkable slab per stair, plus a 1 m top
+	// landing and side rails. The visual stair mesh itself has no collision.
+	// 20 steps x 35 cm = 700 cm of run, then a 100 cm flat top landing.
+	constexpr float StairRun = 700.0f;
+	constexpr float StairRise = 400.0f;
+	const float StairLen = FMath::Sqrt(StairRun * StairRun + StairRise * StairRise);
+	// The slab is long along Y, so the slope is a roll about X (pitch would
+	// tilt the 4 m width instead of the 8 m run).
+	const float StairRoll = FMath::RadiansToDegrees(FMath::Atan2(StairRise, StairRun));
+
+	for (const FArchStair& S : Plan.Stairs)
+	{
+		const float BaseX = static_cast<float>(S.X) * CellSize;
+		const float BaseY = static_cast<float>(GridH - S.Y) * CellSize;
+
+		// Ramp from (BaseY, z=16) up to (BaseY-800, z=416), as a dedicated
+		// StaticMeshComponent: rotated HISM instances did not generate navmesh
+		// reliably, while unrotated HISM slabs did.
+		UStaticMeshComponent* Ramp = NewObject<UStaticMeshComponent>(
+			this, *FString::Printf(TEXT("StairRamp_%d"), StairRamps.Num()));
+		Ramp->SetupAttachment(GetRootComponent());
+		Ramp->SetStaticMesh(Cube);
+		Ramp->SetMobility(EComponentMobility::Movable);
+		Ramp->SetRelativeLocation(FVector(BaseX + 200.0f, BaseY - 350.0f, 216.0f));
+		Ramp->SetRelativeRotation(FRotator(0.0f, 0.0f, StairRoll));
+		Ramp->SetRelativeScale3D(FVector(4.0f, StairLen / 100.0f, 0.2f));
+		Ramp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		Ramp->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+		Ramp->SetCanEverAffectNavigation(true);
+		Ramp->SetVisibility(false);
+		Ramp->RegisterComponent();
+		StairRamps.Add(Ramp);
+
+		// Low side rails follow the same 700 cm run; the 100 cm top landing is
+		// open left/right so units can step onto the mezzanine.
+		for (float SideX : { BaseX + 10.0f, BaseX + 390.0f })
+		{
+			CollisionHISM->AddInstance(FTransform(
+				FRotator(0.0f, 0.0f, StairRoll),
+				FVector(SideX, BaseY - 350.0f, 216.0f),
+				FVector(0.2f, StairLen / 100.0f, 1.0f)), false);
+		}
+
+		// 1 m top landing at z=400, flush with the mezzanine slab.
+		CollisionHISM->AddInstance(FTransform(
+			FRotator::ZeroRotator,
+			FVector(BaseX + 200.0f, BaseY - 750.0f, 408.0f),
+			FVector(4.0f, 1.0f, 0.16f)), false);
+	}
 }
 
 void AWFC3DArenaGenerator_Atrium::ClearGenerated()
@@ -185,6 +289,14 @@ void AWFC3DArenaGenerator_Atrium::ClearGenerated()
 	{
 		CollisionHISM->ClearInstances();
 	}
+	for (TObjectPtr<UStaticMeshComponent>& Ramp : StairRamps)
+	{
+		if (Ramp)
+		{
+			Ramp->DestroyComponent();
+		}
+	}
+	StairRamps.Reset();
 }
 
 bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
@@ -208,6 +320,17 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[Arch] Grammar failed for seed %d."), Seed);
 		return false;
+	}
+
+	// The L1 walkway beside the first stair is the stable upper-level probe;
+	// its X depends on the randomized aisle width.
+	if (Plan.Stairs.Num() > 0)
+	{
+		const FArchStair& S = Plan.Stairs[0];
+		LastResult.UpperNavProbe = FVector(
+			static_cast<float>(S.X - 1) * CellSize + 200.0f,
+			static_cast<float>(GridH - (S.Y + 1)) * CellSize - 200.0f,
+			420.0f);
 	}
 
 	int32 InstanceCount = 0;
@@ -235,6 +358,21 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 		}
 	}
 
+	AddStairs(Plan);
+
+	// Visual HISM keeps no collision: the explicit collision boxes below are
+	// the single source of truth. Otherwise an imported wall mesh's own simple
+	// collision can seal a door opening.
+	for (const TPair<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>>& Pair
+		: InstancedMeshComponents)
+	{
+		if (Pair.Value)
+		{
+			Pair.Value->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Pair.Value->SetCanEverAffectNavigation(false);
+		}
+	}
+
 	BuildCollision(Plan);
 
 	const double DurationMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
@@ -251,3 +389,4 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 		Seed, Plan.Rooms.Num(), InstanceCount, MeshCache.Num(), DurationMs);
 	return true;
 }
+

@@ -117,7 +117,7 @@ protected:
 
 	FWFCGenerationResult LastResult;
 
-private:
+protected:
 	/** 按网格体分类缓存的实例化组件列表 */
 	UPROPERTY(Transient)
 	TMap<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>> InstancedMeshComponents;

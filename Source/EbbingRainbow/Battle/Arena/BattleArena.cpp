@@ -5,6 +5,7 @@
 #include "WFC3DStyleTable.h"
 #include "Arch/WFC3DArenaGenerator_Atrium.h"
 #include "NavigationSystem.h"
+#include "NavigationPath.h"
 #include "NavMesh/NavMeshBoundsVolume.h"
 #include "Components/BrushComponent.h"
 #include "EngineUtils.h"
@@ -163,10 +164,18 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 		ANavMeshBoundsVolume* NavVolume = *It;
 		const FVector Center = NavBoundsBox.GetCenter();
 		const FVector Extent = NavBoundsBox.GetExtent() + FVector(1000.0f);
+		// The volume is moved/scaled at runtime, so its brush must be Movable;
+		// otherwise PIE logs a mobility warning and the message log covers the
+		// viewport on every start.
+		if (USceneComponent* Root = NavVolume->GetRootComponent())
+		{
+			Root->SetMobility(EComponentMobility::Movable);
+		}
 		NavVolume->SetActorLocation(FVector(Center.X, Center.Y, 0.0f));
 		NavVolume->SetActorScale3D(FVector(Extent.X / 100.0f, Extent.Y / 100.0f, 10.0f));
 		if (UBrushComponent* Brush = NavVolume->GetBrushComponent())
 		{
+			Brush->SetMobility(EComponentMobility::Movable);
 			Brush->UpdateBounds();
 			Brush->MarkRenderStateDirty();
 		}
@@ -179,6 +188,38 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	{
 		UE_LOG(LogBattleArena, Error, TEXT("No NavData. Add a NavMeshBoundsVolume covering the arena (and set Runtime Generation = Dynamic)."));
 		return false;
+	}
+
+	// Mezzanine connectivity probe. Graph layouts are single-level for now and
+	// report a zero probe; cross layouts report the L1 walkway beside a stair.
+	if (!GenResult.UpperNavProbe.IsNearlyZero())
+	{
+		const FVector UpperProbe = GenResult.UpperNavProbe;
+		FNavLocation UpperNav;
+		const bool bUpperNav = NavSys->ProjectPointToNavigation(
+			UpperProbe, UpperNav, FVector(200.0f, 200.0f, 200.0f));
+		UE_LOG(LogBattleArena, Log, TEXT("Upper mezzanine nav: %s at %s"),
+			bUpperNav ? TEXT("ok") : TEXT("MISSING"), *UpperNav.Location.ToString());
+
+		// Full connectivity probe from the nave floor to the reported L1 walkway.
+		if (UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(
+			this, FVector(3800.0f, 6000.0f, 20.0f), UpperProbe))
+		{
+			UE_LOG(LogBattleArena, Log,
+				TEXT("Mezzanine path: valid=%s partial=%s length=%.0f points=%d"),
+				Path->IsValid() ? TEXT("yes") : TEXT("no"),
+				Path->IsPartial() ? TEXT("yes") : TEXT("no"),
+				Path->GetPathLength(), Path->PathPoints.Num());
+			for (int32 PointIndex = 0; PointIndex < Path->PathPoints.Num(); ++PointIndex)
+			{
+				UE_LOG(LogBattleArena, Log, TEXT("  path[%d] = %s"),
+					PointIndex, *Path->PathPoints[PointIndex].ToString());
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogBattleArena, Log, TEXT("No upper level in this layout (room graph)."));
 	}
 
 	const FBox Bounds = GetArenaBounds();

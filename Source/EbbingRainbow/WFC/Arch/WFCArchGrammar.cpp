@@ -39,22 +39,6 @@ namespace
 		EArchCellKind Kind;
 	};
 
-	const FHallDef HallRects[] =
-	{
-		{ FArchRect(7, 0, 11, 4), EArchCellKind::Nave },
-		{ FArchRect(7, 14, 11, 18), EArchCellKind::Apse },
-		{ FArchRect(0, 7, 4, 11), EArchCellKind::Transept },
-		{ FArchRect(14, 7, 18, 11), EArchCellKind::Transept },
-		{ FArchRect(5, 0, 6, 4), EArchCellKind::Aisle },
-		{ FArchRect(12, 0, 13, 4), EArchCellKind::Aisle },
-		{ FArchRect(5, 14, 6, 18), EArchCellKind::Aisle },
-		{ FArchRect(12, 14, 13, 18), EArchCellKind::Aisle },
-		{ FArchRect(0, 5, 4, 6), EArchCellKind::Aisle },
-		{ FArchRect(0, 12, 4, 13), EArchCellKind::Aisle },
-		{ FArchRect(14, 5, 18, 6), EArchCellKind::Aisle },
-		{ FArchRect(14, 12, 18, 13), EArchCellKind::Aisle }
-	};
-
 	const FIntPoint ColumnCells[] =
 	{
 		FIntPoint(5, 5), FIntPoint(7, 5), FIntPoint(11, 5), FIntPoint(13, 5),
@@ -379,23 +363,15 @@ namespace
 					continue;
 				}
 				const uint32 H = HashCell(X, Y, Plan.Seed + 17);
-				const bool bArm = C.Kind == EArchCellKind::Nave
-					|| C.Kind == EArchCellKind::Apse || C.Kind == EArchCellKind::Transept;
-				if (bArm && (X % 3 == 0 && Y % 3 == 0))
+				// Semi-open: the old continuous 4 m lid is gone. A small
+				// number of rooms keep a service ceiling; everything else is
+				// open to the upper level / sky.
+				C.CeilTile = NAME_None;
+				const bool bCorner = (X < 5 || X > 13) && (Y < 5 || Y > 13);
+				if (C.Kind == EArchCellKind::Room && bCorner && H % 100 < 12)
 				{
-					C.CeilTile = FName(TEXT("ceil_light"));
-				}
-				else if (H % 100 < 7)
-				{
-					C.CeilTile = FName(TEXT("ceil_vent"));
-				}
-				else if (C.Kind == EArchCellKind::Room && H % 100 < 18)
-				{
-					C.CeilTile = (H % 100 < 10) ? FName(TEXT("ceil_light")) : FName(TEXT("ceil_vent"));
-				}
-				else
-				{
-					C.CeilTile = (H % 100 < 20) ? FName(TEXT("ceil_plain_b")) : FName(TEXT("ceil_plain"));
+					C.CeilTile = (H % 100 < 4)
+						? FName(TEXT("ceil_light")) : FName(TEXT("ceil_vent"));
 				}
 			}
 		}
@@ -523,91 +499,110 @@ namespace
 
 				if (bVoid)
 				{
-					C.UCeil = FName(TEXT("ceil_open"));
+					// No coffered/scaffold ceiling over the open cross. The old
+					// ceil_open module was itself a large lattice and read as a
+					// roof from the top-down camera.
+					C.UCeil = NAME_None;
 				}
 				else
 				{
-					C.UFloor = (C.Kind == EArchCellKind::Room)
-						? ((H % 100 < 35) ? FName(TEXT("floor_plain_b")) : FName(TEXT("floor_plain")))
-						: ((H % 100 < 25) ? FName(TEXT("floor_plate_b")) : FName(TEXT("floor_plate")));
-
-					TArray<int32> VoidSides;
-					for (int32 Side = 0; Side < 4; ++Side)
+					// Partially open mezzanine: aisles are always walkable
+					// balconies, but only ~55% of the rooms get an upper slab.
+					// The rest are double-height rooms, visible from above.
+					if (C.Kind == EArchCellKind::Room)
 					{
-						if (Plan.IsValid(X + DX[Side], Y + DY[Side])
-							&& IsVoidKind(Plan.Cell(X + DX[Side], Y + DY[Side]).Kind))
-						{
-							VoidSides.Add(Side);
-						}
-					}
-					if (VoidSides.Num() > 0)
-					{
-						C.UFloor = FName(TEXT("floor_light"));
-						FName Rail;
-						FString RailPat;
-						if (FWFCArchGrammar::ResolveWallTile(0, VoidSides[0], TEXT('h'), Rng, Rail, RailPat)
-							&& RailPat.Len() == 4 && RailPat[VoidSides[0]] == TEXT('h'))
-						{
-							C.URailing = Rail;
-						}
-						if (VoidSides.Num() > 1)
-						{
-							FName Rail2;
-							FString Rail2Pat;
-							if (FWFCArchGrammar::ResolveWallTile(0, VoidSides[1], TEXT('h'), Rng, Rail2, Rail2Pat)
-								&& Rail2Pat.Len() == 4 && Rail2Pat[VoidSides[1]] == TEXT('h'))
-							{
-								C.URailing2 = Rail2;
-							}
-						}
-					}
-
-					if (X % 3 == 1 && Y % 3 == 1)
-					{
-						C.UCeil = FName(TEXT("ceil_light"));
-					}
-					else if (H % 100 < 6)
-					{
-						C.UCeil = FName(TEXT("ceil_vent"));
+						C.UFloor = (H % 100 < 55)
+							? ((H % 100 < 20) ? FName(TEXT("floor_plain_b")) : FName(TEXT("floor_plain")))
+							: NAME_None;
 					}
 					else
 					{
-						C.UCeil = FName(TEXT("ceil_plain"));
+						C.UFloor = (H % 100 < 25) ? FName(TEXT("floor_plate_b")) : FName(TEXT("floor_plate"));
+					}
+
+					if (!C.UFloor.IsNone())
+					{
+						TArray<int32> VoidSides;
+						for (int32 Side = 0; Side < 4; ++Side)
+						{
+							if (Plan.IsValid(X + DX[Side], Y + DY[Side])
+								&& IsVoidKind(Plan.Cell(X + DX[Side], Y + DY[Side]).Kind))
+							{
+								VoidSides.Add(Side);
+							}
+						}
+						if (VoidSides.Num() > 0)
+						{
+							C.UFloor = FName(TEXT("floor_light"));
+							FName Rail;
+							FString RailPat;
+							if (FWFCArchGrammar::ResolveWallTile(0, VoidSides[0], TEXT('h'), Rng, Rail, RailPat)
+								&& RailPat.Len() == 4 && RailPat[VoidSides[0]] == TEXT('h'))
+							{
+								C.URailing = Rail;
+							}
+							if (VoidSides.Num() > 1)
+							{
+								FName Rail2;
+								FString Rail2Pat;
+								if (FWFCArchGrammar::ResolveWallTile(0, VoidSides[1], TEXT('h'), Rng, Rail2, Rail2Pat)
+									&& Rail2Pat.Len() == 4 && Rail2Pat[VoidSides[1]] == TEXT('h'))
+								{
+									C.URailing2 = Rail2;
+								}
+							}
+						}
+
+						// Semi-open arena: no continuous 8 m roof. Only a few
+						// corner rooms keep a small roof patch; the rest is open
+						// sky, so the top-down camera never sees a large lattice.
+						C.UCeil = NAME_None;
+						const bool bCorner = (X < 5 || X > 13) && (Y < 5 || Y > 13);
+						if (C.Kind == EArchCellKind::Room && bCorner && H % 100 < 18)
+						{
+							C.UCeil = (H % 2 == 0)
+								? FName(TEXT("ceil_light"))
+								: ((H % 5 == 0) ? FName(TEXT("ceil_vent")) : FName(TEXT("ceil_plain")));
+						}
+					}
+					else
+					{
+						C.UCeil = NAME_None;
 					}
 				}
 
-				if (C.bColumn)
-				{
-					C.bUColumn = true;
-				}
+				C.bUColumn = C.bColumn && !C.UFloor.IsNone();
 
-				TArray<int32> Per;
-				for (int32 Side = 0; Side < 4; ++Side)
+				if (!C.UFloor.IsNone())
 				{
-					if (IsPerimeterSide(Plan, X, Y, Side))
+					TArray<int32> Per;
+					for (int32 Side = 0; Side < 4; ++Side)
 					{
-						Per.Add(Side);
+						if (IsPerimeterSide(Plan, X, Y, Side))
+						{
+							Per.Add(Side);
+						}
 					}
-				}
-				if (Per.Num() > 0)
-				{
-					uint8 Mask = 0;
-					for (int32 Side : Per)
+					if (Per.Num() > 0)
 					{
-						Mask |= (1 << Side);
-					}
-					int32 SpecialSide = -1;
-					TCHAR SpecialCode = 0;
-					if (Per.Num() == 1 && ((X + Y + Plan.Seed) % 2 == 0))
-					{
-						SpecialSide = Per[0];
-						SpecialCode = TEXT('n');
-					}
-					FName Tile;
-					FString Pat;
-					if (FWFCArchGrammar::ResolveWallTile(Mask, SpecialSide, SpecialCode, Rng, Tile, Pat))
-					{
-						C.UWall = Tile;
+						uint8 Mask = 0;
+						for (int32 Side : Per)
+						{
+							Mask |= (1 << Side);
+						}
+						int32 SpecialSide = -1;
+						TCHAR SpecialCode = 0;
+						if (Per.Num() == 1 && ((X + Y + Plan.Seed) % 2 == 0))
+						{
+							SpecialSide = Per[0];
+							SpecialCode = TEXT('n');
+						}
+						FName Tile;
+						FString Pat;
+						if (FWFCArchGrammar::ResolveWallTile(Mask, SpecialSide, SpecialCode, Rng, Tile, Pat))
+						{
+							C.UWall = Tile;
+						}
 					}
 				}
 			}
@@ -684,12 +679,594 @@ bool FWFCArchGrammar::ResolveWallTile(
 	return false;
 }
 
+	// ---- room graph -------------------------------------------------------
+	struct FGraphRoom
+	{
+		FArchRect Rect;
+		int32 Id = INDEX_NONE;
+		int32 Degree = 0;
+	};
+
+	static int32 SideFromTo(int32 X0, int32 Y0, int32 X1, int32 Y1)
+	{
+		if (X1 > X0) return 1;
+		if (X1 < X0) return 3;
+		if (Y1 > Y0) return 2;
+		if (Y1 < Y0) return 0;
+		return INDEX_NONE;
+	}
+
+	static FIntPoint PickDoorCell(const FArchRect& R, int32 Side, TArray<uint8>& Used, FRandomStream& Rng)
+	{
+		TArray<FIntPoint> Candidates;
+		if (Side == 0)
+		{
+			for (int32 X = R.X0; X <= R.X1; ++X) Candidates.Add(FIntPoint(X, R.Y0));
+		}
+		else if (Side == 1)
+		{
+			for (int32 Y = R.Y0; Y <= R.Y1; ++Y) Candidates.Add(FIntPoint(R.X1, Y));
+		}
+		else if (Side == 2)
+		{
+			for (int32 X = R.X0; X <= R.X1; ++X) Candidates.Add(FIntPoint(X, R.Y1));
+		}
+		else
+		{
+			for (int32 Y = R.Y0; Y <= R.Y1; ++Y) Candidates.Add(FIntPoint(R.X0, Y));
+		}
+
+		TArray<FIntPoint> Free;
+		for (const FIntPoint& P : Candidates)
+		{
+			if (Used[P.Y * 19 + P.X] == 0) Free.Add(P);
+		}
+		if (Free.Num() == 0) Free = Candidates;
+		if (Free.Num() == 0) return FIntPoint(-1, -1);
+
+		const FIntPoint P = Free[Rng.RandRange(0, Free.Num() - 1)];
+		Used[P.Y * 19 + P.X] = 1;
+		return P;
+	}
+
+	static bool FindGraphPath(
+		const TArray<int32>& RoomIdOf,
+		const TArray<uint8>& Blocked,
+		int32 W, int32 H,
+		FIntPoint Start, FIntPoint End,
+		TArray<FIntPoint>& OutPath)
+	{
+		TArray<int32> Parent;
+		Parent.Init(-1, W * H);
+		TArray<int32> Queue;
+		Queue.Reserve(W * H);
+
+		const int32 S = Start.Y * W + Start.X;
+		const int32 E = End.Y * W + End.X;
+		Parent[S] = S;
+		Queue.Add(S);
+
+		int32 Head = 0;
+		while (Head < Queue.Num() && Parent[E] == -1)
+		{
+			const int32 Cur = Queue[Head++];
+			const int32 CX = Cur % W;
+			const int32 CY = Cur / W;
+			for (int32 Side = 0; Side < 4; ++Side)
+			{
+				const int32 NX = CX + DX[Side];
+				const int32 NY = CY + DY[Side];
+				if (NX < 0 || NY < 0 || NX >= W || NY >= H) continue;
+				const int32 NI = NY * W + NX;
+				if (Parent[NI] != -1) continue;
+				if (NI != E)
+				{
+					if (RoomIdOf[NI] >= 0) continue;
+					if (Blocked[NI]) continue;
+				}
+				Parent[NI] = Cur;
+				Queue.Add(NI);
+			}
+		}
+
+		if (Parent[E] == -1) return false;
+
+		OutPath.Reset();
+		for (int32 I = E; I != S; I = Parent[I])
+		{
+			OutPath.Add(FIntPoint(I % W, I / W));
+		}
+		OutPath.Add(Start);
+		for (int32 I = 0; I < OutPath.Num() / 2; ++I)
+		{
+			Swap(OutPath[I], OutPath[OutPath.Num() - 1 - I]);
+		}
+		return true;
+	}
+
+	static bool BuildRoomGraphPlan(int32 Seed, FArchPlan& Plan, FRandomStream& Rng)
+	{
+		constexpr int32 W = 19;
+		constexpr int32 H = 19;
+		constexpr int32 Num = W * H;
+		constexpr int32 Slots = 4;
+		constexpr int32 SlotSize = 4;
+		constexpr int32 Origin = 1;
+
+		TArray<int32> RoomIdOf;
+		RoomIdOf.Init(-1, Num);
+		TArray<uint8> DoorBit;
+		DoorBit.Init(0, Num);
+		TArray<uint8> Blocked;
+		Blocked.Init(0, Num);
+
+		auto Hash = [](int32 X, int32 Y, int32 S)
+		{
+			return static_cast<uint32>(X * 73856093) ^ static_cast<uint32>(Y * 19349663)
+				^ static_cast<uint32>(S * 83492791);
+		};
+
+		// One random central slot becomes an open courtyard. Keeping only one
+		// void slot (instead of a 2x2 ring) lets rooms have 3-4 neighbours.
+		const int32 CourtSX = Rng.RandRange(1, 2);
+		const int32 CourtSY = Rng.RandRange(1, 2);
+		const int32 CourtX0 = Origin + CourtSX * SlotSize;
+		const int32 CourtY0 = Origin + CourtSY * SlotSize;
+		for (int32 Y = CourtY0; Y < CourtY0 + SlotSize; ++Y)
+		{
+			for (int32 X = CourtX0; X < CourtX0 + SlotSize; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				C.Kind = EArchCellKind::Atrium;
+				C.Space = 0;
+				Blocked[Y * W + X] = 1;
+			}
+		}
+
+		// All slots except the courtyard are available (15 of 16).
+		TArray<FIntPoint> Available;
+		for (int32 SY = 0; SY < Slots; ++SY)
+		{
+			for (int32 SX = 0; SX < Slots; ++SX)
+			{
+				if (SX == CourtSX && SY == CourtSY) continue;
+				Available.Add(FIntPoint(SX, SY));
+			}
+		}
+
+		bool Selected[16] = { false };
+		auto SlotIndex = [&](int32 SX, int32 SY) { return SY * Slots + SX; };
+
+		// Random connected subset of the 15 ring slots (10-12 rooms).
+		FIntPoint First = Available[Rng.RandRange(0, Available.Num() - 1)];
+		Selected[SlotIndex(First.X, First.Y)] = true;
+		TArray<FIntPoint> Chosen;
+		Chosen.Add(First);
+
+		const int32 Target = Rng.RandRange(10, 12);
+		while (Chosen.Num() < Target)
+		{
+			TArray<FIntPoint> Candidates;
+			for (const FIntPoint& S : Chosen)
+			{
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					const int32 NX = S.X + DX[Side];
+					const int32 NY = S.Y + DY[Side];
+					if (NX < 0 || NX >= Slots || NY < 0 || NY >= Slots) continue;
+					if (NX == CourtSX && NY == CourtSY) continue;
+					if (Selected[SlotIndex(NX, NY)]) continue;
+					Candidates.AddUnique(FIntPoint(NX, NY));
+				}
+			}
+			if (Candidates.Num() == 0) break;
+			const FIntPoint Pick = Candidates[Rng.RandRange(0, Candidates.Num() - 1)];
+			Selected[SlotIndex(Pick.X, Pick.Y)] = true;
+			Chosen.Add(Pick);
+		}
+
+		// One 2x2 room per selected slot.
+		TArray<FGraphRoom> Rooms;
+		int32 RoomBySlot[16];
+		for (int32& SlotRoom : RoomBySlot) SlotRoom = INDEX_NONE;
+		for (const FIntPoint& S : Chosen)
+		{
+			const int32 SX0 = Origin + S.X * SlotSize;
+			const int32 SY0 = Origin + S.Y * SlotSize;
+			// 2x2 rooms leave a 1-2 cell skirt inside each 4x4 slot, which is
+			// what lets the 1-cell corridor BFS find a path on every edge.
+			constexpr int32 RW = 2;
+			constexpr int32 RH = 2;
+			const int32 OX = Rng.RandRange(1, SlotSize - RW - 1);
+			const int32 OY = Rng.RandRange(1, SlotSize - RH - 1);
+
+			FGraphRoom R;
+			R.Rect = FArchRect(SX0 + OX, SY0 + OY, SX0 + OX + RW - 1, SY0 + OY + RH - 1);
+			R.Id = Rooms.Num();
+			Rooms.Add(R);
+
+			for (int32 Y = R.Rect.Y0; Y <= R.Rect.Y1; ++Y)
+			{
+				for (int32 X = R.Rect.X0; X <= R.Rect.X1; ++X)
+				{
+					FArchCell& C = Plan.Cell(X, Y);
+					C.Kind = EArchCellKind::Room;
+					C.Space = R.Id;
+					RoomIdOf[Y * W + X] = R.Id;
+				}
+			}
+
+			FArchRoom Room;
+			Room.Id = R.Id;
+			Room.Rect = R.Rect;
+			Room.Theme = (Rng.FRand() < 0.5f) ? FName(TEXT("GraphA")) : FName(TEXT("GraphB"));
+			Room.Size = FName(*FString::Printf(TEXT("%dx%d"), RW, RH));
+			Plan.Rooms.Add(Room);
+			RoomBySlot[SlotIndex(S.X, S.Y)] = R.Id;
+		}
+
+		// Connect every adjacent pair of selected slots exactly once. Use all
+		// four directions and normalize each pair to west/north -> east/south.
+		int32 CorridorCount = 0;
+		int32 EdgeCount = 0;
+		for (const FIntPoint& S : Chosen)
+		{
+			for (int32 Side = 0; Side < 4; ++Side)
+			{
+				const int32 NX = S.X + DX[Side];
+				const int32 NY = S.Y + DY[Side];
+				if (NX < 0 || NX >= Slots || NY < 0 || NY >= Slots) continue;
+				if (!Selected[SlotIndex(NX, NY)]) continue;
+				if (SlotIndex(NX, NY) < SlotIndex(S.X, S.Y)) continue;
+
+				const int32 AIdx = RoomBySlot[SlotIndex(S.X, S.Y)];
+				const int32 BIdx = RoomBySlot[SlotIndex(NX, NY)];
+				if (AIdx == INDEX_NONE || BIdx == INDEX_NONE) continue;
+
+				FGraphRoom* P = &Rooms[AIdx];
+				FGraphRoom* Q = &Rooms[BIdx];
+				if (NX < S.X || (NX == S.X && NY < S.Y))
+				{
+					Swap(P, Q);
+				}
+
+				if (P->Rect.X1 < Q->Rect.X0)
+				{
+					const int32 Y0 = FMath::Max(P->Rect.Y0, Q->Rect.Y0);
+					const int32 Y1 = FMath::Min(P->Rect.Y1, Q->Rect.Y1);
+					const int32 DoorY = (Y0 <= Y1) ? Rng.RandRange(Y0, Y1) : P->Rect.Y0;
+					const FIntPoint PA(P->Rect.X1, DoorY);
+					const FIntPoint PB(Q->Rect.X0, DoorY);
+					DoorBit[PA.Y * W + PA.X] |= 1 << 1;
+					DoorBit[PB.Y * W + PB.X] |= 1 << 3;
+					for (int32 CX = P->Rect.X1 + 1; CX < Q->Rect.X0; ++CX)
+					{
+						FArchCell& C = Plan.Cell(CX, DoorY);
+						if (C.Kind == EArchCellKind::Void)
+						{
+							C.Kind = EArchCellKind::Corridor;
+							C.Space = INDEX_NONE;
+							++CorridorCount;
+						}
+					}
+					P->Degree++;
+					Q->Degree++;
+					++EdgeCount;
+				}
+				else if (P->Rect.Y1 < Q->Rect.Y0)
+				{
+					const int32 X0 = FMath::Max(P->Rect.X0, Q->Rect.X0);
+					const int32 X1 = FMath::Min(P->Rect.X1, Q->Rect.X1);
+					const int32 DoorX = (X0 <= X1) ? Rng.RandRange(X0, X1) : P->Rect.X0;
+					const FIntPoint PA(DoorX, P->Rect.Y1);
+					const FIntPoint PB(DoorX, Q->Rect.Y0);
+					DoorBit[PA.Y * W + PA.X] |= 1 << 2;
+					DoorBit[PB.Y * W + PB.X] |= 1 << 0;
+					for (int32 CY = P->Rect.Y1 + 1; CY < Q->Rect.Y0; ++CY)
+					{
+						FArchCell& C = Plan.Cell(DoorX, CY);
+						if (C.Kind == EArchCellKind::Void)
+						{
+							C.Kind = EArchCellKind::Corridor;
+							C.Space = INDEX_NONE;
+							++CorridorCount;
+						}
+					}
+					P->Degree++;
+					Q->Degree++;
+					++EdgeCount;
+				}
+			}
+		}
+
+		// Link the central courtyard to 2-4 rooms so it becomes a hub instead
+		// of an isolated platform. Each link is a short 1-cell corridor and
+		// counts as one opening of the room (still capped at 4).
+		const int32 CourtX1 = CourtX0 + SlotSize - 1;
+		const int32 CourtY1 = CourtY0 + SlotSize - 1;
+		auto LinkCourt = [&](int32 Dir)
+		{
+			const int32 TSX = CourtSX + DX[Dir];
+			const int32 TSY = CourtSY + DY[Dir];
+			if (TSX < 0 || TSX >= Slots || TSY < 0 || TSY >= Slots) return;
+			if (!Selected[SlotIndex(TSX, TSY)]) return;
+			const int32 RIdx = RoomBySlot[SlotIndex(TSX, TSY)];
+			if (RIdx == INDEX_NONE || Rooms[RIdx].Degree >= 4) return;
+
+			FGraphRoom& R = Rooms[RIdx];
+			if (Dir == 0 || Dir == 2) // room north/south of the court
+			{
+				const int32 X0 = FMath::Max(R.Rect.X0, CourtX0);
+				const int32 X1 = FMath::Min(R.Rect.X1, CourtX1);
+				if (X0 > X1) return;
+				const int32 DoorX = Rng.RandRange(X0, X1);
+				if (Dir == 0)
+				{
+					DoorBit[R.Rect.Y1 * W + DoorX] |= 1 << 2;
+					for (int32 CY = R.Rect.Y1 + 1; CY < CourtY0; ++CY)
+					{
+						FArchCell& C = Plan.Cell(DoorX, CY);
+						if (C.Kind == EArchCellKind::Void) { C.Kind = EArchCellKind::Corridor; ++CorridorCount; }
+					}
+				}
+				else
+				{
+					DoorBit[R.Rect.Y0 * W + DoorX] |= 1 << 0;
+					for (int32 CY = CourtY1 + 1; CY < R.Rect.Y0; ++CY)
+					{
+						FArchCell& C = Plan.Cell(DoorX, CY);
+						if (C.Kind == EArchCellKind::Void) { C.Kind = EArchCellKind::Corridor; ++CorridorCount; }
+					}
+				}
+			}
+			else // room east/west of the court
+			{
+				const int32 Y0 = FMath::Max(R.Rect.Y0, CourtY0);
+				const int32 Y1 = FMath::Min(R.Rect.Y1, CourtY1);
+				if (Y0 > Y1) return;
+				const int32 DoorY = Rng.RandRange(Y0, Y1);
+				if (Dir == 1)
+				{
+					DoorBit[DoorY * W + R.Rect.X0] |= 1 << 3;
+					for (int32 CX = CourtX1 + 1; CX < R.Rect.X0; ++CX)
+					{
+						FArchCell& C = Plan.Cell(CX, DoorY);
+						if (C.Kind == EArchCellKind::Void) { C.Kind = EArchCellKind::Corridor; ++CorridorCount; }
+					}
+				}
+				else
+				{
+					DoorBit[DoorY * W + R.Rect.X1] |= 1 << 1;
+					for (int32 CX = R.Rect.X1 + 1; CX < CourtX0; ++CX)
+					{
+						FArchCell& C = Plan.Cell(CX, DoorY);
+						if (C.Kind == EArchCellKind::Void) { C.Kind = EArchCellKind::Corridor; ++CorridorCount; }
+					}
+				}
+			}
+			R.Degree++;
+			++EdgeCount;
+		};
+		for (int32 Dir = 0; Dir < 4; ++Dir)
+		{
+			if (Rng.FRand() < 0.6f) LinkCourt(Dir);
+		}
+
+		// Resolve walls, doors, floors, props. No roof: the graph is open-air.
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				const int32 Idx = Y * W + X;
+
+				if (C.Kind == EArchCellKind::Void)
+				{
+					continue;
+				}
+				if (C.Kind == EArchCellKind::Atrium)
+				{
+					const uint32 Hsh = Hash(X, Y, Seed);
+					C.FloorTile = (Hsh % 100 < 25) ? FName(TEXT("floor_light")) : FName(TEXT("floor_plate"));
+					C.CeilTile = NAME_None;
+					continue;
+				}
+
+				const bool bCellRoom = C.Kind == EArchCellKind::Room;
+
+				// Semi-open room graph: no interior partitions. Only the outer
+				// silhouette gets a solid wall; interior room/corridor edges
+				// stay open, and the door bits add visual door frames later.
+				uint8 Mask = 0;
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					const int32 NX = X + DX[Side];
+					const int32 NY = Y + DY[Side];
+					if (NX < 0 || NY < 0 || NX >= W || NY >= H
+						|| Plan.Cell(NX, NY).Kind == EArchCellKind::Void)
+					{
+						Mask |= 1 << Side;
+					}
+				}
+
+				C.WallMask = Mask;
+				C.Special[0] = C.Special[1] = C.Special[2] = C.Special[3] = 0;
+
+				FName Tile;
+				FString Pattern;
+				if (FWFCArchGrammar::ResolveWallTile(Mask, INDEX_NONE, 0, Rng, Tile, Pattern))
+				{
+					C.WallTile = Tile;
+				}
+
+				const uint32 Hsh = Hash(X, Y, Seed + 3);
+				C.FloorTile = bCellRoom
+					? ((Hsh % 100 < 35) ? FName(TEXT("floor_plain_b")) : FName(TEXT("floor_plain")))
+					: ((Hsh % 100 < 30) ? FName(TEXT("floor_plate_b")) : FName(TEXT("floor_plate")));
+				C.CeilTile = NAME_None;
+
+				if (bCellRoom && DoorBit[Idx] == 0 && Hsh % 100 < 20)
+				{
+					const TCHAR* Props[] = { TEXT("prop_crate"), TEXT("prop_barrel"),
+						TEXT("prop_console"), TEXT("prop_beacon") };
+					C.PropTile = FName(Props[Hsh % 4]);
+				}
+			}
+		}
+
+		int32 MinDeg = 99;
+		int32 MaxDeg = 0;
+		for (const FGraphRoom& R : Rooms)
+		{
+			MinDeg = FMath::Min(MinDeg, R.Degree);
+			MaxDeg = FMath::Max(MaxDeg, R.Degree);
+		}
+		if (Rooms.Num() == 0)
+		{
+			MinDeg = MaxDeg = 0;
+		}
+
+		// Strong door opening: the per-side wall test above is subtle, so make
+		// the DoorBit authoritative. Clear the wall bit on both sides of every
+		// door and re-resolve the affected wall tiles with an explicit 'd'.
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				const int32 Idx = Y * W + X;
+				if (DoorBit[Idx] == 0) continue;
+				FArchCell& C = Plan.Cell(X, Y);
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					if ((DoorBit[Idx] & (1 << Side)) == 0) continue;
+					C.WallMask &= ~(1 << Side);
+					if (C.Kind == EArchCellKind::Room)
+					{
+						C.Special[Side] = TEXT('d');
+					}
+					const int32 NX = X + DX[Side];
+					const int32 NY = Y + DY[Side];
+					if (NX >= 0 && NY >= 0 && NX < W && NY < H)
+					{
+						FArchCell& N = Plan.Cell(NX, NY);
+						N.WallMask &= ~(1 << ((Side + 2) % 4));
+					}
+				}
+			}
+		}
+
+		// Re-resolve room/corridor wall tiles after the door clearing.
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				if (C.Kind != EArchCellKind::Room && C.Kind != EArchCellKind::Corridor)
+				{
+					continue;
+				}
+				int32 Spec = INDEX_NONE;
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					if (C.Special[Side] == TEXT('d'))
+					{
+						Spec = Side;
+						break;
+					}
+				}
+				FName Tile;
+				FString Pat;
+				if (FWFCArchGrammar::ResolveWallTile(
+					C.WallMask, Spec, Spec != INDEX_NONE ? TEXT('d') : 0, Rng, Tile, Pat))
+				{
+					C.WallTile = Tile;
+				}
+			}
+		}
+
+		// Plan-level connectivity probe: follow open wall sides (doors) from
+		// the first room. Large planOpen + small nav reachable points at the
+		// explicit collision boxes, not at the door graph.
+		int32 DoorCells = 0;
+		for (int32 I = 0; I < Num; ++I)
+		{
+			DoorCells += DoorBit[I] != 0 ? 1 : 0;
+		}
+
+		int32 StartIdx = INDEX_NONE;
+		for (int32 I = 0; I < Num; ++I)
+		{
+			if (Plan.Cells[I].Kind == EArchCellKind::Room)
+			{
+				StartIdx = I;
+				break;
+			}
+		}
+
+		int32 PlanOpen = 0;
+		if (StartIdx != INDEX_NONE)
+		{
+			TArray<uint8> Vis;
+			Vis.Init(0, Num);
+			TArray<int32> Queue;
+			Queue.Add(StartIdx);
+			Vis[StartIdx] = 1;
+			int32 Head = 0;
+			while (Head < Queue.Num())
+			{
+				const int32 Cur = Queue[Head++];
+				++PlanOpen;
+				const int32 CX = Cur % W;
+				const int32 CY = Cur / W;
+				const FArchCell& C = Plan.Cells[Cur];
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					if ((C.WallMask & (1 << Side)) != 0) continue;
+					const int32 NX = CX + DX[Side];
+					const int32 NY = CY + DY[Side];
+					if (NX < 0 || NY < 0 || NX >= W || NY >= H) continue;
+					const int32 NI = NY * W + NX;
+					if (Vis[NI]) continue;
+					Vis[NI] = 1;
+					Queue.Add(NI);
+				}
+			}
+		}
+
+		Plan.AisleWidth = 0;
+		UE_LOG(LogTemp, Log,
+			TEXT("[Arch] Built room graph seed=%d rooms=%d edges=%d corridors=%d degree=%d..%d doors=%d planOpen=%d."),
+			Seed, Rooms.Num(), EdgeCount, CorridorCount, MinDeg, MaxDeg, DoorCells, PlanOpen);
+		return true;
+	}
+
 bool FWFCArchGrammar::Build(int32 Seed, FArchPlan& OutPlan)
 {
 	OutPlan.Init(GSize, GSize, Seed);
 	FRandomStream Rng(Seed ^ 0x9E3779B9);
 
+	// The room-and-corridor graph is now the primary macro layout (99.5%).
+	// The older cross atrium below stays as a rare fallback/style.
+	if (Rng.FRand() < 0.995f)
+	{
+		return BuildRoomGraphPlan(Seed, OutPlan, Rng);
+	}
+
 	// 1) Open hall: crossing + four arms + side aisles.
+	// The aisle width is the main macro knob: 1..3 cells (4/8/12 m).
+	// It changes the nave/transept width, the mezzanine ring and where the
+	// stairs can land, while the fixed corner blocks keep the room grammar.
+	const int32 AisleW = Rng.RandRange(1, 3);
+	OutPlan.AisleWidth = AisleW;
+	constexpr int32 C0 = 5;
+	constexpr int32 C1 = 13;
+	const int32 NaveX0 = C0 + AisleW;
+	const int32 NaveX1 = C1 - AisleW;
+	const int32 WestAisle0 = C0;
+	const int32 WestAisle1 = C0 + AisleW - 1;
+	const int32 EastAisle0 = C1 - AisleW + 1;
+	const int32 EastAisle1 = C1;
+
 	for (int32 Y = 5; Y <= 13; ++Y)
 	{
 		for (int32 X = 5; X <= 13; ++X)
@@ -699,7 +1276,22 @@ bool FWFCArchGrammar::Build(int32 Seed, FArchPlan& OutPlan)
 			C.Space = 0;
 		}
 	}
-	for (const FHallDef& Def : HallRects)
+
+	TArray<FHallDef> Halls;
+	Halls.Add({ FArchRect(NaveX0, 0, NaveX1, 4), EArchCellKind::Nave });
+	Halls.Add({ FArchRect(NaveX0, 14, NaveX1, 18), EArchCellKind::Apse });
+	Halls.Add({ FArchRect(0, NaveX0, 4, NaveX1), EArchCellKind::Transept });
+	Halls.Add({ FArchRect(14, NaveX0, 18, NaveX1), EArchCellKind::Transept });
+	Halls.Add({ FArchRect(WestAisle0, 0, WestAisle1, 4), EArchCellKind::Aisle });
+	Halls.Add({ FArchRect(EastAisle0, 0, EastAisle1, 4), EArchCellKind::Aisle });
+	Halls.Add({ FArchRect(WestAisle0, 14, WestAisle1, 18), EArchCellKind::Aisle });
+	Halls.Add({ FArchRect(EastAisle0, 14, EastAisle1, 18), EArchCellKind::Aisle });
+	Halls.Add({ FArchRect(0, WestAisle0, 4, WestAisle1), EArchCellKind::Aisle });
+	Halls.Add({ FArchRect(0, EastAisle0, 4, EastAisle1), EArchCellKind::Aisle });
+	Halls.Add({ FArchRect(14, WestAisle0, 18, WestAisle1), EArchCellKind::Aisle });
+	Halls.Add({ FArchRect(14, EastAisle0, 18, EastAisle1), EArchCellKind::Aisle });
+
+	for (const FHallDef& Def : Halls)
 	{
 		for (int32 Y = Def.Rect.Y0; Y <= Def.Rect.Y1; ++Y)
 		{
@@ -912,6 +1504,12 @@ bool FWFCArchGrammar::Build(int32 Seed, FArchPlan& OutPlan)
 		{
 			continue;
 		}
+		// Random colonnade: ~1/4 of the potential bay columns are omitted,
+		// which changes the rhythm of the hall from seed to seed.
+		if (Rng.FRand() < 0.24f)
+		{
+			continue;
+		}
 		C.bColumn = true;
 	}
 
@@ -963,8 +1561,148 @@ bool FWFCArchGrammar::Build(int32 Seed, FArchPlan& OutPlan)
 	// 9) Mezzanine / cross-shaped skylight.
 	BuildUpper(OutPlan, Rng);
 
-	UE_LOG(LogTemp, Log, TEXT("[Arch] Built plan seed=%d rooms=%d columns=%d."),
-		Seed, OutPlan.Rooms.Num(), 36);
+	// 10) Random mezzanine bridges across the open atrium. One or two rows of
+	// the central void get an upper catwalk with railings and support columns;
+	// the roof above stays open. This is the main seed-to-seed macro variation
+	// on top of the fixed circulation backbone.
+	auto AddBridge = [&](int32 RowY)
+	{
+		for (int32 X = 5; X <= 13; ++X)
+		{
+			FArchCell& C = OutPlan.Cell(X, RowY);
+			if (C.Kind != EArchCellKind::Atrium)
+			{
+				continue;
+			}
+			C.UFloor = FName(TEXT("floor_plate"));
+			C.UCeil = NAME_None;
+
+			FName Rail;
+			FString RailPattern;
+			if (ResolveWallTile(0, 0, TEXT('h'), Rng, Rail, RailPattern))
+			{
+				C.URailing = Rail;
+			}
+			if (ResolveWallTile(0, 2, TEXT('h'), Rng, Rail, RailPattern))
+			{
+				C.URailing2 = Rail;
+			}
+		}
+
+		// Three support columns under the catwalk (the bridge is at +4 m).
+		for (int32 X : { 5, 9, 13 })
+		{
+			FArchCell& C = OutPlan.Cell(X, RowY);
+			C.WallTile = FName(TEXT("wall_oooo_column"));
+			C.WallMask = 0;
+			C.Special[0] = C.Special[1] = C.Special[2] = C.Special[3] = 0;
+			C.bColumn = true;
+			C.bUColumn = false;
+		}
+
+		// Small landings in the flanking rooms so the bridge has something to
+		// land on even when the room itself was chosen as double-height.
+		for (int32 EX : { 4, 14 })
+		{
+			FArchCell& E = OutPlan.Cell(EX, RowY);
+			if (E.UFloor.IsNone())
+			{
+				E.UFloor = FName(TEXT("floor_plain"));
+				E.UCeil = NAME_None;
+			}
+		}
+	};
+
+	const int32 BridgeA = Rng.RandRange(7, 11);
+	AddBridge(BridgeA);
+	if (Rng.FRand() < 0.45f)
+	{
+		const int32 BridgeB = Rng.RandRange(7, 11);
+		if (BridgeB != BridgeA)
+		{
+			AddBridge(BridgeB);
+		}
+	}
+
+	// Guard every upper slab edge that faces a double-height room / opening.
+	// (Void edges were already handled in BuildUpper.)
+	for (int32 Y = 0; Y < OutPlan.H; ++Y)
+	{
+		for (int32 X = 0; X < OutPlan.W; ++X)
+		{
+			FArchCell& C = OutPlan.Cell(X, Y);
+			if (C.UFloor.IsNone())
+			{
+				continue;
+			}
+			for (int32 Side = 0; Side < 4; ++Side)
+			{
+				const int32 NX = X + DX[Side];
+				const int32 NY = Y + DY[Side];
+				if (!OutPlan.IsValid(NX, NY))
+				{
+					continue;
+				}
+				const FArchCell& N = OutPlan.Cell(NX, NY);
+				if (!N.UFloor.IsNone())
+				{
+					continue;
+				}
+				FName Rail;
+				FString RailPattern;
+				if (!FWFCArchGrammar::ResolveWallTile(0, Side, TEXT('h'), Rng, Rail, RailPattern))
+				{
+					continue;
+				}
+				if (C.URailing.IsNone())
+				{
+					C.URailing = Rail;
+				}
+				else if (C.URailing2.IsNone())
+				{
+					C.URailing2 = Rail;
+				}
+			}
+		}
+	}
+
+	// 11) Two monumental stairs in the nave, one against each side mezzanine.
+	// They occupy a 1x2 cell footprint (X,Y and Y+1 in world; Y-1/Y in plan),
+	// rise 4 m, and land on the aisle cells at X6/X12, Y4. The L1 railing on
+	// the landing edge is removed so the stair actually connects to the walkway.
+	auto AddStair = [&](int32 X, int32 Y, int32 ClearX, int32 ClearY)
+	{
+		FArchStair S;
+		S.X = X;
+		S.Y = Y;
+		S.Tile = FName(TEXT("stair_core"));
+		OutPlan.Stairs.Add(S);
+
+		if (OutPlan.IsValid(ClearX, ClearY))
+		{
+			FArchCell& C = OutPlan.Cell(ClearX, ClearY);
+			C.URailing = NAME_None;
+			C.URailing2 = NAME_None;
+		}
+	};
+	AddStair(NaveX0, 3, NaveX0 - 1, 4);
+	AddStair(NaveX1, 3, NaveX1 + 1, 4);
+
+	int32 ColumnCount = 0;
+	int32 BridgeCells = 0;
+	for (const FArchCell& C : OutPlan.Cells)
+	{
+		ColumnCount += C.bColumn ? 1 : 0;
+		if (C.Kind == EArchCellKind::Atrium && !C.UFloor.IsNone())
+		{
+			++BridgeCells;
+		}
+	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[Arch] Built plan seed=%d aisle=%d rooms=%d columns=%d bridges=%d stairs=%d."),
+		Seed, OutPlan.AisleWidth, OutPlan.Rooms.Num(), ColumnCount, BridgeCells, OutPlan.Stairs.Num());
 	return true;
 }
+
 

@@ -64,6 +64,10 @@ struct FWFCGenerationResult
 	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
 	FVector CellWorldSize = FVector::ZeroVector;
 
+	/** World-space probe on the walkable upper level (used by arena nav checks). */
+	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
+	FVector UpperNavProbe = FVector::ZeroVector;
+
 	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
 	int32 ModuleCount = 0;
 

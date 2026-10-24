@@ -8,6 +8,7 @@
 #include "WFC3DArenaGenerator_Atrium.generated.h"
 
 class UStaticMesh;
+class UStaticMeshComponent;
 class UHierarchicalInstancedStaticMeshComponent;
 
 /**
@@ -35,10 +36,14 @@ protected:
 private:
 	UStaticMesh* LoadTileMesh(const FName& TileId);
 	void AddTile(const FName& TileId, int32 X, int32 Y, float Z);
+	void AddStairs(const FArchPlan& Plan);
 	void BuildCollision(const FArchPlan& Plan);
 
 	UPROPERTY(Transient)
 	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> CollisionHISM = nullptr;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> StairRamps;
 
 	TMap<FName, TObjectPtr<UStaticMesh>> MeshCache;
 
