@@ -125,10 +125,10 @@ bool UBattleSkillData::Execute(const FBattleSkillExecutionContext& Context)
 		Caster->SetActorRotation(FRotator(0.0f, ToTarget.Rotation().Yaw, 0.0f));
 	}
 
-	// 2. 播放施法动作
-	if (CastAnimation && Caster->GetMesh())
+	// 2. 播放施法动作 (一次性动画, 播完自动交还 ABP 运动混合)
+	if (CastAnimation)
 	{
-		Caster->GetMesh()->PlayAnimation(CastAnimation, false);
+		Caster->PlayOneShotAnimation(CastAnimation);
 	}
 
 	// 3. 视觉表现: 技能光束/打击射线

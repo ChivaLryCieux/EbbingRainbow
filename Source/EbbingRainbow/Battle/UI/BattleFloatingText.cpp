@@ -26,17 +26,16 @@ void ABattleFloatingText::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 初始向上弹跳速度并带微量随机水平散射
-	const float RandX = FMath::FRandRange(-40.0f, 40.0f);
-	const float RandY = FMath::FRandRange(-40.0f, 40.0f);
+	// 兜底初始速度: 具体散布在 SetupFloatingText 里按尺寸重算
 	const float UpSpeed = FMath::FRandRange(150.0f, 190.0f);
-	Velocity = FVector(RandX, RandY, UpSpeed);
+	Velocity = FVector(FMath::FRandRange(-70.0f, 70.0f), FMath::FRandRange(-70.0f, 70.0f), UpSpeed);
 }
 
 void ABattleFloatingText::SetupFloatingText(const FString& Text, const FColor& InColor, float InWorldSize)
 {
 	BaseColor = InColor;
 	BaseWorldSize = InWorldSize;
+	PopStartScale = InWorldSize >= 44.0f ? 1.6f : 1.4f;
 
 	if (TextRender)
 	{
@@ -44,6 +43,28 @@ void ABattleFloatingText::SetupFloatingText(const FString& Text, const FColor& I
 		TextRender->SetTextRenderColor(BaseColor);
 		TextRender->SetWorldSize(BaseWorldSize);
 	}
+
+	// 同一位置连冒多个跳字时错峰, 避免完全重叠
+	FVector Scatter(FMath::FRandRange(-70.0f, 70.0f), FMath::FRandRange(-70.0f, 70.0f), FMath::FRandRange(-18.0f, 18.0f));
+
+	// 顺着摄像机右方向再扇开一点, 读感更接近主流 ARPG 跳字
+	if (const APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
+	{
+		if (PC->PlayerCameraManager)
+		{
+			const FVector CamRight = PC->PlayerCameraManager->GetCameraRotation().RotateVector(FVector::RightVector);
+			Scatter += CamRight * FMath::FRandRange(-60.0f, 60.0f);
+		}
+	}
+
+	const float UpSpeed = FMath::FRandRange(150.0f, 190.0f);
+	Velocity = FVector(Scatter.X, Scatter.Y, UpSpeed);
+
+	// 大数字 (重击/弱点) 多停留一会, 小数字快速退场
+	LifeTime = InWorldSize >= 44.0f ? 1.35f : 1.1f;
+	ElapsedTime = 0.0f;
+
+	AddActorWorldOffset(Scatter * 0.15f);
 }
 
 ABattleFloatingText* ABattleFloatingText::SpawnFloatingText(UWorld* World, const FVector& Location, const FString& Text, const FColor& Color, float WorldSize)
@@ -90,11 +111,11 @@ void ABattleFloatingText::Tick(float DeltaSeconds)
 		}
 	}
 
-	// 动态缩放冲击: 前 0.2 秒从 1.4x 弹回 1.0x
+	// 动态缩放冲击: 前 0.2 秒从 PopStartScale 弹回 1.0x
 	float ScaleFactor = 1.0f;
 	if (ElapsedTime < 0.2f)
 	{
-		ScaleFactor = FMath::Lerp(1.4f, 1.0f, ElapsedTime / 0.2f);
+		ScaleFactor = FMath::Lerp(PopStartScale, 1.0f, ElapsedTime / 0.2f);
 	}
 
 	// 淡出透明度: 后半段平滑降低 Alpha

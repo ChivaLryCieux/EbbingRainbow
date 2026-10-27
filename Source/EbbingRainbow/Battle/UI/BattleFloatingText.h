@@ -40,4 +40,5 @@ private:
 	float LifeTime = 1.1f;
 	float ElapsedTime = 0.0f;
 	float BaseWorldSize = 36.0f;
+	float PopStartScale = 1.4f;
 };

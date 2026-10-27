@@ -13,12 +13,12 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimInstance.h"
 #include "Engine/World.h"
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
-#include "DrawDebugHelpers.h"
 #include "UObject/ConstructorHelpers.h"
 
 ABattleUnit::ABattleUnit()
@@ -78,6 +78,69 @@ ABattleUnit::ABattleUnit()
 		AttackAnimSequence = AttackFinder.Object;
 	}
 
+	// 一次性动画资产池 (硬引用由 UPROPERTY 数组持有, 不会被 GC 回收)
+	auto LoadAnims = [](const TCHAR* const* Paths, int32 Count, TArray<TObjectPtr<UAnimSequence>>& OutPool)
+	{
+		for (int32 i = 0; i < Count; ++i)
+		{
+			// 注意: 不能用 static, 否则循环里只会加载第一条路径
+			ConstructorHelpers::FObjectFinder<UAnimSequence> Finder(Paths[i]);
+			if (Finder.Succeeded())
+			{
+				OutPool.Add(Finder.Object);
+			}
+		}
+	};
+
+	const TCHAR* const AttackPaths[] = {
+		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01.MM_Attack_01"),
+		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_02.MM_Attack_02"),
+		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_03.MM_Attack_03")
+	};
+	LoadAnims(AttackPaths, (int32)UE_ARRAY_COUNT(AttackPaths), AttackAnimations);
+
+	const TCHAR* const HitFrontPaths[] = {
+		TEXT("/Game/Characters/Mannequins/Anims/Rifle/HitReact/MM_HitReact_Front_Lgt_01.MM_HitReact_Front_Lgt_01"),
+		TEXT("/Game/Characters/Mannequins/Anims/Rifle/HitReact/MM_HitReact_Front_Lgt_02.MM_HitReact_Front_Lgt_02"),
+		TEXT("/Game/Characters/Mannequins/Anims/Rifle/HitReact/MM_HitReact_Front_Lgt_03.MM_HitReact_Front_Lgt_03"),
+		TEXT("/Game/Characters/Mannequins/Anims/Rifle/HitReact/MM_HitReact_Front_Med_01.MM_HitReact_Front_Med_01"),
+		TEXT("/Game/Characters/Mannequins/Anims/Rifle/HitReact/MM_HitReact_Front_Hvy_01.MM_HitReact_Front_Hvy_01")
+	};
+	LoadAnims(HitFrontPaths, (int32)UE_ARRAY_COUNT(HitFrontPaths), HitReactionFrontAnimations);
+
+	const TCHAR* const HitBackPaths[] = {
+		TEXT("/Game/Characters/Mannequins/Anims/Rifle/HitReact/MM_HitReact_Back_Med_01.MM_HitReact_Back_Med_01")
+	};
+	LoadAnims(HitBackPaths, (int32)UE_ARRAY_COUNT(HitBackPaths), HitReactionBackAnimations);
+
+	const TCHAR* const DeathPaths[] = {
+		TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_01.MM_Death_Front_01"),
+		TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Back_01.MM_Death_Back_01"),
+		TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Left_01.MM_Death_Left_01"),
+		TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Right_01.MM_Death_Right_01")
+	};
+	LoadAnims(DeathPaths, (int32)UE_ARRAY_COUNT(DeathPaths), DeathAnimations);
+
+	// 脚底队伍光环底盘: 零资产依赖, 用 MID 调色表达敌我/选中/悬停/当前回合
+	TeamDisc = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TeamDisc"));
+	TeamDisc->SetupAttachment(GetRootComponent());
+	TeamDisc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	TeamDisc->SetCanEverAffectNavigation(false);
+	TeamDisc->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f + 1.2f));
+	TeamDisc->SetRelativeScale3D(FVector(0.92f, 0.92f, 0.02f));
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> DiscFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	if (DiscFinder.Succeeded())
+	{
+		TeamDisc->SetStaticMesh(DiscFinder.Object);
+	}
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> DiscMatFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	if (DiscMatFinder.Succeeded())
+	{
+		TeamDisc->SetMaterial(0, DiscMatFinder.Object);
+	}
+
 	Label = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
 	Label->SetupAttachment(GetRootComponent());
 	Label->SetRelativeLocation(FVector(0.0f, 0.0f, 88.0f + 70.0f));
@@ -93,6 +156,11 @@ void ABattleUnit::BeginPlay()
 	if (BodyMesh && !BodyMID)
 	{
 		BodyMID = BodyMesh->CreateAndSetMaterialInstanceDynamic(0);
+	}
+
+	if (TeamDisc && !DiscMID)
+	{
+		DiscMID = TeamDisc->CreateAndSetMaterialInstanceDynamic(0);
 	}
 
 	if (GetMesh())
@@ -245,7 +313,12 @@ void ABattleUnit::InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam)
 	{
 		BodyMID = BodyMesh->CreateAndSetMaterialInstanceDynamic(0);
 	}
+
+	// 跑动速度随先攻值浮动: 高先攻单位不仅先手, 跑得也更快
+	MoveSpeed = FMath::Clamp(480.0f + (Stats.Initiative - 8) * 22.0f, 400.0f, 850.0f);
+
 	UpdateVisualColor();
+	UpdateDiscVisual(0.0f);
 	RefreshLabel();
 }
 
@@ -311,6 +384,73 @@ void ABattleUnit::UpdateVisualColor()
 	{
 		Label->SetTextRenderColor(BaseColor.ToFColor(true));
 	}
+}
+
+FLinearColor ABattleUnit::GetTeamBaseColor() const
+{
+	if (!IsAlive())
+	{
+		return FLinearColor(0.10f, 0.10f, 0.12f);
+	}
+	if (Team == EBattleTeam::Player)
+	{
+		return FLinearColor(0.10f, 0.45f, 1.0f);   // 我方: 冰蓝
+	}
+	return FLinearColor(1.0f, 0.20f, 0.12f);       // 敌方: 赤红
+}
+
+void ABattleUnit::TriggerDiscFlash()
+{
+	DiscFlashTimer = DiscFlashDuration;
+}
+
+void ABattleUnit::UpdateDiscVisual(float DeltaSeconds)
+{
+	if (!TeamDisc)
+	{
+		return;
+	}
+
+	// 阵亡即收起光环, 避免尸体上还飘着一圈颜色
+	if (!IsAlive())
+	{
+		TeamDisc->SetVisibility(false);
+		return;
+	}
+	TeamDisc->SetVisibility(true);
+
+	FLinearColor Target = GetTeamBaseColor();
+	float Scale = 1.0f;
+
+	if (bSelected)
+	{
+		// 当前行动单位: 烫金 + 呼吸脉冲
+		DiscPulseTime += DeltaSeconds;
+		const float Pulse = 0.5f + 0.5f * FMath::Sin(DiscPulseTime * 6.0f);
+		Target = FMath::Lerp(Target, FLinearColor(1.0f, 0.85f, 0.15f), 0.72f);
+		Scale = 1.14f + 0.06f * Pulse;
+		Target *= 0.85f + 0.35f * Pulse;
+	}
+	else if (bHovered)
+	{
+		Target = FMath::Lerp(Target, FLinearColor::White, 0.35f);
+		Scale = 1.06f;
+	}
+
+	// 受击闪白: 给骨骼网格体一个廉价的命中反馈 (材质无 Tint 参数可用)
+	if (DiscFlashTimer > 0.0f)
+	{
+		DiscFlashTimer = FMath::Max(0.0f, DiscFlashTimer - DeltaSeconds);
+		const float Flash = FMath::Clamp(DiscFlashTimer / DiscFlashDuration, 0.0f, 1.0f);
+		Target = FMath::Lerp(Target, FLinearColor::White, Flash);
+		Scale += 0.10f * Flash;
+	}
+
+	if (DiscMID)
+	{
+		DiscMID->SetVectorParameterValue(TEXT("Color"), Target);
+	}
+	TeamDisc->SetRelativeScale3D(FVector(0.92f * Scale, 0.92f * Scale, 0.02f));
 }
 
 void ABattleUnit::RefreshLabel()
@@ -580,20 +720,34 @@ bool ABattleUnit::ExecuteSkill(int32 SkillIndex, ABattleUnit* Target)
 	const FVector ToTarget = Target->GetActorLocation() - GetActorLocation();
 	SetActorRotation(FRotator(0.0f, ToTarget.Rotation().Yaw, 0.0f));
 
-	// 播放攻击动作
-	if (AttackAnimSequence && GetMesh())
+	// 攻击动作 -> 在动画命中时刻才结算伤害 (近战手感的关键)
+	const float HitDelay = PlayAttackAnimation();
+	if (HitDelay > KINDA_SMALL_NUMBER)
 	{
-		GetMesh()->PlayAnimation(AttackAnimSequence, false);
-		GetWorldTimerManager().ClearTimer(AttackAnimTimer);
-		GetWorldTimerManager().SetTimer(AttackAnimTimer, [this]() {
-			if (GetMesh() && IsAlive())
-			{
-				GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-			}
-		}, 0.75f, false);
+		PendingHitTarget = Target;
+		PendingHitSkillIndex = SkillIndex;
+		GetWorldTimerManager().ClearTimer(PendingHitTimerHandle);
+		GetWorldTimerManager().SetTimer(PendingHitTimerHandle, this, &ABattleUnit::ApplyPendingHit, HitDelay, false);
+	}
+	else
+	{
+		// 无动画资产: 立即结算, 保证逻辑不卡
+		ResolveSkillImpact(Skill, Target);
 	}
 
-	// 表现: 绘制技能击中射线
+	return true;
+}
+
+void ABattleUnit::ResolveSkillImpact(const FBattleSkillDef& Skill, ABattleUnit* Target)
+{
+	if (!Target)
+	{
+		return;
+	}
+
+	// 目标受击反应由 TakeBattleDamage 内部按来袭方向播放, 这里不重复触发
+
+	// 表现: 绘制技能击中射线与落点火花
 	if (UWorld* World = GetWorld())
 	{
 		const FVector Muzzle = GetActorLocation() + FVector(0.0f, 0.0f, 30.0f);
@@ -603,7 +757,263 @@ bool ABattleUnit::ExecuteSkill(int32 SkillIndex, ABattleUnit* Target)
 	}
 
 	Target->TakeBattleDamage(Skill.BaseDamage, this, Skill.DamageType);
-	return true;
+}
+
+void ABattleUnit::ApplyPendingHit()
+{
+	ABattleUnit* Target = PendingHitTarget.Get();
+	const int32 SkillIndex = PendingHitSkillIndex;
+	PendingHitTarget.Reset();
+	PendingHitSkillIndex = INDEX_NONE;
+
+	// 施法者被打断 / 目标已倒: 本次伤害作废
+	if (!IsAlive() || !Target || !Target->IsAlive() || !Stats.Skills.IsValidIndex(SkillIndex))
+	{
+		return;
+	}
+
+	ResolveSkillImpact(Stats.Skills[SkillIndex], Target);
+}
+
+void ABattleUnit::CancelPendingHit()
+{
+	PendingHitTarget.Reset();
+	PendingHitSkillIndex = INDEX_NONE;
+	GetWorldTimerManager().ClearTimer(PendingHitTimerHandle);
+}
+
+UAnimMontage* ABattleUnit::GetOrCreateMontage(UAnimSequence* Animation)
+{
+	if (!Animation)
+	{
+		return nullptr;
+	}
+
+	if (TObjectPtr<UAnimMontage> Existing = MontageCache.FindRef(Animation))
+	{
+		return Existing;
+	}
+
+	// 0.10s 淡入/淡出: 起手和收招都不硬切
+	UAnimMontage* Montage = UAnimMontage::CreateSlotAnimationAsDynamicMontage(
+		Animation, FName(TEXT("DefaultSlot")), 0.10f, 0.10f, 1.0f, 1, -1.0f, 0.0f);
+	if (Montage)
+	{
+		MontageCache.Add(Animation, Montage);
+	}
+	return Montage;
+}
+
+void ABattleUnit::PlayOneShotAnimation(UAnimSequence* Animation)
+{
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!Animation || !MeshComp)
+	{
+		return;
+	}
+
+	// 走 ABP 的 DefaultSlot: 叠加动画 (受击/死亡) 在 AnimSingleNodeInstance 下不生效,
+	// 打包构建里会静默失效, 因此统一用动态蒙太奇播放
+	UAnimMontage* Montage = GetOrCreateMontage(Animation);
+	if (Montage)
+	{
+		if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
+		{
+			AnimInst->Montage_Play(Montage);
+		}
+	}
+	else
+	{
+		MeshComp->PlayAnimation(Animation, false);
+	}
+
+	const float Length = Animation->GetPlayLength();
+	GetWorldTimerManager().ClearTimer(OneShotAnimTimerHandle);
+	if (Length > KINDA_SMALL_NUMBER)
+	{
+		// +0.12s 留给淡出, 避免恢复逻辑早于动画结束
+		GetWorldTimerManager().SetTimer(OneShotAnimTimerHandle, this, &ABattleUnit::RestoreAnimBlueprint, Length + 0.12f, false);
+	}
+	else
+	{
+		RestoreAnimBlueprint();
+	}
+}
+
+void ABattleUnit::RestoreAnimBlueprint()
+{
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		if (MeshComp->GetAnimationMode() != EAnimationMode::AnimationBlueprint)
+		{
+			MeshComp->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+		}
+	}
+}
+
+float ABattleUnit::PlayAttackAnimation()
+{
+	if (AttackAnimations.Num() == 0)
+	{
+		return 0.0f;
+	}
+
+	const int32 Index = FMath::RandRange(0, AttackAnimations.Num() - 1);
+	UAnimSequence* Anim = AttackAnimations[Index];
+	if (!Anim)
+	{
+		return 0.0f;
+	}
+
+	PlayOneShotAnimation(Anim);
+
+	const float Length = Anim->GetPlayLength();
+	if (Length <= KINDA_SMALL_NUMBER)
+	{
+		return 0.0f;
+	}
+
+	// 命中时刻: 不早于 0.12s (给起手一个读帧), 不晚于 0.75s (避免等太久)
+	const float HitDelay = FMath::Clamp(Length * AttackHitFraction, 0.12f, 0.75f);
+	return HitDelay;
+}
+
+void ABattleUnit::PlayHitReaction(const FVector& FromWorldLocation)
+{
+	// 阵亡走布娃娃, 不再播受击
+	if (bDying || !IsAlive())
+	{
+		return;
+	}
+
+	FVector ToSource = FromWorldLocation - GetActorLocation();
+	ToSource.Z = 0.0f;
+	if (ToSource.IsNearlyZero())
+	{
+		return;
+	}
+	ToSource.Normalize();
+
+	const float Dot = FVector::DotProduct(GetActorForwardVector(), ToSource);
+	const bool bFromFront = Dot >= 0.0f;
+
+	const TArray<TObjectPtr<UAnimSequence>>& FrontPool = HitReactionFrontAnimations;
+	const TArray<TObjectPtr<UAnimSequence>>& BackPool = HitReactionBackAnimations;
+	const TArray<TObjectPtr<UAnimSequence>>& Pool = bFromFront
+		? (FrontPool.Num() > 0 ? FrontPool : BackPool)
+		: (BackPool.Num() > 0 ? BackPool : FrontPool);
+
+	if (Pool.Num() == 0)
+	{
+		return;
+	}
+
+	const int32 Index = FMath::RandRange(0, Pool.Num() - 1);
+	if (UAnimSequence* Anim = Pool[Index])
+	{
+		PlayOneShotAnimation(Anim);
+	}
+}
+
+void ABattleUnit::StartDeathRagdoll(AActor* DamageCauser, float DamageAmount)
+{
+	if (bDying)
+	{
+		return;
+	}
+	bDying = true;
+
+	// 清理移动与尚未落地的延迟伤害
+	CancelPendingHit();
+	GetWorldTimerManager().ClearTimer(OneShotAnimTimerHandle);
+	bMoving = false;
+	MovePath.Reset();
+	GetWorldTimerManager().ClearTimer(MoveWatchdogTimer);
+
+	if (UCharacterMovementComponent* Move = GetCharacterMovement())
+	{
+		Move->StopMovementImmediately();
+		Move->DisableMovement();
+	}
+
+	// 击飞方向: 由伤害来源指向单位, 带上抛量让尸体翻出弧线
+	FVector LaunchDir(1.0f, 0.0f, 0.0f);
+	if (DamageCauser)
+	{
+		FVector Away = GetActorLocation() - DamageCauser->GetActorLocation();
+		Away.Z = 0.0f;
+		if (!Away.Normalize())
+		{
+			Away = GetActorForwardVector();
+		}
+		LaunchDir = Away;
+	}
+
+	const float Strength = FMath::Clamp(DamageAmount * RagdollImpulsePerDamage, 280.0f, 1500.0f);
+	PendingRagdollImpulse = (LaunchDir + FVector(0.0f, 0.0f, 0.28f)).GetSafeNormal() * Strength;
+
+	// 先倒地动作再切物理
+	UAnimSequence* DeathAnim = nullptr;
+	if (DeathAnimations.Num() > 0)
+	{
+		const int32 Index = FMath::RandRange(0, DeathAnimations.Num() - 1);
+		DeathAnim = DeathAnimations[Index];
+	}
+	if (DeathAnim)
+	{
+		PlayOneShotAnimation(DeathAnim);
+	}
+
+	// 先倒地再切物理, 过渡比瞬间布娃娃自然
+	if (RagdollBlendDelay <= KINDA_SMALL_NUMBER)
+	{
+		EnableRagdoll();
+	}
+	else
+	{
+		GetWorldTimerManager().SetTimer(RagdollTimerHandle, this, &ABattleUnit::EnableRagdoll, RagdollBlendDelay, false);
+	}
+}
+
+void ABattleUnit::EnableRagdoll()
+{
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp || bRagdollActive)
+	{
+		return;
+	}
+
+	// 兜底: 骨骼网格体没带物理资产时, 手动挂上 Mannequin 的 PA
+	if (USkeletalMesh* SkelMesh = MeshComp->GetSkeletalMeshAsset())
+	{
+		if (!SkelMesh->GetPhysicsAsset())
+		{
+			static ConstructorHelpers::FObjectFinder<UPhysicsAsset> PAFinder(TEXT("/Game/Characters/Mannequins/Rigs/PA_Mannequin.PA_Mannequin"));
+			if (PAFinder.Succeeded())
+			{
+				MeshComp->SetPhysicsAsset(PAFinder.Object);
+			}
+		}
+	}
+
+	// 先回到 ABP 再开物理, 布娃娃才能从当前姿态平滑混合
+	MeshComp->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	MeshComp->bBlendPhysics = true;
+	MeshComp->SetCollisionProfileName(TEXT("Ragdoll"));
+	MeshComp->SetSimulatePhysics(true);
+	// 停掉仍在播放的蒙太奇, 否则动画会持续和物理争夺姿态
+	if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
+	{
+		AnimInst->StopAllMontages(0.05f);
+	}
+
+	if (!PendingRagdollImpulse.IsNearlyZero())
+	{
+		// bVelChange=true: 直接作为瞬时速度, 得到干脆的击飞
+		MeshComp->AddImpulse(PendingRagdollImpulse, NAME_None, true);
+	}
+	PendingRagdollImpulse = FVector::ZeroVector;
+	bRagdollActive = true;
 }
 
 float ABattleUnit::TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType)
@@ -679,9 +1089,16 @@ float ABattleUnit::TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, E
 		}
 	}
 
-	ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, DamageText, DamageColor, 40.0f);
+	// 伤害越大字越大: 重击与弱点一眼可辨
+	const float TotalDealt = ActualIntegrityDamage + BarrierAbsorbed;
+	const float DamageTextSize = FMath::Clamp(36.0f + TotalDealt * 0.55f, 36.0f, 64.0f);
+	ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, DamageText, DamageColor, DamageTextSize);
 
-	// 受击闪烁
+	// 受击反馈: 光环闪白 + 按来袭方向播受击动作
+	TriggerDiscFlash();
+	PlayHitReaction(Attacker ? Attacker->GetActorLocation() : GetActorLocation() + GetActorForwardVector() * 100.0f);
+
+	// 白模兜底路径的受击闪烁 (骨骼路径没有可用的 Tint 参数)
 	if (BodyMID)
 	{
 		BodyMID->SetVectorParameterValue(TEXT("Color"), FLinearColor::White);
@@ -694,19 +1111,15 @@ float ABattleUnit::TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, E
 	OnUnitDamaged.Broadcast(this, FMath::RoundToInt(ActualIntegrityDamage));
 	RefreshLabel();
 
-	// 6. 阵亡结算
+	// 6. 阵亡结算: 倒地动画 -> 布娃娃 -> 沿受击方向击飞
 	if (!IsAlive())
 	{
 		Integrity = 0.0f;
 		HP = 0;
 		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		if (GetMesh())
-		{
-			GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
-			GetMesh()->SetSimulatePhysics(true);
-		}
 		UpdateVisualColor();
 		RefreshLabel();
+		StartDeathRagdoll(Attacker, DamageAmount);
 		OnUnitDied.Broadcast(this);
 	}
 
@@ -730,6 +1143,9 @@ void ABattleUnit::Tick(float DeltaSeconds)
 		}
 	}
 
+	// 光环状态 (选中脉冲/受击闪白)
+	UpdateDiscVisual(DeltaSeconds);
+
 	// 沿路径平滑移动
 	if (bMoving && MovePath.IsValidIndex(MovePathIndex))
 	{
@@ -740,7 +1156,6 @@ void ABattleUnit::Tick(float DeltaSeconds)
 		const FVector Diff = Waypoint - CurrentLoc;
 		const float Dist2D = Diff.Size2D();
 
-		const float MoveSpeed = 650.0f; // 移动速度 (cm/s)
 		const float StepDist = MoveSpeed * DeltaSeconds;
 
 		// 转向移动方向
