@@ -6,24 +6,15 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Styling/SlateBrush.h"
-#include "Styling/CoreStyle.h"
 
-class STextBlock;
 class SBorder;
-class SButton;
-class SHorizontalBox;
-class SVerticalBox;
 
 /**
- * 明日方舟风格的高科技空间站主界面 Slate 覆层:
- * 1. 顶部栏: 系统按钮、实时日期时间走字、电池电量、三合一货币资源槽 (信用点/合成玉/源石)
- * 2. 左侧空间: 留空展示 3D 悬浮空间站与星球, 配备指挥官等级徽章与“全屏观景(隐藏UI)”功能
- * 3. 右侧面板: 经典的明日方舟大磁贴交互仪表盘:
- *    - 核心磁贴 [Terminal 战术终端 / 作战出击] (直通战斗关卡 Lvl_Battle)
- *    - 次级磁贴 [Squads 编队] (可展开4人特勤小队属性弹窗)
- *    - 次级磁贴 [Operator 干员与卡组]
- *    - 商业磁贴 [Store 采购中心] & [Recruitment 公开招募]
- *    - 基础磁贴 [Mission 任务] & [Base 空间基建] & [Depot 仓库]
+ * 空间站主界面覆层 (苹果液态玻璃 · 近未来极简):
+ * 仅保留底部居中的两枚玻璃药丸按钮 ——
+ *   [人员管理 PERSONNEL] (暂无功能)
+ *   [航线管理 ROUTES]    (临时作为开始战斗入口, 直通 Lvl_Battle)
+ * 按 Esc 可切换全屏观景模式, 欣赏 3D 场景。
  */
 class EBBINGRAINBOW_API SHallMainOverlay : public SCompoundWidget
 {
@@ -39,11 +30,8 @@ public:
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
 
-	/** 切换全屏无 UI 观景模式 (方便欣赏背景中 3D 空间站与星球) */
+	/** 切换全屏无 UI 观景模式 (Esc) */
 	void ToggleZenMode();
-
-	/** 打开/关闭编队详情弹窗 */
-	void ToggleSquadsModal();
 
 	/** 发起出击进入战斗关卡 Lvl_Battle */
 	void LaunchBattleLevel();
@@ -51,43 +39,18 @@ public:
 private:
 	TWeakObjectPtr<UWorld> OwningWorld;
 	UWorld* FindPlayWorld() const;
-	// 动态时钟文本
-	TSharedPtr<STextBlock> TimeTextBlock;
 
-	// UI 容器与观景模式控制
-	TSharedPtr<SOverlay> RootOverlay;
+	// UI 容器
 	TSharedPtr<SBorder> MainDashboardContainer;
+	TSharedPtr<SBorder> DockContainer;
 	TSharedPtr<SBorder> ZenHintBorder;
 
-	// 编队弹窗
-	TSharedPtr<SBorder> SquadsModalBorder;
-
 	bool bZenMode = false;
-	bool bSquadsModalOpen = false;
+	float EntranceProgress = 0.0f;   // 底部 Dock 入场动画 0..1
 
-	// 样式画刷
-	FSlateBrush TerminalBgBrush;
-	FSlateBrush SquadsBgBrush;
-	FSlateBrush StoreBgBrush;
-	FSlateBrush RecruitBgBrush;
-	FSlateBrush MiniTileBgBrush;
-	FSlateBrush TopBarPillBrush;
-	FSlateBrush CurrencyChipBrush;
-	FSlateBrush ModalBgBrush;
-	FSlateBrush DarkGlassBrush;
+	// 观景模式提示胶囊底座
+	FSlateBrush ZenHintBrush;
 
-	// 悬停动态效果支持
-	float TerminalHoverAlpha = 0.0f;
-	bool bTerminalHovered = false;
-
-	FReply HandleTerminalClicked();
-	FReply HandleSquadsClicked();
-	FReply HandleOperatorClicked();
-	FReply HandleStoreClicked();
-	FReply HandleRecruitClicked();
-	FReply HandleMissionClicked();
-	FReply HandleBaseClicked();
-	FReply HandleDepotClicked();
-	FReply HandleQuitClicked();
-	FReply HandleEyeToggleClicked();
+	FReply HandlePersonnelClicked();  // 人员管理 (暂无功能)
+	FReply HandleRoutesClicked();     // 航线管理 → 开始战斗 (临时)
 };

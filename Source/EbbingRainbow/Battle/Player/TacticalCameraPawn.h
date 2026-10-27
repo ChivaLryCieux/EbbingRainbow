@@ -11,14 +11,16 @@ class UCameraComponent;
 
 /**
  * 战术俯视摄像机（博德之门 3 风格手感优化版）。
- * 
+ *
  * 控制说明：
- * - 鼠标中键按住拖动：博德之门 3 式轨道旋转（Yaw 绕聚焦点旋转，Pitch 俯仰微调，鼠标在旋转期间隐藏并锁定回位）
+ * - 鼠标中键按住拖动：博德之门 3 式轨道旋转（Yaw 绕聚焦点旋转，Pitch 俯仰微调，鼠标在旋转期间隐藏并锁定回位）。
+ *   旋转读取引擎输入系统的每帧鼠标增量（MouseX/MouseY），不依赖光标绝对坐标、不做屏幕边缘传送，
+ *   在视口捕获 / DPI 缩放 / 多显示器 / PIE 等任意状态下都不会产生“视角不停旋转”的巨量假增量。
  * - 滚轮上下滚动：相机平滑缩放，并可选支持 BG3 特色的“近距离自动仰角放平、远距离高俯视俯瞰”动态联动
  * - WASD / 屏幕边缘：平移相机
  * - Q / E：键盘平滑旋转视角
  * - F 键：聚焦当前行动单位
- * 
+ *
  * 所有手感与上下限参数均在细节面板（Details Panel）中分组暴露并提供滑块限制。
  */
 UCLASS()
@@ -151,6 +153,9 @@ private:
 	void StartOrbit();
 	void StopOrbit();
 	float GetCoupledPitchForArmLength(float InArmLength) const;
+
+	// 兜底绝对坐标差分的单帧位移上限（像素）：正常甩动不会超过，捕获切换瞬间的坐标跳变会被丢弃
+	static constexpr float MaxOrbitFallbackDeltaPixels = 300.0f;
 
 	UPROPERTY(VisibleAnywhere, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;

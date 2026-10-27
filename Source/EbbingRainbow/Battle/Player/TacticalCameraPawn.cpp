@@ -205,50 +205,63 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 			StopOrbit();
 		}
 
-		// 基于屏幕绝对坐标计算帧间位移（无非零残留风险，永不狂转）
 		if (bOrbiting)
 		{
-			float CurX = 0.0f;
-			float CurY = 0.0f;
-			if (PC->GetMousePosition(CurX, CurY))
+			// 主通道：读取输入系统累积的每帧鼠标增量 (MouseX/MouseY)。
+			// FInputModeGameAndUI 使用 CaptureDuringMouseDown，按住中键期间视口处于捕获状态，
+			// 引擎只在捕获期间累积并发送鼠标增量；该通道与光标绝对位置、屏幕边缘、
+			// 窗口布局和 DPI 无关，从根源上消除“传送光标与事件回写打架导致每帧巨量增量”的狂转问题。
+			float DeltaX = 0.0f;
+			float DeltaY = 0.0f;
+			PC->GetInputMouseDelta(DeltaX, DeltaY);
+
+			// 兜底通道：捕获意外丢失时 (如切窗) 退化为绝对坐标差分。
+			// 每帧重新锚定且不再传送光标，并钳制单帧位移 (捕获切换瞬间绝对坐标可能跳变)，
+			// 保证任何情况下都不会产生持续的巨量增量。
+			if (FMath::IsNearlyZero(DeltaX) && FMath::IsNearlyZero(DeltaY))
 			{
-				int32 SizeX = 0;
-				int32 SizeY = 0;
-				PC->GetViewportSize(SizeX, SizeY);
-
-				if (SizeX > 0 && SizeY > 0)
+				float CurX = 0.0f;
+				float CurY = 0.0f;
+				if (PC->GetMousePosition(CurX, CurY))
 				{
-					const float DeltaX = CurX - LastMousePos.X;
-					const float DeltaY = CurY - LastMousePos.Y;
-
-					if (FMath::Abs(DeltaX) > 0.01f)
+					const FVector2D AbsDelta(CurX - LastMousePos.X, CurY - LastMousePos.Y);
+					if (FMath::Abs(AbsDelta.X) <= MaxOrbitFallbackDeltaPixels)
 					{
-						TargetYaw += DeltaX * OrbitYawSpeed;
+						DeltaX = AbsDelta.X;
 					}
-
-					if (FMath::Abs(DeltaY) > 0.01f)
+					if (FMath::Abs(AbsDelta.Y) <= MaxOrbitFallbackDeltaPixels)
 					{
-						const float PitchDelta = DeltaY * OrbitPitchSpeed * (bInvertOrbitPitch ? -1.0f : 1.0f);
-						TargetPitch = FMath::Clamp(TargetPitch - PitchDelta, MinPitch, MaxPitch);
+						// 绝对坐标 Y 向下为正，MouseY 轴向上为正，取反以统一方向
+						DeltaY = -AbsDelta.Y;
+					}
+					LastMousePos = FVector2D(CurX, CurY);
+				}
+			}
+			else
+			{
+				// 捕获期间绝对坐标不可信，仅用于保持兜底锚点新鲜
+				float CurX = 0.0f;
+				float CurY = 0.0f;
+				if (PC->GetMousePosition(CurX, CurY))
+				{
+					LastMousePos = FVector2D(CurX, CurY);
+				}
+			}
 
-						if (bEnableZoomPitchCoupling)
-						{
-							ManualPitchOffset = TargetPitch - GetCoupledPitchForArmLength(TargetArmLength);
-						}
-					}
+			if (!FMath::IsNearlyZero(DeltaX))
+			{
+				TargetYaw += DeltaX * OrbitYawSpeed;
+			}
 
-					// 视口边缘回绕保护：当鼠标接近视口边缘（<=30 像素）时，无感移回中心继续累加，实现博德之门 3 式无限 360 度顺畅旋转
-					if (CurX <= 30.0f || CurX >= (float)SizeX - 30.0f || CurY <= 30.0f || CurY >= (float)SizeY - 30.0f)
-					{
-						const int32 CenterX = SizeX / 2;
-						const int32 CenterY = SizeY / 2;
-						PC->SetMouseLocation(CenterX, CenterY);
-						LastMousePos = FVector2D(CenterX, CenterY);
-					}
-					else
-					{
-						LastMousePos = FVector2D(CurX, CurY);
-					}
+			if (!FMath::IsNearlyZero(DeltaY))
+			{
+				// MouseY 轴向上为正：向上拖动视角放平，向下拖动俯视加深 (与原绝对坐标实现手感一致)
+				const float PitchDelta = DeltaY * OrbitPitchSpeed * (bInvertOrbitPitch ? -1.0f : 1.0f);
+				TargetPitch = FMath::Clamp(TargetPitch + PitchDelta, MinPitch, MaxPitch);
+
+				if (bEnableZoomPitchCoupling)
+				{
+					ManualPitchOffset = TargetPitch - GetCoupledPitchForArmLength(TargetArmLength);
 				}
 			}
 		}
@@ -296,9 +309,15 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 	SetActorLocation(FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaSeconds, FocusInterpSpeed));
 	SpringArm->TargetArmLength = FMath::FInterpTo(SpringArm->TargetArmLength, TargetArmLength, DeltaSeconds, ZoomInterpSpeed);
 
-	const float CurrentYaw = SpringArm->GetRelativeRotation().Yaw;
+	// Yaw 保持归一化并按最短路径插值（与 FInterpTo 同公式），
+	// 防止累计圈数或归一化边界处出现“绕远路”式的多余旋转
+	TargetYaw = FMath::UnwindDegrees(TargetYaw);
+	const float CurrentYaw = FMath::UnwindDegrees(SpringArm->GetRelativeRotation().Yaw);
 	const float CurrentPitch = SpringArm->GetRelativeRotation().Pitch;
-	const float NewYaw = FMath::FInterpTo(CurrentYaw, TargetYaw, DeltaSeconds, RotateInterpSpeed);
+	const float YawDist = FMath::FindDeltaAngleDegrees(CurrentYaw, TargetYaw);
+	const float NewYaw = (YawDist * YawDist < SMALL_NUMBER)
+		? TargetYaw
+		: CurrentYaw + YawDist * FMath::Clamp(DeltaSeconds * RotateInterpSpeed, 0.0f, 1.0f);
 	const float NewPitch = FMath::FInterpTo(CurrentPitch, TargetPitch, DeltaSeconds, RotateInterpSpeed);
 	SpringArm->SetRelativeRotation(FRotator(NewPitch, NewYaw, 0.0f));
 }

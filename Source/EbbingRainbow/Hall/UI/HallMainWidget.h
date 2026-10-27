@@ -10,7 +10,7 @@ class SHallMainOverlay;
 
 /**
  * 空间站大厅 UMG 控件:
- * 承载明日方舟风格高科技主界面 (终端/编队/干员/采购/基建/全屏观景)。
+ * 承载主界面液态玻璃底部 Dock (人员管理 / 航线管理与全屏观景)。
  */
 UCLASS()
 class EBBINGRAINBOW_API UHallMainWidget : public UUserWidget
