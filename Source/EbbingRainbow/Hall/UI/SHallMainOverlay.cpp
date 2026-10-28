@@ -182,8 +182,8 @@ void SHallMainOverlay::LaunchBattleLevel()
 	UWorld* World = FindPlayWorld();
 	if (World)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Hall] Launching Battle Level (/Game/Battle/Maps/Lvl_Battle)..."));
-		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Battle")), true, TEXT("game=/Script/EbbingRainbow.BattleGameMode"));
+		UE_LOG(LogTemp, Log, TEXT("[Hall] Launching Battle Level (/Game/Battle/Maps/Lvl_Arena)..."));
+		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Arena")), true, TEXT("game=/Script/EbbingRainbow.BattleGameMode"));
 	}
 	else
 	{

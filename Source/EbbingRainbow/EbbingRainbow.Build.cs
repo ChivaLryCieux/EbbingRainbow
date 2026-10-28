@@ -15,13 +15,8 @@ public class EbbingRainbow : ModuleRules
 			"InputCore",
 			"EnhancedInput",
 			"AIModule",
-			"StateTreeModule",
-			"GameplayStateTreeModule",
 			"UMG",
 			"Slate",
-			"MotionWarping",
-			"PoseSearch",
-			"MotionTrajectory",
 			"AssetRegistry",
 			"NavigationSystem",
 			"SlateCore"
@@ -32,29 +27,19 @@ public class EbbingRainbow : ModuleRules
 		PublicIncludePaths.AddRange(new string[] {
 			"EbbingRainbow",
 			"EbbingRainbow/Environment",
-			"EbbingRainbow/Variant_Platforming",
-			"EbbingRainbow/Variant_Platforming/Animation",
-			"EbbingRainbow/Variant_Combat",
-			"EbbingRainbow/Variant_Combat/AI",
-			"EbbingRainbow/Variant_Combat/Animation",
-			"EbbingRainbow/Variant_Combat/Gameplay",
-			"EbbingRainbow/Variant_Combat/Interfaces",
-			"EbbingRainbow/Variant_Combat/UI",
-			"EbbingRainbow/Variant_SideScrolling",
-			"EbbingRainbow/Variant_SideScrolling/AI",
-			"EbbingRainbow/Variant_SideScrolling/Gameplay",
-			"EbbingRainbow/Variant_SideScrolling/Interfaces",
-			"EbbingRainbow/Variant_SideScrolling/UI",
 			"EbbingRainbow/WFC",
+			"EbbingRainbow/WFC/Arch",
 			"EbbingRainbow/WFC/Styles",
 			"EbbingRainbow/Battle",
 			"EbbingRainbow/Battle/Core",
 			"EbbingRainbow/Battle/Arena",
 			"EbbingRainbow/Battle/Units",
+			"EbbingRainbow/Battle/Skills",
 			"EbbingRainbow/Battle/Player",
 			"EbbingRainbow/Battle/UI",
 			"EbbingRainbow/Hall",
-			"EbbingRainbow/Hall/UI"
+			"EbbingRainbow/Hall/UI",
+			"EbbingRainbow/Motorcycle"
 		});
 
 		// Uncomment if you are using Slate UI

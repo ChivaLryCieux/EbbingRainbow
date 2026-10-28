@@ -131,7 +131,7 @@ void SBattleUnitPortrait::Construct(const FArguments& InArgs)
 									]
 								]
 
-								// ---- 右侧: 名称 / 职业 / 血条 / AP ----
+								// ---- 右侧: 名称 / 血条 ----
 								+ SHorizontalBox::Slot()
 								.FillWidth(1.0f)
 								[
@@ -162,20 +162,10 @@ void SBattleUnitPortrait::Construct(const FArguments& InArgs)
 										]
 									]
 
-									// 第二行: 职业定位与先攻值
+									// 第二行: 血量条 + 数值
 									+ SVerticalBox::Slot()
 									.AutoHeight()
-									.Padding(FMargin(0.0f, 2.0f, 0.0f, 0.0f))
-									[
-										SAssignNew(RoleText, STextBlock)
-										.Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
-										.ColorAndOpacity(BattleGlass::TextSecondary)
-									]
-
-									// 第三行: 血量条 + 数值
-									+ SVerticalBox::Slot()
-									.AutoHeight()
-									.Padding(FMargin(0.0f, 6.0f, 0.0f, 0.0f))
+									.Padding(FMargin(0.0f, 8.0f, 0.0f, 0.0f))
 									[
 										SNew(SHorizontalBox)
 
@@ -218,10 +208,6 @@ void SBattleUnitPortrait::Construct(const FArguments& InArgs)
 void SBattleUnitPortrait::SetUnit(ABattleUnit* InUnit)
 {
 	BoundUnit = InUnit;
-	if (RoleText.IsValid())
-	{
-		RoleText->SetText(FText::GetEmpty());
-	}
 	if (NameText.IsValid())
 	{
 		NameText->SetText(FText::FromString(TEXT("— 空槽位 —")));
@@ -247,7 +233,6 @@ void SBattleUnitPortrait::SetUnit(ABattleUnit* InUnit)
 	CachedBarrier = -1.0f;
 	CachedAP = -1;
 	CachedMaxAP = -1;
-	CachedInitiative = -1;
 	bCachedDead = false;
 	RefreshFromUnit();
 }
@@ -276,10 +261,9 @@ void SBattleUnitPortrait::RefreshFromUnit()
 	const bool bHpChanged = !FMath::IsNearlyEqual(CachedIntegrity, Unit->Integrity, 0.01f)
 		|| !FMath::IsNearlyEqual(CachedBarrier, Unit->Barrier, 0.01f);
 	const bool bAPChanged = (CachedAP != Unit->AP) || (CachedMaxAP != Unit->Stats.MaxAP);
-	const bool bInitChanged = (CachedInitiative != Unit->Stats.Initiative);
 	const bool bDeadChanged = (bCachedDead != bDead);
 
-	if (!bNameChanged && !bHpChanged && !bAPChanged && !bInitChanged && !bDeadChanged)
+	if (!bNameChanged && !bHpChanged && !bAPChanged && !bDeadChanged)
 	{
 		return;
 	}
@@ -289,7 +273,6 @@ void SBattleUnitPortrait::RefreshFromUnit()
 	CachedBarrier = Unit->Barrier;
 	CachedAP = Unit->AP;
 	CachedMaxAP = Unit->Stats.MaxAP;
-	CachedInitiative = Unit->Stats.Initiative;
 	bCachedDead = bDead;
 
 	// 占位头像: 取首字母大写
@@ -306,21 +289,6 @@ void SBattleUnitPortrait::RefreshFromUnit()
 	if (NameText.IsValid())
 	{
 		NameText->SetText(FText::FromString(bDead ? Name + TEXT("   [已损毁]") : Name));
-	}
-
-	if (RoleText.IsValid())
-	{
-		const TCHAR* RoleTag = TEXT("机甲单位");
-		if (Name.Contains(TEXT("Warrior"))) { RoleTag = TEXT("重装突击 · 高力学抗性"); }
-		else if (Name.Contains(TEXT("Ranger"))) { RoleTag = TEXT("高速游击 · 大范围跑动"); }
-		else if (Name.Contains(TEXT("Mage"))) { RoleTag = TEXT("元素输出 · 脆弱但高伤"); }
-		else if (Name.Contains(TEXT("Cleric"))) { RoleTag = TEXT("支援均衡 · 高化学抗性"); }
-		else if (Name.Contains(TEXT("Goblin"))) { RoleTag = TEXT("灵敏脆弱 · 快攻"); }
-		else if (Name.Contains(TEXT("Orc"))) { RoleTag = TEXT("重肉盾 · 行动迟缓"); }
-		else if (Name.Contains(TEXT("Archer"))) { RoleTag = TEXT("远程狙击 · 游击"); }
-		else if (Name.Contains(TEXT("Shaman"))) { RoleTag = TEXT("元素守卫 · 干扰"); }
-
-		RoleText->SetText(FText::FromString(FString::Printf(TEXT("%s   ·   先攻 %d"), RoleTag, Unit->Stats.Initiative)));
 	}
 
 	if (HPText.IsValid())
@@ -451,10 +419,6 @@ void SBattleUnitPortrait::RefreshVisuals(double CurrentTime, float DeltaTime)
 		FLinearColor NameColor = FMath::Lerp(BattleGlass::TextPrimary, BattleGlass::AccentGold, 0.65f * ActiveAlpha);
 		NameColor = FMath::Lerp(NameColor, BattleGlass::TextDead, DeathAlpha);
 		NameText->SetColorAndOpacity(NameColor);
-	}
-	if (RoleText.IsValid())
-	{
-		RoleText->SetColorAndOpacity(FMath::Lerp(BattleGlass::TextSecondary, BattleGlass::TextDead, DeathAlpha));
 	}
 	if (HPText.IsValid())
 	{

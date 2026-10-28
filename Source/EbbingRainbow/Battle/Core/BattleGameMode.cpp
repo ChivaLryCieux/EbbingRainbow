@@ -25,10 +25,10 @@ ABattleGameMode::ABattleGameMode()
 
 	// 默认名单 (名称, 完整度, AP, 先攻值, 闪避率, 力学抗性, 热学抗性, 电学抗性, 化学抗性)
 	PlayerRoster = {
-		FBattleUnitStats(TEXT("Warrior"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 战士: 重甲高力抗, 弱电导
-		FBattleUnitStats(TEXT("Ranger"),  38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 游侠: 高先攻大跑动距离, 高闪避
-		FBattleUnitStats(TEXT("Mage"),    32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 法师: 弱力学, 强元素抗性
-		FBattleUnitStats(TEXT("Cleric"),  45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 牧师: 均衡, 高化学抗性
+		FBattleUnitStats(TEXT("力学"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 重甲高力抗, 弱电导
+		FBattleUnitStats(TEXT("热学"), 38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 高先攻大跑动距离, 高闪避
+		FBattleUnitStats(TEXT("电学"), 32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 弱力学, 强元素抗性
+		FBattleUnitStats(TEXT("化学"), 45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 均衡, 高化学抗性
 	};
 	EnemyRoster = {
 		FBattleUnitStats(TEXT("Goblin"),  26.0f, 4, 13, 0.15f, -0.10f, -0.15f,  0.0f,   0.10f), // 哥布林: 灵敏脆弱

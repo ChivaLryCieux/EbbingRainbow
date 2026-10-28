@@ -30,18 +30,68 @@ void ABattlePlayerController::BeginPlay()
 	if (ABattleGameMode* GM = Cast<ABattleGameMode>(GetWorld()->GetAuthGameMode()))
 	{
 		GM->OnBattleSetupComplete.AddLambda([this]() {
-			if (UBattleManager* Mgr = GetBattleManager())
-			{
-				Mgr->OnTurnStarted.AddDynamic(this, &ABattlePlayerController::HandleTurnStarted);
-				FocusOnActiveUnit();
-			}
+			BindTurnFocus();
 		});
+	}
+
+	// 竞技场是在 InitGame 阶段同步生成的, 等控制器 BeginPlay 时委托早已广播过,
+	// 所以这里必须主动补绑一次, 否则开局首回合与后续轮换都不会自动聚焦
+	BindTurnFocus();
+}
+
+void ABattlePlayerController::BindTurnFocus()
+{
+	if (bTurnFocusBound)
+	{
+		return;
+	}
+
+	if (UBattleManager* Mgr = GetBattleManager())
+	{
+		Mgr->OnTurnStarted.AddDynamic(this, &ABattlePlayerController::HandleTurnStarted);
+		bTurnFocusBound = true;
+
+		// 当前回合单位立即聚焦 (Pawn 可能还没附体, 由 PlayerTick 补执行)
+		if (ABattleUnit* Active = Mgr->GetActiveUnit())
+		{
+			HandleTurnStarted(Active);
+		}
 	}
 }
 
 void ABattlePlayerController::HandleTurnStarted(ABattleUnit* Unit)
 {
-	FocusOnActiveUnit();
+	// 每进入一个新单位的回合, 无论敌我, 摄像机都特写锁定该棋子模型
+	if (!Unit)
+	{
+		return;
+	}
+
+	// 先记下来: 摄像机 Pawn 可能尚未附体, 等首个 Tick 再真正执行
+	PendingAutoFocusUnit = Unit;
+
+	ApplyAutoFocus();
+}
+
+void ABattlePlayerController::ApplyAutoFocus()
+{
+	ABattleUnit* Unit = PendingAutoFocusUnit.Get();
+	if (!Unit)
+	{
+		return;
+	}
+
+	ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn());
+	if (!Cam)
+	{
+		return; // 还没附体, 保留 PendingAutoFocusUnit 等下一Tick
+	}
+
+	PendingAutoFocusUnit = nullptr;
+
+	// 记入聚焦单位, 让编队面板同步高亮当前回合的我方单位
+	FocusedUnit = Unit;
+	Cam->FocusOnUnit(Unit);
 }
 
 void ABattlePlayerController::SetupInputComponent()
@@ -147,9 +197,13 @@ void ABattlePlayerController::FocusOnActiveUnit()
 	{
 		if (ABattleUnit* Active = Mgr->GetActiveUnit())
 		{
+			// 记入聚焦单位, 让编队面板同步高亮当前回合的我方单位
+			FocusedUnit = Active;
+
 			if (ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn()))
 			{
-				Cam->FocusOn(Active->GetActorLocation());
+				// 用特写锁定而非单纯平移: 拉近臂长 + 抬平俯仰, 让模型占据画面主体
+				Cam->FocusOnUnit(Active);
 			}
 		}
 	}
@@ -294,6 +348,25 @@ void ABattlePlayerController::OnKeyF()
 void ABattlePlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
+
+	// 摄像机 Pawn 附体后才补做一次回合自动聚焦
+	if (PendingAutoFocusUnit.Get() != nullptr)
+	{
+		ApplyAutoFocus();
+	}
+
+	// 摄像机被手动平移接管后会自行解除单位锁定, 这里同步清除控制器的聚焦记录,
+	// 避免编队面板还高亮着一个已经不看了的单位
+	if (FocusedUnit.Get() != nullptr)
+	{
+		if (ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn()))
+		{
+			if (Cam->GetFocusedUnit() != FocusedUnit.Get())
+			{
+				FocusedUnit = nullptr;
+			}
+		}
+	}
 
 	UpdateHoveredUnit();
 

@@ -18,7 +18,7 @@ class ABattleUnit;
 /**
  * 我方单位名牌卡片 (苹果液态玻璃 · 竖排编队面板的一行)。
  *
- * 一行包含: 占位头像 (首字母徽章) / 单位名 / 职业与先攻 / 血量条与数值 / AP 行动点。
+ * 一行包含: 占位头像 (首字母徽章) / 单位名 / 血量条与数值 / AP 行动点。
  * 状态层级 (由弱到强):
  *   常规 → 悬停提亮 → 当前行动回合 (金色呼吸) → 已聚焦 (冰蓝描边 + 头像点亮)
  * 阵亡单位整体去饱和, 名字置灰, 血条归零并标注 [已损毁]。
@@ -70,7 +70,6 @@ private:
 	TSharedPtr<SBorder> AvatarBorder;
 	TSharedPtr<STextBlock> AvatarLetter;
 	TSharedPtr<STextBlock> NameText;
-	TSharedPtr<STextBlock> RoleText;
 	TSharedPtr<STextBlock> HPText;
 	TSharedPtr<STextBlock> APText;
 	TSharedPtr<SProgressBar> HPBar;
@@ -107,7 +106,6 @@ private:
 	float CachedIntegrity = -1.0f;
 	float CachedBarrier = -1.0f;
 	int32 CachedAP = -1;
-	int32 CachedInitiative = -1;
 	bool bCachedDead = false;
 
 	// 入场动画

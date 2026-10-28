@@ -13,7 +13,7 @@ class SBorder;
  * 空间站主界面覆层 (苹果液态玻璃 · 近未来极简):
  * 仅保留底部居中的两枚玻璃药丸按钮 ——
  *   [人员管理 PERSONNEL] (暂无功能)
- *   [航线管理 ROUTES]    (临时作为开始战斗入口, 直通 Lvl_Battle)
+ *   [航线管理 ROUTES]    (临时作为开始战斗入口, 直通 Lvl_Arena)
  * 按 Esc 可切换全屏观景模式, 欣赏 3D 场景。
  */
 class EBBINGRAINBOW_API SHallMainOverlay : public SCompoundWidget
@@ -33,7 +33,7 @@ public:
 	/** 切换全屏无 UI 观景模式 (Esc) */
 	void ToggleZenMode();
 
-	/** 发起出击进入战斗关卡 Lvl_Battle */
+	/** 发起出击进入战斗关卡 Lvl_Arena */
 	void LaunchBattleLevel();
 
 private:

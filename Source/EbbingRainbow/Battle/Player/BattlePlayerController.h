@@ -62,6 +62,19 @@ protected:
 	UFUNCTION()
 	void HandleTurnStarted(ABattleUnit* Unit);
 
+	/** 绑定回合开始委托, 并补做一次当前回合的聚焦 */
+	void BindTurnFocus();
+
+	/** 把待聚焦单位特写到摄像机 (Pawn 未附体时保留待办) */
+	void ApplyAutoFocus();
+
+	/** 是否已绑定 OnTurnStarted (避免重复 AddDynamic) */
+	bool bTurnFocusBound = false;
+
+	/** 回合切换时等待摄像机就位的聚焦目标 */
+	UPROPERTY(Transient)
+	TObjectPtr<ABattleUnit> PendingAutoFocusUnit = nullptr;
+
 private:
 	void OnLeftClick();
 	void OnRightClick();

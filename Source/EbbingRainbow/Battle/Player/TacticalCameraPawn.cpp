@@ -72,12 +72,29 @@ void ATacticalCameraPawn::BeginPlay()
 	}
 
 	// 竞技场范围由配置确定 (无需等待生成完成),直接聚焦其中心
+	FVector ArenaCenter = GetActorLocation();
 	for (TActorIterator<ABattleArena> It(GetWorld()); It; ++It)
 	{
 		SetMoveBounds(It->GetArenaBounds());
-		SnapTo(It->GetArenaCenter());
+		ArenaCenter = It->GetArenaCenter();
 		break;
 	}
+
+	// 战斗首回合的自动聚焦可能早于本 BeginPlay 触发 (控制器先拿到 Pawn),
+	// 此时不能再把镜头拽回全景, 否则刚锁定的单位又被摇回去
+	if (FocusedUnit.Get() == nullptr)
+	{
+		SnapTo(ArenaCenter);
+	}
+	else
+	{
+		FocusOn(FocusedUnit->GetActorLocation());
+	}
+
+	// 把初始全景位置记为锚点。若不预置, 首次 FocusOnUnit 会把未初始化的
+	// (0,0,0) 当成全景位置, 之后取消聚焦就飞回原点
+	OverviewAnchor = ArenaCenter;
+	bHasOverviewAnchor = true;
 }
 
 void ATacticalCameraPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
