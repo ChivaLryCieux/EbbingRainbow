@@ -48,6 +48,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	void FocusOnActiveUnit();
 
+	/** 摄像机平滑对准指定单位 (编队面板点击名片时调用); 传 nullptr 取消聚焦回到全景 */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void FocusOnUnit(ABattleUnit* Unit);
+
+	/** 当前被名牌聚焦的单位 ( nullptr 表示未聚焦 ) */
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	ABattleUnit* GetFocusedUnit() const { return FocusedUnit.Get(); }
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -74,4 +82,8 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<ABattleUnit> CurrentHoveredUnit = nullptr;
+
+	/** 编队面板当前聚焦的单位 */
+	UPROPERTY(Transient)
+	TObjectPtr<ABattleUnit> FocusedUnit = nullptr;
 };

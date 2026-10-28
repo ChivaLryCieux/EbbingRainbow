@@ -42,6 +42,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
 	void FocusOn(const FVector& WorldLocation);
 
+	/** 聚焦到战斗单位: 平滑平移 + 拉近到特写距离 (编队面板点击名片) */
+	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
+	void FocusOnUnit(class ABattleUnit* Unit);
+
+	/** 取消单位聚焦: 回到竞技场全景与默认视距 */
+	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
+	void ClearFocus();
+
+	/** 当前聚焦的单位 (nullptr 表示全景) */
+	UFUNCTION(BlueprintPure, Category = "Tactical Camera|Movement")
+	class ABattleUnit* GetFocusedUnit() const { return FocusedUnit.Get(); }
+
 	/** 立即跳转 (无插值) */
 	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
 	void SnapTo(const FVector& WorldLocation);
@@ -142,6 +154,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Movement", meta = (ClampMin = "1.0", ClampMax = "30.0", UIMin = "2.0", UIMax = "15.0"))
 	float FocusInterpSpeed = 6.0f;
 
+	/** 名牌聚焦时的特写视距 (拉近到能看清单位模型的距离) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Movement", meta = (ClampMin = "200.0", ClampMax = "4000.0", UIMin = "400.0", UIMax = "2500.0"))
+	float FocusArmLength = 1250.0f;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -153,6 +169,9 @@ private:
 	void StartOrbit();
 	void StopOrbit();
 	float GetCoupledPitchForArmLength(float InArmLength) const;
+
+	/** 玩家手动平移时调用: 解除单位聚焦, 并把当前位置记为新的全景锚点 */
+	void NotifyManualTakeover();
 
 	// 兜底绝对坐标差分的单帧位移上限（像素）：正常甩动不会超过，捕获切换瞬间的坐标跳变会被丢弃
 	static constexpr float MaxOrbitFallbackDeltaPixels = 300.0f;
@@ -175,4 +194,11 @@ private:
 	FVector2D InitialOrbitMousePos = FVector2D::ZeroVector;
 	FVector2D LastMousePos = FVector2D::ZeroVector;
 	FBox MoveBounds = FBox(ForceInit);
+
+	/** 全景锚点 (取消聚焦时回到这里) */
+	FVector OverviewAnchor = FVector::ZeroVector;
+	bool bHasOverviewAnchor = false;
+
+	/** 名牌聚焦中的单位 */
+	TWeakObjectPtr<class ABattleUnit> FocusedUnit;
 };

@@ -19,6 +19,8 @@ class SButton;
 class SBorder;
 class SProgressBar;
 
+class SBattleUnitPortrait;
+
 /**
  * 战术手牌卡片控件 (Slay the Spire 风格)
  * 支持悬停平滑上浮、缩放、金边高亮以及点击出牌/选中。
@@ -74,11 +76,13 @@ private:
 };
 
 /**
- * 现代战术主界面 Slate 覆层:
- * 1. 顶部先攻队列栏 (芯片流转展示)
- * 2. 底部手牌与动作栏 (英雄状态 + 战术卡牌 + 金色结束回合大按钮)
- * 3. 动态战报通知条
- * 4. 胜负结算横幅
+ * 现代战术主界面 Slate 覆层 (苹果液态玻璃 · 与 Hall 大厅同源质感):
+ *
+ *  1. 顶部先攻队列栏 (玻璃胶囊芯片流转)
+ *  2. 左侧我方编队名牌面板 (占位头像 / 名字 / 血量, 可点击聚焦摄像机)
+ *  3. 底部手牌与动作栏 (英雄状态 + 战术卡牌 + 金色结束回合玻璃按钮)
+ *  4. 动态战报通知条
+ *  5. 胜负结算横幅
  */
 class EBBINGRAINBOW_API SBattleMainOverlay : public SCompoundWidget
 {
@@ -92,7 +96,7 @@ public:
 
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 
-	/** 检查鼠标当前是否正悬停在交互性 UI (手牌或按钮) 上, 防止场景点地穿透 */
+	/** 检查鼠标当前是否正悬停在交互性 UI (名牌 / 手牌 / 按钮) 上, 防止场景点地穿透 */
 	bool IsMouseOverInteractiveUI() const;
 
 	/** 刷新战报通知 */
@@ -115,9 +119,19 @@ private:
 
 	TSharedPtr<SButton> EndTurnButton;
 	TSharedPtr<STextBlock> EndTurnButtonText;
+	TSharedPtr<SBorder> EndTurnGlowBorder;
+
+	// 入场动画容器: 顶栏下沉 / 底栏上浮
+	TSharedPtr<SBorder> TopPanelBorder;
+	TSharedPtr<SHorizontalBox> BottomBarBox;
 
 	TSharedPtr<SBorder> ResultBannerBorder;
 	TSharedPtr<STextBlock> ResultBannerText;
+
+	// 左侧编队名牌面板
+	TSharedPtr<SVerticalBox> RosterBox;
+	TArray<TSharedPtr<SBattleUnitPortrait>> PortraitWidgets;
+	TArray<TWeakObjectPtr<ABattleUnit>> CachedPlayerUnits;
 
 	TArray<TSharedPtr<SBattleSkillCardWidget>> CardWidgets;
 	TArray<TSharedPtr<FSlateBrush>> ChipBrushes;
@@ -133,21 +147,31 @@ private:
 	float NotificationTimer = 0.0f;
 	bool bMouseOverUI = false;
 
-	// 样式画刷
-	FSlateBrush TopBarBgBrush;
-	FSlateBrush HeroPlateBgBrush;
+	// 入场动画
+	float EntranceProgress = 0.0f;
+
+	// 样式画刷 (玻璃系统)
+	FSlateBrush PanelBrush;          // 大面板 (先攻栏 / 英雄板 / 结算横幅)
+	FSlateBrush PanelShadowBrush;    // 面板柔影 (等效投影, 让玻璃从场景里浮起)
+	FSlateBrush CardBrush;           // 中等卡片 (先攻芯片)
+	FSlateBrush NotificationBrush;
 	FSlateBrush EndTurnNormalBrush;
 	FSlateBrush EndTurnHoverBrush;
 	FSlateBrush EndTurnPressedBrush;
 	FSlateBrush EndTurnDisabledBrush;
+	FSlateBrush EndTurnGlowBrush;
+	FSlateBrush HPTrackBrush;
+	FSlateBrush HPFillBrush;
 	FButtonStyle EndTurnBtnStyle;
 
 	void RebuildInitiativeBar();
 	void RebuildHandCards(ABattleUnit* Unit);
+	void RebuildRosterPanel();
 	void UpdateHeroPlate(ABattleUnit* Unit);
 	void UpdateEndTurnButton(ABattleUnit* Unit, EBattleState State);
 	void UpdateResultBanner(EBattleState State);
 
 	FReply HandleEndTurnClicked();
 	FReply HandleCardClicked(int32 Index, bool bIsMove);
+	FReply HandlePortraitClicked(int32 UnitIndex);
 };

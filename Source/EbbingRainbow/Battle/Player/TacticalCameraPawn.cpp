@@ -2,6 +2,7 @@
 
 #include "Battle/Player/TacticalCameraPawn.h"
 #include "Battle/Arena/BattleArena.h"
+#include "Battle/Units/BattleUnit.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -110,6 +111,73 @@ void ATacticalCameraPawn::SnapTo(const FVector& WorldLocation)
 {
 	FocusOn(WorldLocation);
 	SetActorLocation(TargetLocation);
+}
+
+void ATacticalCameraPawn::FocusOnUnit(ABattleUnit* Unit)
+{
+	if (!Unit)
+	{
+		ClearFocus();
+		return;
+	}
+
+	FocusedUnit = Unit;
+
+	// 第一次聚焦时把当前位置记为全景锚点, 之后取消聚焦就回到这里
+	if (!bHasOverviewAnchor)
+	{
+		OverviewAnchor = TargetLocation;
+		bHasOverviewAnchor = true;
+	}
+
+	FocusOn(Unit->GetActorLocation());
+
+	// 拉近到特写距离, 让模型占据画面主体
+	TargetArmLength = FMath::Clamp(FocusArmLength, MinArmLength, MaxArmLength);
+	if (bEnableZoomPitchCoupling)
+	{
+		// 特写时镜头自动抬平, 更像第三人称越肩视角
+		TargetPitch = FMath::Clamp(FMath::Lerp(ClosePitch, DefaultPitch, 0.35f), MinPitch, MaxPitch);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 摄像机锁定 %s: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f 锚点=(%.0f, %.0f, %.0f)"),
+		*Unit->Stats.DisplayName, TargetLocation.X, TargetLocation.Y, TargetLocation.Z,
+		TargetArmLength, TargetPitch, OverviewAnchor.X, OverviewAnchor.Y, OverviewAnchor.Z);
+}
+
+void ATacticalCameraPawn::ClearFocus()
+{
+	FocusedUnit = nullptr;
+
+	if (bHasOverviewAnchor)
+	{
+		FocusOn(OverviewAnchor);
+	}
+	else if (MoveBounds.IsValid)
+	{
+		FocusOn(MoveBounds.GetCenter());
+	}
+
+	TargetArmLength = FMath::Clamp(DefaultArmLength, MinArmLength, MaxArmLength);
+	if (bEnableZoomPitchCoupling)
+	{
+		TargetPitch = FMath::Clamp(GetCoupledPitchForArmLength(TargetArmLength), MinPitch, MaxPitch);
+	}
+	else
+	{
+		TargetPitch = FMath::Clamp(DefaultPitch, MinPitch, MaxPitch);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 摄像机回到全景: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f"),
+		TargetLocation.X, TargetLocation.Y, TargetLocation.Z, TargetArmLength, TargetPitch);
+}
+
+void ATacticalCameraPawn::NotifyManualTakeover()
+{
+	// 手动平移意味着玩家要自己看场, 解除单位聚焦
+	FocusedUnit = nullptr;
+	OverviewAnchor = TargetLocation;
+	bHasOverviewAnchor = true;
 }
 
 void ATacticalCameraPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -299,6 +367,7 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 			FocusOn(TargetLocation + Dir * PanSpeed * ZoomFactor * DeltaSeconds);
 			// 手动平移时直接跟随, 避免插值滞后
 			SetActorLocation(TargetLocation);
+			NotifyManualTakeover();
 		}
 
 		if (PC->IsInputKeyDown(EKeys::Q)) TargetYaw -= RotateSpeed * DeltaSeconds;

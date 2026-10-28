@@ -155,6 +155,41 @@ void ABattlePlayerController::FocusOnActiveUnit()
 	}
 }
 
+void ABattlePlayerController::FocusOnUnit(ABattleUnit* Unit)
+{
+	// 再次点击已聚焦的单位 -> 取消聚焦, 摄像机回到竞技场全景
+	if (FocusedUnit.Get() == Unit)
+	{
+		FocusedUnit = nullptr;
+		if (ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn()))
+		{
+			Cam->ClearFocus();
+		}
+		UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 解除聚焦, 回到全景锚点 (Unit=%s)"),
+			Unit ? *Unit->Stats.DisplayName : TEXT("none"));
+		return;
+	}
+
+	FocusedUnit = Unit;
+
+	if (!Unit)
+	{
+		if (ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn()))
+		{
+			Cam->ClearFocus();
+		}
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 请求聚焦 -> %s @ (%.0f, %.0f, %.0f)"),
+		*Unit->Stats.DisplayName, Unit->GetActorLocation().X, Unit->GetActorLocation().Y, Unit->GetActorLocation().Z);
+
+	if (ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn()))
+	{
+		Cam->FocusOnUnit(Unit);
+	}
+}
+
 void ABattlePlayerController::OnLeftClick()
 {
 	float MX, MY;
