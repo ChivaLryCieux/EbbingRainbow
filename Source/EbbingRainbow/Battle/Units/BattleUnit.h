@@ -84,6 +84,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Battle")
 	bool IsDying() const { return bDying; }
 
+	/** 从 Run 的持久状态恢复完整度（跨战斗继承血量）。 */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void ApplyPersistentIntegrity(float InIntegrity);
+
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	void ResetAP();
 

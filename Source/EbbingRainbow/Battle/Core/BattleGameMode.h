@@ -12,6 +12,7 @@ class ABattleArena;
 class ABattleUnit;
 class UBattleManager;
 class UWFC3DStyleTable;
+class URunSubsystem;
 
 /** 回合制战斗 GameMode: 负责在开局创建竞技场、按出生点生成双方单位并初始化战斗管理器 */
 UCLASS()
@@ -76,11 +77,22 @@ public:
 
 	bool IsBattleSetupComplete() const { return bSetupComplete; }
 
+	/** 默认我方名单（Run 系统复用同一份数值，避免两处漂移）。 */
+	static const TArray<FBattleUnitStats>& GetDefaultPlayerRoster();
+
+	/** 战斗结束回调：来自航线图的战斗会把结果写回 Run 并返回航线图。 */
+	UFUNCTION()
+	void HandleBattleFinished(bool bPlayerWon);
+
 private:
 	UFUNCTION()
 	void HandleArenaGenerated(bool bSuccess);
 
 	void SpawnTeam(const TArray<FBattleUnitStats>& Roster, const TArray<FVector>& Points, EBattleTeam Team, TArray<ABattleUnit*>& OutUnits);
+
+	URunSubsystem* GetRunSubsystem() const;
+	void ReturnToRoute();
+	void ReturnToHallAfterDefeat();
 
 	UPROPERTY(Transient)
 	TObjectPtr<ABattleArena> Arena = nullptr;
@@ -91,4 +103,18 @@ private:
 	TArray<ABattleUnit*> PlayerUnits;
 	TArray<ABattleUnit*> EnemyUnits;
 	bool bSetupComplete = false;
+
+	// ---------- 航线图战斗衔接 ----------
+
+	/** 本场战斗是否来自航线图节点 */
+	bool bRunBattle = false;
+	/** 是否已经处理过战斗结果（防止重复广播导致二次推进） */
+	bool bBattleResultHandled = false;
+	/** 本场对应的路线节点 / 遭遇种子 */
+	int32 PendingNodeId = INDEX_NONE;
+	int32 PendingEncounterSeed = 0;
+	/** 战斗单位 -> 队伍下标的映射（阵亡成员不生成，所以不能按下标硬对） */
+	TArray<int32> PlayerPartyIndices;
+	FTimerHandle ReturnTimerHandle;
+	FTimerHandle AutoWinTimerHandle;
 };

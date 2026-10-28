@@ -202,6 +202,12 @@ void UBattleManager::HandleUnitDied(ABattleUnit* Unit)
 
 void UBattleManager::CheckGameOver()
 {
+	// 已判定过胜负就不再重复广播（多个单位同一帧死亡会重复调用）
+	if (CurrentState == EBattleState::BattleOver)
+	{
+		return;
+	}
+
 	int32 LivingPlayers = 0;
 	int32 LivingEnemies = 0;
 

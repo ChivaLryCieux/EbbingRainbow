@@ -322,6 +322,17 @@ void ABattleUnit::InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam)
 	RefreshLabel();
 }
 
+void ABattleUnit::ApplyPersistentIntegrity(float InIntegrity)
+{
+	Integrity = FMath::Clamp(InIntegrity, 0.0f, Stats.MaxIntegrity);
+	HP = FMath::RoundToInt(Integrity);
+	Barrier = 0.0f;
+
+	UpdateVisualColor();
+	UpdateDiscVisual(0.0f);
+	RefreshLabel();
+}
+
 void ABattleUnit::ResetAP()
 {
 	AP = Stats.MaxAP;

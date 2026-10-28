@@ -11,9 +11,16 @@
 #include "Hall/HallCameraPawn.h"
 #include "Hall/HallPlayerController.h"
 #include "Hall/HallHUD.h"
+#include "Run/RunSubsystem.h"
+#include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
+#include "TimerManager.h"
+
+/** 调试：>0 时战斗开始 4 秒后自动判胜，便于验证"战斗→航线图"回环。 */
+static TAutoConsoleVariable<int32> CVarAutoWin(
+	TEXT("ER.AutoWin"), 0, TEXT("调试：>0 时战斗开始 4 秒后自动判定胜利。"), ECVF_Cheat);
 
 ABattleGameMode::ABattleGameMode()
 {
@@ -24,18 +31,24 @@ ABattleGameMode::ABattleGameMode()
 	UnitClass = ABattleUnit::StaticClass();
 
 	// 默认名单 (名称, 完整度, AP, 先攻值, 闪避率, 力学抗性, 热学抗性, 电学抗性, 化学抗性)
-	PlayerRoster = {
-		FBattleUnitStats(TEXT("力学"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 重甲高力抗, 弱电导
-		FBattleUnitStats(TEXT("热学"), 38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 高先攻大跑动距离, 高闪避
-		FBattleUnitStats(TEXT("电学"), 32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 弱力学, 强元素抗性
-		FBattleUnitStats(TEXT("化学"), 45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 均衡, 高化学抗性
-	};
+	PlayerRoster = GetDefaultPlayerRoster();
 	EnemyRoster = {
 		FBattleUnitStats(TEXT("Goblin"),  26.0f, 4, 13, 0.15f, -0.10f, -0.15f,  0.0f,   0.10f), // 哥布林: 灵敏脆弱
 		FBattleUnitStats(TEXT("Orc"),     65.0f, 3, 6,  0.02f,  0.25f, -0.20f, -0.10f,  0.0f),  // 兽人: 重肉盾, 行动慢, 弱热能
 		FBattleUnitStats(TEXT("Archer"),  28.0f, 4, 12, 0.10f,  0.0f,   0.0f,   0.0f,   0.0f),  // 射手: 远程游击
 		FBattleUnitStats(TEXT("Shaman"),  35.0f, 3, 9,  0.05f, -0.10f,  0.20f,  0.20f,  0.20f), // 萨满: 元素守卫
 	};
+}
+
+const TArray<FBattleUnitStats>& ABattleGameMode::GetDefaultPlayerRoster()
+{
+	static const TArray<FBattleUnitStats> Roster = {
+		FBattleUnitStats(TEXT("力学"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 重甲高力抗, 弱电导
+		FBattleUnitStats(TEXT("热学"), 38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 高先攻大跑动距离, 高闪避
+		FBattleUnitStats(TEXT("电学"), 32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 弱力学, 强元素抗性
+		FBattleUnitStats(TEXT("化学"), 45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 均衡, 高化学抗性
+	};
+	return Roster;
 }
 
 void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
@@ -53,6 +66,27 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 		return;
 	}
 
+	// 航线图战斗：从 URL 读取节点，决定本场的地形种子与队伍状态
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (URunSubsystem* Run = GameInstance->GetSubsystem<URunSubsystem>())
+		{
+			const FString NodeOption = UGameplayStatics::ParseOption(Options, TEXT("node"));
+			if (!NodeOption.IsEmpty() && Run->HasActiveRun())
+			{
+				const int32 NodeId = FCString::Atoi(*NodeOption);
+				if (const FRouteNode* Node = Run->FindNode(NodeId))
+				{
+					PendingNodeId = Node->Id;
+					PendingEncounterSeed = Node->EncounterSeed;
+					bRunBattle = true;
+					UE_LOG(LogTemp, Log, TEXT("[Battle] 来自航线图节点 %d (第 %d 层, 遭遇种子 %d)"),
+						Node->Id, Node->Layer + 1, Node->EncounterSeed);
+				}
+			}
+		}
+	}
+
 	// 在玩家 Pawn 出生之前创建竞技场 Actor (生成逻辑在其 BeginPlay 中执行)
 	if (UWorld* World = GetWorld())
 	{
@@ -66,6 +100,11 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 			Arena->Style = ArenaStyle;
 			Arena->GridCells = ArenaScale;
 			Arena->StyleTable = WFCStyleTable;
+			if (bRunBattle)
+			{
+				// 用路线节点的遭遇种子，保证同一局同一个节点的地形一致
+				Arena->BaseSeed = PendingEncounterSeed;
+			}
 			Arena->OnArenaGenerated.AddDynamic(this, &ABattleGameMode::HandleArenaGenerated);
 		}
 	}
@@ -99,7 +138,33 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 		return;
 	}
 
-	SpawnTeam(PlayerRoster, Arena->GetPlayerSpawnPoints(), EBattleTeam::Player, PlayerUnits);
+	URunSubsystem* Run = GetRunSubsystem();
+	if (bRunBattle && Run && Run->HasActiveRun())
+	{
+		// 只生成还活着的队员，并把上一场战斗剩下的完整度带进来
+		const TArray<FRunUnitState>& Party = Run->GetParty();
+		TArray<FBattleUnitStats> AliveRoster;
+		PlayerPartyIndices.Reset();
+		for (int32 Index = 0; Index < Party.Num(); ++Index)
+		{
+			if (Party[Index].Integrity > 0.0f)
+			{
+				AliveRoster.Add(Party[Index].Stats);
+				PlayerPartyIndices.Add(Index);
+			}
+		}
+
+		SpawnTeam(AliveRoster, Arena->GetPlayerSpawnPoints(), EBattleTeam::Player, PlayerUnits);
+		for (int32 Index = 0; Index < PlayerUnits.Num() && Index < PlayerPartyIndices.Num(); ++Index)
+		{
+			PlayerUnits[Index]->ApplyPersistentIntegrity(Party[PlayerPartyIndices[Index]].Integrity);
+		}
+	}
+	else
+	{
+		SpawnTeam(PlayerRoster, Arena->GetPlayerSpawnPoints(), EBattleTeam::Player, PlayerUnits);
+	}
+
 	SpawnTeam(EnemyRoster, Arena->GetEnemySpawnPoints(), EBattleTeam::Enemy, EnemyUnits);
 
 	if (GEngine)
@@ -114,6 +179,22 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 	// 创建并启动战斗管理器
 	BattleManager = NewObject<UBattleManager>(this, TEXT("BattleManager"));
 	BattleManager->InitializeBattle(this, PlayerUnits, EnemyUnits);
+
+	if (bRunBattle)
+	{
+		BattleManager->OnBattleFinished.AddDynamic(this, &ABattleGameMode::HandleBattleFinished);
+
+		// 调试用：ER.AutoWin > 0 时战斗开始若干秒后自动判胜，便于验证"战斗→航线图"回环。
+		const int32 AutoWin = CVarAutoWin.GetValueOnGameThread();
+		if (AutoWin > 0)
+		{
+			GetWorldTimerManager().SetTimer(AutoWinTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+			{
+				UE_LOG(LogTemp, Log, TEXT("[Battle] ER.AutoWin 触发，自动判胜。"));
+				HandleBattleFinished(true);
+			}), 4.0f, false);
+		}
+	}
 
 	OnBattleSetupComplete.Broadcast();
 }
@@ -179,4 +260,54 @@ APawn* ABattleGameMode::SpawnDefaultPawnAtTransform_Implementation(AController* 
 		}
 	}
 	return Super::SpawnDefaultPawnAtTransform_Implementation(NewPlayer, SpawnTransform);
+}
+
+URunSubsystem* ABattleGameMode::GetRunSubsystem() const
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		return GameInstance->GetSubsystem<URunSubsystem>();
+	}
+	return nullptr;
+}
+
+void ABattleGameMode::HandleBattleFinished(bool bPlayerWon)
+{
+	if (!bRunBattle || bBattleResultHandled)
+	{
+		return;
+	}
+	bBattleResultHandled = true;
+
+	URunSubsystem* Run = GetRunSubsystem();
+	if (!Run || !Run->HasActiveRun())
+	{
+		return;
+	}
+
+	if (bPlayerWon)
+	{
+		Run->WriteBackParty(PlayerUnits, PlayerPartyIndices);
+		Run->CompleteBattle(true);
+		UE_LOG(LogTemp, Log, TEXT("[Battle] 节点 %d 战斗胜利，准备返回航线图"), PendingNodeId);
+		GetWorldTimerManager().SetTimer(ReturnTimerHandle, this, &ABattleGameMode::ReturnToRoute, 2.6f, false);
+	}
+	else
+	{
+		Run->CompleteBattle(false);
+		UE_LOG(LogTemp, Log, TEXT("[Battle] 本局失败，准备返回大厅"));
+		GetWorldTimerManager().SetTimer(ReturnTimerHandle, this, &ABattleGameMode::ReturnToHallAfterDefeat, 3.2f, false);
+	}
+}
+
+void ABattleGameMode::ReturnToRoute()
+{
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/Battle/Maps/Lvl_Route")), true,
+		TEXT("game=/Script/EbbingRainbow.RouteGameMode"));
+}
+
+void ABattleGameMode::ReturnToHallAfterDefeat()
+{
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")), true,
+		TEXT("game=/Script/EbbingRainbow.HallGameMode"));
 }

@@ -3,6 +3,7 @@
 #include "Hall/UI/SHallMainOverlay.h"
 #include "Hall/UI/HallGlassButton.h"
 #include "Kismet/GameplayStatics.h"
+#include "Run/RunSubsystem.h"
 
 #include "Widgets/SOverlay.h"
 #include "Widgets/SBoxPanel.h"
@@ -177,18 +178,30 @@ UWorld* SHallMainOverlay::FindPlayWorld() const
 	return nullptr;
 }
 
-void SHallMainOverlay::LaunchBattleLevel()
+void SHallMainOverlay::LaunchRouteMap()
 {
 	UWorld* World = FindPlayWorld();
-	if (World)
+	if (!World)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Hall] Launching Battle Level (/Game/Battle/Maps/Lvl_Arena)..."));
-		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Arena")), true, TEXT("game=/Script/EbbingRainbow.BattleGameMode"));
+		UE_LOG(LogTemp, Error, TEXT("[Hall] LaunchRouteMap failed: could not resolve active UWorld!"));
+		return;
 	}
-	else
+
+	// 没有进行中的局就开新局；有则继续（从航线图返回大厅后再次进入会接着走）
+	if (UGameInstance* GameInstance = World->GetGameInstance())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Hall] LaunchBattleLevel failed: could not resolve active UWorld!"));
+		if (URunSubsystem* Run = GameInstance->GetSubsystem<URunSubsystem>())
+		{
+			if (!Run->HasActiveRun())
+			{
+				Run->StartNewRandomRun();
+			}
+		}
 	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Hall] Launching Route Map (/Game/Battle/Maps/Lvl_Route)..."));
+	UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Route")), true,
+		TEXT("game=/Script/EbbingRainbow.RouteGameMode"));
 }
 
 FReply SHallMainOverlay::HandlePersonnelClicked()
@@ -200,8 +213,8 @@ FReply SHallMainOverlay::HandlePersonnelClicked()
 
 FReply SHallMainOverlay::HandleRoutesClicked()
 {
-	// 航线管理: 临时作为开始战斗入口
-	UE_LOG(LogTemp, Log, TEXT("[Hall] Routes Management clicked -> Start Battle."));
-	LaunchBattleLevel();
+	// 航线管理: 进入航线图（Roguelike DAG）
+	UE_LOG(LogTemp, Log, TEXT("[Hall] Routes Management clicked -> Route Map."));
+	LaunchRouteMap();
 	return FReply::Handled();
 }

@@ -34,7 +34,7 @@ public:
 	void ToggleZenMode();
 
 	/** 发起出击进入战斗关卡 Lvl_Arena */
-	void LaunchBattleLevel();
+	void LaunchRouteMap();
 
 private:
 	TWeakObjectPtr<UWorld> OwningWorld;
@@ -52,5 +52,5 @@ private:
 	FSlateBrush ZenHintBrush;
 
 	FReply HandlePersonnelClicked();  // 人员管理 (暂无功能)
-	FReply HandleRoutesClicked();     // 航线管理 → 开始战斗 (临时)
+	FReply HandleRoutesClicked();     // 航线管理 → 航线图
 };
