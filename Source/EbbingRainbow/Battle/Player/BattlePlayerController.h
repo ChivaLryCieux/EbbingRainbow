@@ -56,6 +56,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Battle")
 	ABattleUnit* GetFocusedUnit() const { return FocusedUnit.Get(); }
 
+	// ---------- 调试命令 (控制台) ----------
+
+	/** 调试: 秒杀全部敌人, 与战斗界面右上角 DEBUG 按钮同一入口 */
+	UFUNCTION(Exec)
+	void BattleCheatWin();
+
+	/** 调试: 走一次结算面板的返回按钮 (验证回航线图 / 回大厅) */
+	UFUNCTION(Exec)
+	void BattleResultReturn();
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -99,4 +109,7 @@ private:
 	/** 编队面板当前聚焦的单位 */
 	UPROPERTY(Transient)
 	TObjectPtr<ABattleUnit> FocusedUnit = nullptr;
+
+	/** ER.AutoPlay 的计时累加 */
+	float AutoPlayElapsed = 0.0f;
 };

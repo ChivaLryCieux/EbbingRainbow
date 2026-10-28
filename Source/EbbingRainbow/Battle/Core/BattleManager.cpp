@@ -174,6 +174,39 @@ bool UBattleManager::RequestSkill(ABattleUnit* Unit, int32 SkillIndex, ABattleUn
 	return false;
 }
 
+void UBattleManager::DebugKillAllEnemies()
+{
+	if (CurrentState == EBattleState::BattleOver)
+	{
+		return;
+	}
+
+	// 清掉待执行的 AI 决策, 否则它会在敌人死后再跑一次
+	if (UWorld* World = GameModeRef ? GameModeRef->GetWorld() : nullptr)
+	{
+		World->GetTimerManager().ClearTimer(EnemyAITimerHandle);
+	}
+
+	// 先收集再处决: 处决会广播 OnUnitDied -> CheckGameOver, 边遍历边改战斗状态容易踩到重入
+	TArray<ABattleUnit*> Enemies;
+	for (ABattleUnit* Unit : AllUnits)
+	{
+		if (Unit && Unit->IsAlive() && Unit->Team == EBattleTeam::Enemy)
+		{
+			Enemies.Add(Unit);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Battle] DEBUG 秒杀: 敌方 %d 个单位"), Enemies.Num());
+
+	for (ABattleUnit* Enemy : Enemies)
+	{
+		Enemy->DebugKill();
+	}
+
+	CheckGameOver();
+}
+
 void UBattleManager::HandleUnitMoveFinished(ABattleUnit* Unit)
 {
 	if (CurrentState == EBattleState::ActionExecuting && Unit == ActiveUnit)

@@ -80,9 +80,37 @@ public:
 	/** 默认我方名单（Run 系统复用同一份数值，避免两处漂移）。 */
 	static const TArray<FBattleUnitStats>& GetDefaultPlayerRoster();
 
-	/** 战斗结束回调：来自航线图的战斗会把结果写回 Run 并返回航线图。 */
+	/** 战斗结束回调：写回 Run 状态并把结果交给结算面板（跳转由玩家点按钮触发）。 */
 	UFUNCTION()
 	void HandleBattleFinished(bool bPlayerWon);
+
+	/** 结算面板的「返回」按钮：航线图战斗胜利 -> 回航线图，其余 -> 回大厅。 */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void ReturnFromBattle();
+
+	/** 调试作弊: 秒杀全部敌人 (战斗界面右上角的 DEBUG 按钮) */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void DebugKillAllEnemies();
+
+	/** 本场战斗是否来自航线图节点 */
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	bool IsRunBattle() const { return bRunBattle; }
+
+	/** 本场是否已经结算完 (结算面板据此决定要不要弹出) */
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	bool IsBattleResolved() const { return bBattleResultHandled; }
+
+	/** 玩家是否获胜 (未结算时为 false) */
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	bool DidPlayerWin() const { return bBattleResultHandled && bLastBattleWon; }
+
+	/** 结算按钮是否应该回航线图 */
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	bool ShouldReturnToRoute() const { return bRunBattle && bBattleResultHandled && bLastBattleWon; }
+
+	/** 本场对应的航线图节点 (非航线图战斗为 INDEX_NONE) */
+	UFUNCTION(BlueprintPure, Category = "Battle")
+	int32 GetPendingNodeId() const { return PendingNodeId; }
 
 private:
 	UFUNCTION()
@@ -92,7 +120,7 @@ private:
 
 	URunSubsystem* GetRunSubsystem() const;
 	void ReturnToRoute();
-	void ReturnToHallAfterDefeat();
+	void ReturnToHall();
 
 	UPROPERTY(Transient)
 	TObjectPtr<ABattleArena> Arena = nullptr;
@@ -110,11 +138,13 @@ private:
 	bool bRunBattle = false;
 	/** 是否已经处理过战斗结果（防止重复广播导致二次推进） */
 	bool bBattleResultHandled = false;
+	/** 本场战斗玩家是否获胜 (结算面板读取) */
+	bool bLastBattleWon = false;
 	/** 本场对应的路线节点 / 遭遇种子 */
 	int32 PendingNodeId = INDEX_NONE;
 	int32 PendingEncounterSeed = 0;
 	/** 战斗单位 -> 队伍下标的映射（阵亡成员不生成，所以不能按下标硬对） */
 	TArray<int32> PlayerPartyIndices;
-	FTimerHandle ReturnTimerHandle;
 	FTimerHandle AutoWinTimerHandle;
+	FTimerHandle AutoReturnTimerHandle;
 };

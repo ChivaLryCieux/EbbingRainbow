@@ -154,6 +154,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	float TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType = EDamageType::Kinetic);
 
+	/**
+	 * 调试处决: 跳过闪避 / 抗性 / 护盾, 直接把完整度清零并走完整套死亡表现
+	 * (倒地动画 -> 布娃娃 -> OnUnitDied 广播), 保证与正常战死走同一条结算路径。
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void DebugKill();
+
 	// ---------- 表现层 (Presentation) ----------
 
 	/** 移动速度 (cm/s)。InitUnit 按先攻值写入, 高先攻单位跑得更快 */

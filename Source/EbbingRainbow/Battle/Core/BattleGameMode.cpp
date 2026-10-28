@@ -180,18 +180,37 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 	BattleManager = NewObject<UBattleManager>(this, TEXT("BattleManager"));
 	BattleManager->InitializeBattle(this, PlayerUnits, EnemyUnits);
 
+	// 无论是否来自航线图都要接结果: 结算面板对两种来源都要弹
+	BattleManager->OnBattleFinished.AddDynamic(this, &ABattleGameMode::HandleBattleFinished);
+
 	if (bRunBattle)
 	{
-		BattleManager->OnBattleFinished.AddDynamic(this, &ABattleGameMode::HandleBattleFinished);
-
 		// 调试用：ER.AutoWin > 0 时战斗开始若干秒后自动判胜，便于验证"战斗→航线图"回环。
 		const int32 AutoWin = CVarAutoWin.GetValueOnGameThread();
 		if (AutoWin > 0)
 		{
-			GetWorldTimerManager().SetTimer(AutoWinTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+			GetWorldTimerManager().SetTimer(AutoWinTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this, AutoWin]()
 			{
 				UE_LOG(LogTemp, Log, TEXT("[Battle] ER.AutoWin 触发，自动判胜。"));
-				HandleBattleFinished(true);
+				// 走和作弊按钮完全相同的路径: 管理器判胜负 -> GameMode 结算 -> 结算面板
+				if (BattleManager)
+				{
+					BattleManager->DebugKillAllEnemies();
+				}
+				else
+				{
+					HandleBattleFinished(true);
+				}
+
+				// ER.AutoWin 2 = 连"点结算面板返回"也自动做一遍, 用于无头验证完整回环
+				if (AutoWin > 1)
+				{
+					GetWorldTimerManager().SetTimer(AutoReturnTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+					{
+						UE_LOG(LogTemp, Log, TEXT("[Battle] ER.AutoWin=2: 自动点击结算返回。"));
+						ReturnFromBattle();
+					}), 2.5f, false);
+				}
 			}), 4.0f, false);
 		}
 	}
@@ -273,30 +292,59 @@ URunSubsystem* ABattleGameMode::GetRunSubsystem() const
 
 void ABattleGameMode::HandleBattleFinished(bool bPlayerWon)
 {
-	if (!bRunBattle || bBattleResultHandled)
+	if (bBattleResultHandled)
 	{
 		return;
 	}
 	bBattleResultHandled = true;
+	bLastBattleWon = bPlayerWon;
 
-	URunSubsystem* Run = GetRunSubsystem();
-	if (!Run || !Run->HasActiveRun())
+	// 跳转不再自动发生: 结算面板弹出后由玩家点按钮决定何时离开,
+	// 这样面板可以停留展示战果, 也方便以后往里加掉落 / 经验等结算内容。
+	if (bRunBattle)
 	{
-		return;
-	}
-
-	if (bPlayerWon)
-	{
-		Run->WriteBackParty(PlayerUnits, PlayerPartyIndices);
-		Run->CompleteBattle(true);
-		UE_LOG(LogTemp, Log, TEXT("[Battle] 节点 %d 战斗胜利，准备返回航线图"), PendingNodeId);
-		GetWorldTimerManager().SetTimer(ReturnTimerHandle, this, &ABattleGameMode::ReturnToRoute, 2.6f, false);
+		if (URunSubsystem* Run = GetRunSubsystem())
+		{
+			if (Run->HasActiveRun())
+			{
+				if (bPlayerWon)
+				{
+					Run->WriteBackParty(PlayerUnits, PlayerPartyIndices);
+					Run->CompleteBattle(true);
+					UE_LOG(LogTemp, Log, TEXT("[Battle] 节点 %d 战斗胜利，等待玩家点击结算面板返回航线图"), PendingNodeId);
+				}
+				else
+				{
+					Run->CompleteBattle(false);
+					UE_LOG(LogTemp, Log, TEXT("[Battle] 本局失败，等待玩家点击结算面板返回大厅"));
+				}
+			}
+		}
 	}
 	else
 	{
-		Run->CompleteBattle(false);
-		UE_LOG(LogTemp, Log, TEXT("[Battle] 本局失败，准备返回大厅"));
-		GetWorldTimerManager().SetTimer(ReturnTimerHandle, this, &ABattleGameMode::ReturnToHallAfterDefeat, 3.2f, false);
+		UE_LOG(LogTemp, Log, TEXT("[Battle] 非航线图战斗结束 (胜利=%s)，等待玩家点击结算面板"),
+			bPlayerWon ? TEXT("是") : TEXT("否"));
+	}
+}
+
+void ABattleGameMode::ReturnFromBattle()
+{
+	if (ShouldReturnToRoute())
+	{
+		ReturnToRoute();
+	}
+	else
+	{
+		ReturnToHall();
+	}
+}
+
+void ABattleGameMode::DebugKillAllEnemies()
+{
+	if (BattleManager)
+	{
+		BattleManager->DebugKillAllEnemies();
 	}
 }
 
@@ -306,7 +354,7 @@ void ABattleGameMode::ReturnToRoute()
 		TEXT("game=/Script/EbbingRainbow.RouteGameMode"));
 }
 
-void ABattleGameMode::ReturnToHallAfterDefeat()
+void ABattleGameMode::ReturnToHall()
 {
 	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")), true,
 		TEXT("game=/Script/EbbingRainbow.HallGameMode"));

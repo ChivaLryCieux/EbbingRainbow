@@ -45,6 +45,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	bool RequestSkill(ABattleUnit* Unit, int32 SkillIndex, ABattleUnit* Target);
 
+	/** 调试用: 秒杀场上所有敌人并立即结算胜负 (战斗界面作弊按钮) */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void DebugKillAllEnemies();
+
 	// ---------- 状态读取 ----------
 
 	UFUNCTION(BlueprintPure, Category = "Battle")

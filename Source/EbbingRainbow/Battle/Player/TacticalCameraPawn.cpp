@@ -82,13 +82,13 @@ void ATacticalCameraPawn::BeginPlay()
 
 	// 战斗首回合的自动聚焦可能早于本 BeginPlay 触发 (控制器先拿到 Pawn),
 	// 此时不能再把镜头拽回全景, 否则刚锁定的单位又被摇回去
-	if (FocusedUnit.Get() == nullptr)
+	if (FollowTarget.Get() == nullptr)
 	{
 		SnapTo(ArenaCenter);
 	}
 	else
 	{
-		FocusOn(FocusedUnit->GetActorLocation());
+		FocusOn(FollowTarget->GetActorLocation());
 	}
 
 	// 把初始全景位置记为锚点。若不预置, 首次 FocusOnUnit 会把未初始化的
@@ -116,12 +116,23 @@ void ATacticalCameraPawn::SetMoveBounds(const FBox& InBounds)
 
 void ATacticalCameraPawn::FocusOn(const FVector& WorldLocation)
 {
-	TargetLocation = WorldLocation;
+	TargetLocation = ClampToBounds(WorldLocation);
+}
+
+FVector ATacticalCameraPawn::ClampToBounds(const FVector& InLocation) const
+{
+	FVector Out = InLocation;
 	if (MoveBounds.IsValid)
 	{
-		TargetLocation.X = FMath::Clamp(TargetLocation.X, MoveBounds.Min.X, MoveBounds.Max.X);
-		TargetLocation.Y = FMath::Clamp(TargetLocation.Y, MoveBounds.Min.Y, MoveBounds.Max.Y);
+		Out.X = FMath::Clamp(Out.X, MoveBounds.Min.X, MoveBounds.Max.X);
+		Out.Y = FMath::Clamp(Out.Y, MoveBounds.Min.Y, MoveBounds.Max.Y);
 	}
+	return Out;
+}
+
+bool ATacticalCameraPawn::IsFollowingUnit() const
+{
+	return CameraMode == ETacticalCameraMode::Focus && FollowTarget.IsValid();
 }
 
 void ATacticalCameraPawn::SnapTo(const FVector& WorldLocation)
@@ -138,8 +149,6 @@ void ATacticalCameraPawn::FocusOnUnit(ABattleUnit* Unit)
 		return;
 	}
 
-	FocusedUnit = Unit;
-
 	// 第一次聚焦时把当前位置记为全景锚点, 之后取消聚焦就回到这里
 	if (!bHasOverviewAnchor)
 	{
@@ -147,24 +156,36 @@ void ATacticalCameraPawn::FocusOnUnit(ABattleUnit* Unit)
 		bHasOverviewAnchor = true;
 	}
 
-	FocusOn(Unit->GetActorLocation());
+	const bool bSameTarget = (FollowTarget.Get() == Unit);
+	const bool bWasFree = (CameraMode != ETacticalCameraMode::Focus);
 
-	// 拉近到特写距离, 让模型占据画面主体
-	TargetArmLength = FMath::Clamp(FocusArmLength, MinArmLength, MaxArmLength);
-	if (bEnableZoomPitchCoupling)
+	FollowTarget = Unit;
+	CameraMode = ETacticalCameraMode::Focus;
+
+	// 只在「换了目标 / 从自由态回到跟随」时重新构图。
+	// 同一个棋子再次聚焦 (例如它下个回合又行动) 时保留玩家已经调好的视距与俯仰,
+	// 否则每轮都被强行拉回特写距离, 手感很跳。
+	if (!bSameTarget || bWasFree)
 	{
-		// 特写时镜头自动抬平, 更像第三人称越肩视角
-		TargetPitch = FMath::Clamp(FMath::Lerp(ClosePitch, DefaultPitch, 0.35f), MinPitch, MaxPitch);
+		TargetArmLength = FMath::Clamp(FocusArmLength, MinArmLength, MaxArmLength);
+		if (bEnableZoomPitchCoupling)
+		{
+			// 特写时镜头自动抬平, 更像第三人称越肩视角
+			TargetPitch = FMath::Clamp(FMath::Lerp(ClosePitch, DefaultPitch, 0.35f), MinPitch, MaxPitch);
+			ManualPitchOffset = 0.0f;
+		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 摄像机锁定 %s: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f 锚点=(%.0f, %.0f, %.0f)"),
+	TargetLocation = ClampToBounds(Unit->GetActorLocation());
+
+	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 摄像机跟随 %s: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f 锚点=(%.0f, %.0f, %.0f)"),
 		*Unit->Stats.DisplayName, TargetLocation.X, TargetLocation.Y, TargetLocation.Z,
 		TargetArmLength, TargetPitch, OverviewAnchor.X, OverviewAnchor.Y, OverviewAnchor.Z);
 }
 
 void ATacticalCameraPawn::ClearFocus()
 {
-	FocusedUnit = nullptr;
+	ExitFollowMode();
 
 	if (bHasOverviewAnchor)
 	{
@@ -184,15 +205,27 @@ void ATacticalCameraPawn::ClearFocus()
 	{
 		TargetPitch = FMath::Clamp(DefaultPitch, MinPitch, MaxPitch);
 	}
+	ManualPitchOffset = 0.0f;
 
 	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 摄像机回到全景: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f"),
 		TargetLocation.X, TargetLocation.Y, TargetLocation.Z, TargetArmLength, TargetPitch);
 }
 
-void ATacticalCameraPawn::NotifyManualTakeover()
+void ATacticalCameraPawn::ExitFollowMode()
 {
-	// 手动平移意味着玩家要自己看场, 解除单位聚焦
-	FocusedUnit = nullptr;
+	if (CameraMode == ETacticalCameraMode::Focus)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 跟随态 -> 自由态"));
+	}
+	CameraMode = ETacticalCameraMode::Free;
+	FollowTarget = nullptr;
+}
+
+void ATacticalCameraPawn::EnterFreeMode()
+{
+	// 手动平移意味着玩家要自己看场: 退出跟随, 但镜头就停在玩家推到的地方,
+	// 并把这里记为新的全景锚点 (而不是回到开局中心)
+	ExitFollowMode();
 	OverviewAnchor = TargetLocation;
 	bHasOverviewAnchor = true;
 }
@@ -280,6 +313,39 @@ void ATacticalCameraPawn::ZoomOut()
 void ATacticalCameraPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// 跟随态: 每帧把锚点贴到被跟随棋子上 —— 这是"敌人走位时镜头不动"的修复点。
+	// 棋子移动中用一个更快的插值速度, 保证不拖在后面; 停住后回落到常规聚焦速度。
+	float LocInterpSpeed = FocusInterpSpeed;
+	if (CameraMode == ETacticalCameraMode::Focus)
+	{
+		ABattleUnit* Followed = FollowTarget.Get();
+		if (!Followed || !Followed->IsAlive())
+		{
+			// 目标阵亡 / 被销毁: 就地停在最后一帧转自由态, 不要突然飞回全景锚点
+			UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 跟随目标已阵亡, 镜头就地转为自由态"));
+			ExitFollowMode();
+			OverviewAnchor = TargetLocation;
+			bHasOverviewAnchor = true;
+		}
+		else
+		{
+			TargetLocation = ClampToBounds(Followed->GetActorLocation());
+			LocInterpSpeed = Followed->IsMoving() ? FollowInterpSpeed : FocusInterpSpeed;
+
+			// 调试: 棋子走动期间每 0.5 秒最多打一条, 用来确认"棋子动, 镜头跟着动"
+			FollowLogTimer += DeltaSeconds;
+			if (FollowLogTimer >= 0.5f && Followed->IsMoving())
+			{
+				FollowLogTimer = 0.0f;
+				const float LagCm = FVector::Dist2D(GetActorLocation(), Followed->GetActorLocation());
+				UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 跟随中 %s: 棋子=(%.0f, %.0f) 镜头=(%.0f, %.0f) 水平滞后=%.0fcm"),
+					*Followed->Stats.DisplayName,
+					Followed->GetActorLocation().X, Followed->GetActorLocation().Y,
+					GetActorLocation().X, GetActorLocation().Y, LagCm);
+			}
+		}
+	}
 
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (PC)
@@ -384,7 +450,7 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 			FocusOn(TargetLocation + Dir * PanSpeed * ZoomFactor * DeltaSeconds);
 			// 手动平移时直接跟随, 避免插值滞后
 			SetActorLocation(TargetLocation);
-			NotifyManualTakeover();
+			EnterFreeMode();
 		}
 
 		if (PC->IsInputKeyDown(EKeys::Q)) TargetYaw -= RotateSpeed * DeltaSeconds;
@@ -392,7 +458,7 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 	}
 
 	// 平滑聚焦 / 缩放 / 旋转
-	SetActorLocation(FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaSeconds, FocusInterpSpeed));
+	SetActorLocation(FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaSeconds, LocInterpSpeed));
 	SpringArm->TargetArmLength = FMath::FInterpTo(SpringArm->TargetArmLength, TargetArmLength, DeltaSeconds, ZoomInterpSpeed);
 
 	// Yaw 保持归一化并按最短路径插值（与 FInterpTo 同公式），

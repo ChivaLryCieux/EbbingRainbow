@@ -11,6 +11,7 @@
 
 class UBattleManager;
 class ABattlePlayerController;
+class ABattleGameMode;
 class ABattleUnit;
 class SHorizontalBox;
 class SVerticalBox;
@@ -18,6 +19,7 @@ class STextBlock;
 class SButton;
 class SBorder;
 class SProgressBar;
+class SBattleResultPanel;
 
 class SBattleUnitPortrait;
 
@@ -121,12 +123,16 @@ private:
 	TSharedPtr<STextBlock> EndTurnButtonText;
 	TSharedPtr<SBorder> EndTurnGlowBorder;
 
+	/** 右上角 DEBUG 作弊按钮 */
+	TSharedPtr<SButton> CheatButton;
+	bool bLoggedCheatGeometry = false;
+
 	// 入场动画容器: 顶栏下沉 / 底栏上浮
 	TSharedPtr<SBorder> TopPanelBorder;
 	TSharedPtr<SHorizontalBox> BottomBarBox;
 
-	TSharedPtr<SBorder> ResultBannerBorder;
-	TSharedPtr<STextBlock> ResultBannerText;
+	/** 战斗结算弹窗 (胜利/失败 + 返回按钮) */
+	TSharedPtr<SBattleResultPanel> ResultPanel;
 
 	// 左侧编队名牌面板
 	TSharedPtr<SVerticalBox> RosterBox;
@@ -164,14 +170,26 @@ private:
 	FSlateBrush HPFillBrush;
 	FButtonStyle EndTurnBtnStyle;
 
+	// 作弊按钮 (暗红玻璃小胶囊)
+	FSlateBrush CheatNormalBrush;
+	FSlateBrush CheatHoverBrush;
+	FSlateBrush CheatPressedBrush;
+	FButtonStyle CheatBtnStyle;
+
 	void RebuildInitiativeBar();
 	void RebuildHandCards(ABattleUnit* Unit);
 	void RebuildRosterPanel();
 	void UpdateHeroPlate(ABattleUnit* Unit);
 	void UpdateEndTurnButton(ABattleUnit* Unit, EBattleState State);
-	void UpdateResultBanner(EBattleState State);
+	void UpdateResultPanel(EBattleState State);
 
+	/** 取战斗 GameMode (结算跳转 / 作弊入口) */
+	ABattleGameMode* GetBattleGameMode() const;
 	FReply HandleEndTurnClicked();
 	FReply HandleCardClicked(int32 Index, bool bIsMove);
 	FReply HandlePortraitClicked(int32 UnitIndex);
+	/** DEBUG: 秒杀全部敌人 */
+	FReply HandleCheatKillClicked();
+	/** 结算面板主按钮: 回航线图或回大厅 */
+	void HandleResultPrimaryClicked();
 };

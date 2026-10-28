@@ -9,6 +9,10 @@
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 
+/** 调试：>0 时我方回合 1.2 秒后自动结束，让 AI 自己把整场打完（观察镜头跟随 / 战斗流程用）。 */
+static TAutoConsoleVariable<int32> CVarAutoPlay(
+	TEXT("ER.AutoPlay"), 0, TEXT("调试：>0 时我方回合 1.2 秒后自动结束。"), ECVF_Cheat);
+
 ABattlePlayerController::ABattlePlayerController()
 {
 	bShowMouseCursor = true;
@@ -197,10 +201,20 @@ void ABattlePlayerController::FocusOnActiveUnit()
 	{
 		if (ABattleUnit* Active = Mgr->GetActiveUnit())
 		{
+			ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn());
+
+			// 已经在跟随当前单位 -> 再按一次 F 收回全景 (与点击名牌的开关行为一致)
+			if (Cam && Cam->IsFollowingUnit() && Cam->GetFocusedUnit() == Active)
+			{
+				FocusedUnit = nullptr;
+				Cam->ClearFocus();
+				return;
+			}
+
 			// 记入聚焦单位, 让编队面板同步高亮当前回合的我方单位
 			FocusedUnit = Active;
 
-			if (ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn()))
+			if (Cam)
 			{
 				// 用特写锁定而非单纯平移: 拉近臂长 + 抬平俯仰, 让模型占据画面主体
 				Cam->FocusOnUnit(Active);
@@ -345,6 +359,30 @@ void ABattlePlayerController::OnKeyF()
 	FocusOnActiveUnit();
 }
 
+void ABattlePlayerController::BattleCheatWin()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (ABattleGameMode* GM = Cast<ABattleGameMode>(World->GetAuthGameMode()))
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Battle] 控制台命令 BattleCheatWin: 秒杀全部敌人"));
+			GM->DebugKillAllEnemies();
+		}
+	}
+}
+
+void ABattlePlayerController::BattleResultReturn()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (ABattleGameMode* GM = Cast<ABattleGameMode>(World->GetAuthGameMode()))
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Battle] 控制台命令 BattleResultReturn: 结算返回"));
+			GM->ReturnFromBattle();
+		}
+	}
+}
+
 void ABattlePlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
@@ -364,6 +402,28 @@ void ABattlePlayerController::PlayerTick(float DeltaTime)
 			if (Cam->GetFocusedUnit() != FocusedUnit.Get())
 			{
 				FocusedUnit = nullptr;
+			}
+		}
+	}
+
+	// 调试自动战斗: 我方回合超时自动结束, 让 AI 继续跑
+	if (CVarAutoPlay.GetValueOnGameThread() > 0)
+	{
+		if (UBattleManager* Mgr = GetBattleManager())
+		{
+			ABattleUnit* Active = (Mgr->GetBattleState() == EBattleState::TurnActive) ? Mgr->GetActiveUnit() : nullptr;
+			if (Active && Active->Team == EBattleTeam::Player)
+			{
+				AutoPlayElapsed += DeltaTime;
+				if (AutoPlayElapsed >= 1.2f)
+				{
+					AutoPlayElapsed = 0.0f;
+					RequestEndTurn();
+				}
+			}
+			else
+			{
+				AutoPlayElapsed = 0.0f;
 			}
 		}
 	}

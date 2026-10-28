@@ -1027,6 +1027,34 @@ void ABattleUnit::EnableRagdoll()
 	bRagdollActive = true;
 }
 
+void ABattleUnit::DebugKill()
+{
+	if (!IsAlive())
+	{
+		return;
+	}
+
+	// 作弊路径: 不走闪避/抗性/护盾, 直接清零, 但后续表现与结算完全复用正常战死流程
+	Integrity = 0.0f;
+	Barrier = 0.0f;
+	HP = 0;
+
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	UpdateVisualColor();
+	RefreshLabel();
+
+	ABattleFloatingText::SpawnFloatingText(GetWorld(),
+		GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f),
+		TEXT("处决 (DEBUG)"), FColor(255, 120, 90), 44.0f);
+
+	StartDeathRagdoll(nullptr, 60.0f);
+	OnUnitDied.Broadcast(this);
+}
+
 float ABattleUnit::TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType)
 {
 	if (!IsAlive() || DamageAmount <= 0.0f)

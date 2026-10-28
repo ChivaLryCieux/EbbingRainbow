@@ -3,6 +3,8 @@
 #include "Battle/UI/SBattleMainOverlay.h"
 #include "Battle/UI/SBattleUnitPortrait.h"
 #include "Battle/UI/SBattleGlassKit.h"
+#include "Battle/UI/SBattleResultPanel.h"
+#include "Battle/Core/BattleGameMode.h"
 #include "Battle/Core/BattleManager.h"
 #include "Battle/Player/BattlePlayerController.h"
 #include "Battle/Player/TacticalCameraPawn.h"
@@ -257,6 +259,17 @@ void SBattleMainOverlay::Construct(const FArguments& InArgs)
 	BattleGlass::ConfigureGlassBrush(HPFillBrush, 4.0f,
 		BattleGlass::HealthHigh, 0.0f, FLinearColor::Transparent);
 
+	// 作弊按钮: 暗红玻璃小胶囊, 刻意做得低调 (不抢战术 UI 的视觉重心)
+	BattleGlass::ConfigureGlassBrush(CheatNormalBrush, BattleGlass::RadiusPill,
+		FLinearColor(0.20f, 0.055f, 0.055f, 0.70f), 1.0f, FLinearColor(1.0f, 0.45f, 0.40f, 0.35f));
+	BattleGlass::ConfigureGlassBrush(CheatHoverBrush, BattleGlass::RadiusPill,
+		FLinearColor(0.34f, 0.085f, 0.085f, 0.86f), 1.4f, FLinearColor(1.0f, 0.55f, 0.48f, 0.75f));
+	BattleGlass::ConfigureGlassBrush(CheatPressedBrush, BattleGlass::RadiusPill,
+		FLinearColor(0.14f, 0.035f, 0.035f, 0.92f), 1.0f, FLinearColor(0.95f, 0.40f, 0.35f, 0.6f));
+	CheatBtnStyle.SetNormal(CheatNormalBrush);
+	CheatBtnStyle.SetHovered(CheatHoverBrush);
+	CheatBtnStyle.SetPressed(CheatPressedBrush);
+
 	// 面板柔影: 比面板大 5px 的深色圆角, 让玻璃从明亮场景里"浮"起来
 	BattleGlass::ConfigureGlassBrush(PanelShadowBrush, BattleGlass::RadiusPanel + 5.0f,
 		FLinearColor(0.0f, 0.0f, 0.0f, 0.34f), 0.0f, FLinearColor::Transparent);
@@ -473,68 +486,46 @@ void SBattleMainOverlay::Construct(const FArguments& InArgs)
 		]
 
 		// =============================================================
-		// 5. 胜负结算横幅
+		// 4b. 右上角 DEBUG 作弊按钮 (仅非 Shipping 构建可见)
 		// =============================================================
+#if !UE_BUILD_SHIPPING
 		+ SOverlay::Slot()
-		.HAlign(HAlign_Center)
-		.VAlign(VAlign_Center)
+		.HAlign(HAlign_Right)
+		.VAlign(VAlign_Top)
+		.Padding(0.0f, 18.0f, 20.0f, 0.0f)
 		[
-			SAssignNew(ResultBannerBorder, SBorder)
-			.BorderImage(&PanelBrush)
-			.Padding(FMargin(52.0f, 26.0f))
-			.Visibility(EVisibility::Hidden)
+			SNew(SBox)
+			.WidthOverride(170.0f)
+			.HeightOverride(34.0f)
+			.HAlign(HAlign_Fill)
+			.VAlign(VAlign_Fill)
 			[
-				SNew(SVerticalBox)
-				+ SVerticalBox::Slot()
-				.AutoHeight()
+				SAssignNew(CheatButton, SButton)
+				.ButtonStyle(&CheatBtnStyle)
 				.HAlign(HAlign_Center)
+				.VAlign(VAlign_Center)
+				.ContentPadding(FMargin(18.0f, 0.0f))
+				.OnClicked(this, &SBattleMainOverlay::HandleCheatKillClicked)
 				[
-					SAssignNew(ResultBannerText, STextBlock)
-					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 28))
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("DEBUG · 秒杀敌人")))
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
 					.Justification(ETextJustify::Center)
-					.ColorAndOpacity(BattleGlass::AccentGold)
-				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.HAlign(HAlign_Center)
-				.Padding(0.0f, 20.0f, 0.0f, 0.0f)
-				[
-					SNew(SButton)
-					.ButtonStyle(FCoreStyle::Get(), "NoBorder")
-					.OnClicked_Lambda([this]() {
-						UWorld* World = nullptr;
-						if (PlayerController.IsValid()) World = PlayerController->GetWorld();
-						else if (BattleManager.IsValid()) World = BattleManager->GetWorld();
-						if (!World && GEngine)
-						{
-							for (const FWorldContext& Context : GEngine->GetWorldContexts())
-							{
-								if (Context.WorldType == EWorldType::PIE || Context.WorldType == EWorldType::Game)
-								{
-									if (UWorld* Cand = Context.World()) { World = Cand; break; }
-								}
-							}
-						}
-						if (World)
-						{
-							UE_LOG(LogTemp, Log, TEXT("[Battle] Returning to Hall level..."));
-							UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")), true, TEXT("game=/Script/EbbingRainbow.HallGameMode"));
-						}
-						return FReply::Handled();
-					})
-					[
-						SNew(SBorder)
-						.BorderImage(&EndTurnNormalBrush)
-						.Padding(FMargin(30.0f, 11.0f))
-						[
-							SNew(STextBlock)
-							.Text(FText::FromString(TEXT("返回空间站大厅   ·   RETURN TO HALL")))
-							.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
-							.ColorAndOpacity(FLinearColor(0.10f, 0.08f, 0.02f))
-						]
-					]
+					.ColorAndOpacity(FLinearColor(1.0f, 0.78f, 0.72f, 0.92f))
 				]
 			]
+		]
+#endif
+
+		// =============================================================
+		// 5. 战斗结算弹窗 (胜利/失败 + 返回按钮, 自带全屏遮罩与入场动画)
+		// =============================================================
+		+ SOverlay::Slot()
+		.HAlign(HAlign_Fill)
+		.VAlign(VAlign_Fill)
+		[
+			SAssignNew(ResultPanel, SBattleResultPanel)
+			.OnPrimaryClicked(FSimpleDelegate::CreateSP(this, &SBattleMainOverlay::HandleResultPrimaryClicked))
 		]
 	];
 
@@ -650,11 +641,11 @@ void SBattleMainOverlay::Tick(const FGeometry& AllottedGeometry, const double In
 		RebuildHandCards(CurrentActive);
 	}
 
-	// 3. 刷新结束回合按钮状态与胜负横幅
+	// 3. 刷新结束回合按钮状态与结算弹窗
 	if (CurrentState != CachedState)
 	{
 		CachedState = CurrentState;
-		UpdateResultBanner(CurrentState);
+		UpdateResultPanel(CurrentState);
 	}
 	UpdateEndTurnButton(CurrentActive, CurrentState);
 
@@ -671,6 +662,26 @@ void SBattleMainOverlay::Tick(const FGeometry& AllottedGeometry, const double In
 	// 5. 检查鼠标是否在任何名牌 / 手牌 / 结束按钮上
 	bMouseOverUI = false;
 	if (EndTurnButton.IsValid() && EndTurnButton->IsHovered())
+	{
+		bMouseOverUI = true;
+	}
+	if (CheatButton.IsValid() && CheatButton->IsHovered())
+	{
+		bMouseOverUI = true;
+	}
+	// 布局日志: 确认作弊按钮真的挂到了右上角 (只在首次有效布局时打一次)
+	if (CheatButton.IsValid() && !bLoggedCheatGeometry)
+	{
+		const FVector2D AbsPos = CheatButton->GetCachedGeometry().GetAbsolutePosition();
+		const FVector2D AbsSize = CheatButton->GetCachedGeometry().GetAbsoluteSize();
+		if (AbsSize.X > 1.0f && AbsSize.Y > 1.0f)
+		{
+			bLoggedCheatGeometry = true;
+			UE_LOG(LogTemp, Log, TEXT("[BattleUI] 作弊按钮布局: 屏幕=(%.0f, %.0f) 尺寸=%.0fx%.0f"), AbsPos.X, AbsPos.Y, AbsSize.X, AbsSize.Y);
+		}
+	}
+	// 结算弹窗盖住整个屏幕时, 任何点击都不该穿透到场景
+	if (ResultPanel.IsValid() && ResultPanel->GetVisibility() == EVisibility::Visible)
 	{
 		bMouseOverUI = true;
 	}
@@ -1021,45 +1032,150 @@ void SBattleMainOverlay::UpdateEndTurnButton(ABattleUnit* Unit, EBattleState Sta
 	}
 }
 
-void SBattleMainOverlay::UpdateResultBanner(EBattleState State)
+void SBattleMainOverlay::UpdateResultPanel(EBattleState State)
 {
-	if (!ResultBannerBorder.IsValid() || !ResultBannerText.IsValid())
+	if (!ResultPanel.IsValid())
 	{
 		return;
 	}
 
-	if (State == EBattleState::BattleOver)
+	if (State != EBattleState::BattleOver)
 	{
-		ResultBannerBorder->SetVisibility(EVisibility::Visible);
+		ResultPanel->SetVisibility(EVisibility::Collapsed);
+		return;
+	}
 
-		UBattleManager* Mgr = BattleManager.Get();
-		bool bPlayerWon = true;
-		if (Mgr)
+	UBattleManager* Mgr = BattleManager.Get();
+	ABattleGameMode* GM = GetBattleGameMode();
+
+	// 胜负以 GameMode 的结算结果为准; 极端情况下 (结算尚未到达) 用场上存活数兜底
+	bool bPlayerWon = true;
+	if (GM && GM->IsBattleResolved())
+	{
+		bPlayerWon = GM->DidPlayerWin();
+	}
+	else if (Mgr)
+	{
+		for (ABattleUnit* U : Mgr->GetAllUnits())
 		{
-			for (ABattleUnit* U : Mgr->GetAllUnits())
+			if (U && U->IsAlive() && U->Team == EBattleTeam::Enemy)
 			{
-				if (U && U->IsAlive() && U->Team == EBattleTeam::Enemy)
-				{
-					bPlayerWon = false;
-					break;
-				}
+				bPlayerWon = false;
+				break;
 			}
 		}
+	}
 
-		if (bPlayerWon)
+	// ---------- 结算明细 (后续掉落 / 经验 / 好感度直接往 Rows 里加) ----------
+	int32 AlivePlayers = 0;
+	int32 TotalPlayers = 0;
+	float CurrentIntegrity = 0.0f;
+	float MaxIntegrity = 0.0f;
+	if (Mgr)
+	{
+		for (ABattleUnit* U : Mgr->GetAllUnits())
 		{
-			ResultBannerText->SetText(FText::FromString(TEXT("VICTORY\n敌方全灭  ·  战术推演胜利")));
-			ResultBannerText->SetColorAndOpacity(BattleGlass::AccentGold);
+			if (U && U->Team == EBattleTeam::Player)
+			{
+				++TotalPlayers;
+				if (U->IsAlive())
+				{
+					++AlivePlayers;
+				}
+				CurrentIntegrity += FMath::Max(0.0f, U->Integrity);
+				MaxIntegrity += U->Stats.MaxIntegrity;
+			}
 		}
-		else
-		{
-			ResultBannerText->SetText(FText::FromString(TEXT("DEFEAT\n我方全灭  ·  战术推演失败")));
-			ResultBannerText->SetColorAndOpacity(BattleGlass::AccentEnemy);
-		}
+	}
+	const float IntegrityPercent = (MaxIntegrity > KINDA_SMALL_NUMBER) ? (CurrentIntegrity / MaxIntegrity) : 0.0f;
+
+	TArray<FBattleResultRow> Rows;
+	if (Mgr)
+	{
+		Rows.Emplace(FText::FromString(TEXT("战斗回合")), FText::AsNumber(Mgr->GetRoundIndex()), BattleGlass::TextPrimary);
+	}
+	Rows.Emplace(FText::FromString(TEXT("存活队员")),
+		FText::FromString(FString::Printf(TEXT("%d / %d"), AlivePlayers, TotalPlayers)),
+		(AlivePlayers == TotalPlayers) ? BattleGlass::HealthHigh : BattleGlass::HealthMid);
+	Rows.Emplace(FText::FromString(TEXT("队伍完整度")),
+		FText::FromString(FString::Printf(TEXT("%d / %d"), FMath::RoundToInt(CurrentIntegrity), FMath::RoundToInt(MaxIntegrity))),
+		BattleGlass::HealthColorFor(IntegrityPercent));
+	// 预留位: 目前没有掉落系统, 先占一行, 免得以后加内容时面板结构又要动
+	Rows.Emplace(FText::FromString(TEXT("战利品")), FText::FromString(TEXT("—")), BattleGlass::TextTertiary);
+
+	FText Subtitle;
+	if (bPlayerWon)
+	{
+		Subtitle = (GM && GM->IsRunBattle())
+			? FText::FromString(FString::Printf(TEXT("敌方全灭  ·  航线图节点 %d"), GM->GetPendingNodeId()))
+			: FText::FromString(TEXT("敌方全灭  ·  战术推演完成"));
 	}
 	else
 	{
-		ResultBannerBorder->SetVisibility(EVisibility::Hidden);
+		Subtitle = FText::FromString(TEXT("我方全灭  ·  本次远征结束"));
+	}
+
+	const FText ButtonText = (GM && GM->ShouldReturnToRoute())
+		? FText::FromString(TEXT("返 回 航 线 图"))
+		: FText::FromString(TEXT("返 回 空 间 站 大 厅"));
+
+	ResultPanel->SetResult(bPlayerWon,
+		bPlayerWon ? FText::FromString(TEXT("战 斗 胜 利")) : FText::FromString(TEXT("战 斗 失 败")),
+		Subtitle, Rows, ButtonText);
+
+	UE_LOG(LogTemp, Log, TEXT("[BattleUI] 结算面板弹出: %s | %s | 返回按钮=%s | 回合=%d 存活=%d/%d 完整度=%.0f/%.0f"),
+		bPlayerWon ? TEXT("胜利") : TEXT("失败"), *Subtitle.ToString(), *ButtonText.ToString(),
+		Mgr ? Mgr->GetRoundIndex() : 0, AlivePlayers, TotalPlayers, CurrentIntegrity, MaxIntegrity);
+}
+
+ABattleGameMode* SBattleMainOverlay::GetBattleGameMode() const
+{
+	if (ABattlePlayerController* PC = PlayerController.Get())
+	{
+		if (UWorld* World = PC->GetWorld())
+		{
+			return Cast<ABattleGameMode>(World->GetAuthGameMode());
+		}
+	}
+	if (UBattleManager* Mgr = BattleManager.Get())
+	{
+		if (UWorld* World = Mgr->GetWorld())
+		{
+			return Cast<ABattleGameMode>(World->GetAuthGameMode());
+		}
+	}
+	return nullptr;
+}
+
+FReply SBattleMainOverlay::HandleCheatKillClicked()
+{
+	if (ABattleGameMode* GM = GetBattleGameMode())
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Battle] DEBUG 按钮: 秒杀全部敌人"));
+		GM->DebugKillAllEnemies();
+	}
+	return FReply::Handled();
+}
+
+void SBattleMainOverlay::HandleResultPrimaryClicked()
+{
+	if (ABattleGameMode* GM = GetBattleGameMode())
+	{
+		GM->ReturnFromBattle();
+		return;
+	}
+
+	// 兜底: 拿不到 GameMode 时直接回大厅
+	UWorld* World = nullptr;
+	if (ABattlePlayerController* PC = PlayerController.Get())
+	{
+		World = PC->GetWorld();
+	}
+	if (World)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Battle] 结算返回 (兜底路径) -> Lvl_Hall"));
+		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")), true,
+			TEXT("game=/Script/EbbingRainbow.HallGameMode"));
 	}
 }
 

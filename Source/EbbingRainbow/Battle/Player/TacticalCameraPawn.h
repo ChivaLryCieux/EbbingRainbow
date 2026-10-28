@@ -9,15 +9,33 @@
 class USpringArmComponent;
 class UCameraComponent;
 
+/** 战术摄像机的两种顶层状态 */
+UENUM(BlueprintType)
+enum class ETacticalCameraMode : uint8
+{
+	/** 自由观察: 玩家自己平移, 镜头不跟随任何棋子 */
+	Free UMETA(DisplayName = "自由 (Free)"),
+	/** 跟随棋子: 每帧把锚点贴到被跟随的棋子上 */
+	Focus UMETA(DisplayName = "跟随 (Focus)")
+};
+
 /**
  * 战术俯视摄像机（博德之门 3 风格手感优化版）。
+ *
+ * 两态设计（这是本类的核心状态机）：
+ *  - **跟随态 (Focus)**：锁定某个棋子，每帧把镜头锚点贴到它身上，棋子走动时镜头跟着走。
+ *    中键轨道旋转 / 滚轮缩放只改变环绕参数（Yaw / Pitch / Arm），不会打断跟随。
+ *  - **自由态 (Free)**：玩家用 WASD / 屏幕边缘自己平移观察；一旦手动平移就切到自由态，
+ *    并把当前位置记为新的全景锚点（之后取消聚焦会回到这里，而不是回到开局中心）。
+ *  状态迁移只有四处：回合开始自动聚焦、点击名牌聚焦、F 键聚焦（→ Focus）；
+ *  WASD 平移接管、被跟随棋子阵亡、取消聚焦（→ Free）。所有迁移都走函数而不是直接改字段。
  *
  * 控制说明：
  * - 鼠标中键按住拖动：博德之门 3 式轨道旋转（Yaw 绕聚焦点旋转，Pitch 俯仰微调，鼠标在旋转期间隐藏并锁定回位）。
  *   旋转读取引擎输入系统的每帧鼠标增量（MouseX/MouseY），不依赖光标绝对坐标、不做屏幕边缘传送，
  *   在视口捕获 / DPI 缩放 / 多显示器 / PIE 等任意状态下都不会产生“视角不停旋转”的巨量假增量。
  * - 滚轮上下滚动：相机平滑缩放，并可选支持 BG3 特色的“近距离自动仰角放平、远距离高俯视俯瞰”动态联动
- * - WASD / 屏幕边缘：平移相机
+ * - WASD / 屏幕边缘：平移相机（会切到自由态）
  * - Q / E：键盘平滑旋转视角
  * - F 键：聚焦当前行动单位
  *
@@ -42,17 +60,32 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
 	void FocusOn(const FVector& WorldLocation);
 
-	/** 聚焦到战斗单位: 平滑平移 + 拉近到特写距离 (编队面板点击名片) */
+	/** 聚焦到战斗单位: 进入跟随态, 平滑平移 + 拉近到特写距离, 之后镜头会一直跟着它 */
 	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
 	void FocusOnUnit(class ABattleUnit* Unit);
 
-	/** 取消单位聚焦: 回到竞技场全景与默认视距 */
+	/** 取消单位聚焦: 回到自由态并飞回全景锚点 */
 	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
 	void ClearFocus();
 
-	/** 当前聚焦的单位 (nullptr 表示全景) */
+	/**
+	 * 玩家手动平移接管: 退出跟随态, 停在当前位置并把这里记为新的全景锚点。
+	 * 不会把镜头拽回原锚点 —— 玩家刚推到的位置就是他想看的位置。
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
+	void EnterFreeMode();
+
+	/** 当前是否正在跟随某个棋子 */
 	UFUNCTION(BlueprintPure, Category = "Tactical Camera|Movement")
-	class ABattleUnit* GetFocusedUnit() const { return FocusedUnit.Get(); }
+	bool IsFollowingUnit() const;
+
+	/** 当前镜头状态 */
+	UFUNCTION(BlueprintPure, Category = "Tactical Camera|Movement")
+	ETacticalCameraMode GetCameraMode() const { return CameraMode; }
+
+	/** 当前聚焦的单位 (nullptr 表示自由态) */
+	UFUNCTION(BlueprintPure, Category = "Tactical Camera|Movement")
+	class ABattleUnit* GetFocusedUnit() const { return FollowTarget.Get(); }
 
 	/** 立即跳转 (无插值) */
 	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
@@ -154,6 +187,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Movement", meta = (ClampMin = "1.0", ClampMax = "30.0", UIMin = "2.0", UIMax = "15.0"))
 	float FocusInterpSpeed = 6.0f;
 
+	/**
+	 * 跟随态下棋子正在移动时的插值速度。
+	 * 比 FocusInterpSpeed 快，保证走动时镜头不拖在后面；停住后自然回落到 FocusInterpSpeed。
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Movement", meta = (ClampMin = "1.0", ClampMax = "40.0", UIMin = "4.0", UIMax = "20.0"))
+	float FollowInterpSpeed = 11.0f;
+
 	/** 名牌聚焦时的特写视距 (拉近到能看清单位模型的距离) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Movement", meta = (ClampMin = "200.0", ClampMax = "4000.0", UIMin = "400.0", UIMax = "2500.0"))
 	float FocusArmLength = 1250.0f;
@@ -170,8 +210,11 @@ private:
 	void StopOrbit();
 	float GetCoupledPitchForArmLength(float InArmLength) const;
 
-	/** 玩家手动平移时调用: 解除单位聚焦, 并把当前位置记为新的全景锚点 */
-	void NotifyManualTakeover();
+	/** 把目标点夹到竞技场范围内 (跟随态每帧都要夹, 防止棋子走出边界把镜头带走) */
+	FVector ClampToBounds(const FVector& InLocation) const;
+
+	/** 退出跟随态: 只改状态, 不动镜头位置 */
+	void ExitFollowMode();
 
 	// 兜底绝对坐标差分的单帧位移上限（像素）：正常甩动不会超过，捕获切换瞬间的坐标跳变会被丢弃
 	static constexpr float MaxOrbitFallbackDeltaPixels = 300.0f;
@@ -199,6 +242,12 @@ private:
 	FVector OverviewAnchor = FVector::ZeroVector;
 	bool bHasOverviewAnchor = false;
 
-	/** 名牌聚焦中的单位 */
-	TWeakObjectPtr<class ABattleUnit> FocusedUnit;
+	/** 当前镜头状态 */
+	ETacticalCameraMode CameraMode = ETacticalCameraMode::Free;
+
+	/** 跟随态下被锁定的棋子 (自由态为 nullptr) */
+	TWeakObjectPtr<class ABattleUnit> FollowTarget;
+
+	/** 跟随调试日志的节流计时 */
+	float FollowLogTimer = 0.0f;
 };
