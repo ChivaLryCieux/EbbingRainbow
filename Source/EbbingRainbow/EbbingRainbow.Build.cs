@@ -39,6 +39,8 @@ public class EbbingRainbow : ModuleRules
 			"EbbingRainbow/Battle/UI",
 			"EbbingRainbow/Hall",
 			"EbbingRainbow/Hall/UI",
+			"EbbingRainbow/Run",
+			"EbbingRainbow/Run/UI",
 			"EbbingRainbow/Motorcycle"
 		});
 
