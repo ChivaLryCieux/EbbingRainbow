@@ -11,6 +11,7 @@
 
 1. **3D WFC 算法程序化地形 (Wave Function Collapse)**
    - 告别千篇一律的固定棋盘。每场战斗前，底层 WFC 算法根据体素邻接规则进行实时空间坍缩，动态生成包含掩体、高低落差与战术隘口的立体随机战场。
+   - 当前默认的 **Blackshard 大厅**：76×76 m 基座，中心 24–28 m 见方的双层挑空中庭，外圈一圈 +4 m 环形回廊与方柱柱廊，十字天桥跨过中庭，四向各一部 8 m 宽楼梯把大厅接上回廊，最外圈是 3–4 个 24 m 级、转角削成 45° 阶梯斜面的大房间——宏观体块由建筑语法决定，具体墙/门/柱再由 socket 精确填成 kit 瓦片。
 2. **种子可复现的 DAG 航线图 (Route Map)**
    - 一局远征由 10 层、约 25 个节点的有向无环图构成：起点单节点、终点必为战斗，中间每层 2–4 个节点，任意一条通路至少 5 场战斗；
    - 路线由随机种子决定并显示在界面上，**同一个种子必然生成同一张图**，方便复盘、分享与问题定位。
@@ -92,7 +93,7 @@
 ### 3. 战术战场 (`Lvl_Arena`)
 * **主要职责**：Roguelike 关卡战斗核心循环。
 * **主要功能**：
-  * **WFC 地形生成器 (`ABattleArena`)**：开局毫秒级自动构建 3D 战术地图；从航线图进入时会用「节点遭遇种子」驱动，保证同一局同一节点的地形一致；
+  * **WFC 地形生成器 (`ABattleArena`)**：开局毫秒级自动构建 3D 战术地图；从航线图进入时会用「节点遭遇种子」驱动，保证同一局同一节点的地形一致；默认宏观布局是 Blackshard 大厅（挑空中庭 + 环形回廊 + 天桥 + 四向楼梯 + 大房间），楼梯与 +4 m 回廊已烘焙进 navmesh，AI 与玩家都能上下；
   * **先攻条 (Initiative Bar)**：顶部芯片式流转显示下一位行动的角色；
   * **战术手牌区**：动态浮动的卡牌（移动卡、攻击卡、技能卡），具备悬停浮起微动效与费用不足灰显判断；
   * **战术摄像机两态 (`ETacticalCameraMode`)**：**自由态**下 WASD / 屏幕边缘 / 中键拖拽自由取景，**聚焦态**下镜头每帧贴着当前行动棋子（敌人走位时同样跟随），跟随目标阵亡时就地转为自由态、不会突然飞回全景锚点；
@@ -114,6 +115,7 @@ ArenaHost->Generate(Request);
 
 - **`AWFC3DArenaHost`**：三参数容器。查 `UWFC3DStyleTable`，创建/复用/销毁具体生成器，不关心任何拓扑。
 - **`AWFC3DArenaGeneratorBase`**：通用 WFC 管线（编译模块 → 初始化求解器 → 施加约束 → 求解 → HISM 渲染）。
+- **`FWFCArchGrammar`**：宏观建筑语法层。先按种子排出 `FArchPlan`（房间/大厅/中庭/回廊/天桥/楼梯/柱位），再把每个格子的边界解析成 kit 瓦片（`ResolveWallTile` 带 d→p→o、n/h→w 的降级），最后交给生成器实例化并单独铺碰撞盒；`ER.ArchLayout` 就是在这一层切换布局。
 - **`WFC3DArenaGenerator_*`**：每种风格一个独立文件（Style0 / ThreeStory / MegaAtrium / SpiralGarden / Dungeon），各自负责模块集与初始约束。
 - **`WFC3DSolver` / `WFC3DModuleLibrary` / `WFC3DTypes`**：与风格无关的通用算法、内容编译与数据类型。
 
@@ -155,13 +157,15 @@ ArenaHost->Generate(Request);
 * **战术镜头**：`WASD` / 屏幕边缘推屏 / 中键拖拽进入自由取景（同时退出聚焦），`Q` `E` 旋转，`F` 聚焦当前行动单位，滚轮缩放；聚焦态下镜头会自动跟随该棋子移动；
 * **右上角 `[ DEBUG · 秒杀敌人 ]`**：作弊按钮，清空敌方并直接弹出战斗胜利结算（仅非 Shipping 构建可见）；
 * **结算面板**：战斗结束后点击面板按钮 —— 航线图战斗胜利时是 `[ 返回航线图 ]`，其余情况是 `[ 返回空间站大厅 ]`；
-* **调试命令**（控制台）：`BattleCheatWin`（等同作弊按钮）、`BattleResultReturn`（等同结算返回按钮）、`ER.AutoWin 1` 自动判胜 / `ER.AutoWin 2` 判胜后自动返回、`ER.AutoPlay 1` 我方回合自动结束（让 AI 自己打完整场，便于观察镜头跟随）。
+* **调试命令**（控制台）：`BattleCheatWin`（等同作弊按钮）、`BattleResultReturn`（等同结算返回按钮）、`ER.AutoWin 1` 自动判胜 / `ER.AutoWin 2` 判胜后自动返回、`ER.AutoPlay 1` 我方回合自动结束（让 AI 自己打完整场，便于观察镜头跟随）；
+* **地形调试命令**（控制台）：`ER.ArchLayout 0|1|2` 切换宏观布局（0=旧房间图，1=旧十字中庭，2=Blackshard 大厅，默认 2，下一场生效）、`ER.ArchDump 1` 把平面图以 ASCII 打进日志（`#` 房间 `.` 大厅 `~` 回廊 `o` 柱 `=` 天桥 `D` 门）、`ER.AutoShot 1` 就绪后自动切俯瞰相机截图到 `Saved/Screenshots/WindowsEditor/`；三者也可用命令行 `-ArchDump` / `-AutoShot` 在启动时就生效。
 
 ---
 
 ## 🗺️ 未来规划 (Roadmap)
 
-- [x] **DAG 航线图**：种子化 10 层路线、安全/战斗节点、队伍完整度跨战斗累积（本次落地）。
+- [x] **DAG 航线图**：种子化 10 层路线、安全/战斗节点、队伍完整度跨战斗累积。
+- [x] **Blackshard 竞技场重构**：宽大厅 + 少而大的削角房间 + 挑空中庭 + 环形回廊 + 天桥 + 四向楼梯，楼梯已接入 navmesh（`Mezzanine path: partial=no`）。
 - [ ] **空间与地形交互机制**：引入带有击退 (Knockback) 和牵引 (Pull) 属性的卡牌，实现“撞墙眩晕”与“坠落深渊”。
 - [ ] **职业协同与合击卡组**：强化小队连携，设计跨角色状态联动（如易伤标记、元素感电）。
 - [ ] **空间站局外基建循环 (Meta-progression)**：完善大厅中的采购中心 (Store)、空间基建 (Base) 与公开招募 (Recruit)，形成完整的局外养成闭环。
@@ -189,7 +193,7 @@ ArenaHost->Generate(Request);
 - 3–4 个 24 m 级大房间，朝中庭的转角削成阶梯状 45° 斜面（L 形而不是方块），每条临大厅的边开 1–3 个 2 格宽（8 m）门洞；
 - 至多一个象限留作柱林广场；房间内部沿长边每两格立一根方柱（列柱厅）。
 - 楼梯落点在回廊**外侧**一格：最后一级台阶顶面 416 cm 与回廊楼板齐平，导航 `partial=no` 可直接从大厅走上 +4 m 回廊（台阶碰撞是 20 级轴对齐盒，每级 20 cm，低于 `AgentMaxStepHeight=35`）。
-- 实测：`rooms=4(154 cells) atrium=6x6 doors=9 stairs=8`、`Upper mezzanine nav: ok`、`Stair mid nav: ok`、`Mezzanine path: partial=no`、`Arena ready attempts=1`。
+- 实测（连续 6 个随机 seed）：`rooms=3–4`、`doors=4–9`、`stairs=8`、`atrium=6x6–7x7`、`Upper mezzanine nav: ok`、`Stair mid nav: ok`、`Mezzanine path: partial=no`、`Arena ready attempts=1`。
 
 **调试**
 
