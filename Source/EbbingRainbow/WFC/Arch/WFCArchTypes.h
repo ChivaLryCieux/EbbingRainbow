@@ -81,6 +81,12 @@ struct FArchStair
 	int32 X = 0;
 	int32 Y = 0;
 	FName Tile = NAME_None;
+
+	/**
+	 * 上行方向 (plan 空间): 0=+Y 1=+X 2=-Y 3=-X。
+	 * (X, Y) 是楼梯的**底部**格, 顶部格 = (X,Y) 沿 Dir 前进一格。
+	 */
+	int32 Dir = 0;
 };
 
 /** Complete macro plan produced by the space grammar. */

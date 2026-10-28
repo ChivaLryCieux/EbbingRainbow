@@ -118,16 +118,36 @@ void AWFC3DArenaGenerator_Atrium::AddStairs(const FArchPlan& Plan)
 	Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Comp->SetCanEverAffectNavigation(false);
 
+	// 楼梯: 4 m 宽 x 8 m 长, 按 Dir 旋转 (0=+Y 1=+X 2=-Y 3=-X)
+	// 网格原点在局部 (0,0) 角上, 沿局部 +X/+Y 展开, 所以先把「脚点」
+	// 换算到 2x1 格的足迹中心, 再按朝向反推原点位置。
 	for (const FArchStair& S : Plan.Stairs)
 	{
-		// The FBX import flips Y, so yaw 180 makes the stair rise toward -Y
-		// (north) and places its footprint in [X, X+1] x [Y-1, Y] cells.
-		const FVector Location(
-			static_cast<float>(S.X) * CellSize + CellSize,
-			static_cast<float>(GridH - S.Y) * CellSize,
-			0.0f);
+		const float DirX[4] = { 0.0f, 1.0f, 0.0f, -1.0f };
+		const float DirY[4] = { 1.0f, 0.0f, -1.0f, 0.0f };
+		const float Yaw[4] = { 180.0f, 270.0f, 0.0f, 90.0f };
+		const int32 D = FMath::Clamp(S.Dir, 0, 3);
+
+		// 底部格中心 (世界)
+		const FVector2D BottomCenter(
+			(static_cast<float>(S.X) + 0.5f) * CellSize,
+			(static_cast<float>(GridH - S.Y) - 0.5f) * CellSize);
+		// 世界方向: plan +Y = 世界 -Y
+		const FVector2D DirWorld(DirX[D], -DirY[D]);
+		const FVector2D Center = BottomCenter + DirWorld * (CellSize * 0.5f);
+
+		const float Rad = FMath::DegreesToRadians(Yaw[D]);
+		const float CosY = FMath::Cos(Rad);
+		const float SinY = FMath::Sin(Rad);
+		// R * (200, 400)
+		const FVector2D Offset(
+			CellSize * 0.5f * CosY - CellSize * SinY,
+			CellSize * 0.5f * SinY + CellSize * CosY);
+		const FVector2D Origin = Center - Offset;
+
 		Comp->AddInstance(
-			FTransform(FRotator(0.0f, 180.0f, 0.0f), Location, FVector(1.0f)),
+			FTransform(FRotator(0.0f, Yaw[D], 0.0f),
+				FVector(Origin.X, Origin.Y, 0.0f), FVector(1.0f)),
 			false);
 	}
 }
@@ -231,54 +251,50 @@ void AWFC3DArenaGenerator_Atrium::BuildCollision(const FArchPlan& Plan)
 		}
 	}
 
-	// Stair ramps: one invisible walkable slab per stair, plus a 1 m top
-	// landing and side rails. The visual stair mesh itself has no collision.
-	// 20 steps x 35 cm = 700 cm of run, then a 100 cm flat top landing.
-	constexpr float StairRun = 700.0f;
+	// 楼梯碰撞: 用一串轴对齐台阶盒铺出可走坡道。
+	// 台阶盒是「不旋转的 HISM 实例」, 导航系统能稳定烘焙 (旋转过的斜坡曾出现
+	// 烘焙不出来的问题); 台阶高 20 cm, 远低于 AgentMaxStepHeight。
+	// 地面面层在 z=16, 夹层面层在 z=416, 所以整段抬升 400 cm。
 	constexpr float StairRise = 400.0f;
-	const float StairLen = FMath::Sqrt(StairRun * StairRun + StairRise * StairRise);
-	// The slab is long along Y, so the slope is a roll about X (pitch would
-	// tilt the 4 m width instead of the 8 m run).
-	const float StairRoll = FMath::RadiansToDegrees(FMath::Atan2(StairRise, StairRun));
+	constexpr float StairRun = 800.0f;
+	constexpr int32 StairSteps = 20;
+	const float StepRun = StairRun / StairSteps;
+	const float StepRise = StairRise / StairSteps;
 
 	for (const FArchStair& S : Plan.Stairs)
 	{
-		const float BaseX = static_cast<float>(S.X) * CellSize;
-		const float BaseY = static_cast<float>(GridH - S.Y) * CellSize;
+		const float DirX[4] = { 0.0f, 1.0f, 0.0f, -1.0f };
+		const float DirY[4] = { 1.0f, 0.0f, -1.0f, 0.0f };
+		const int32 D = FMath::Clamp(S.Dir, 0, 3);
 
-		// Ramp from (BaseY, z=16) up to (BaseY-800, z=416), as a dedicated
-		// StaticMeshComponent: rotated HISM instances did not generate navmesh
-		// reliably, while unrotated HISM slabs did.
-		UStaticMeshComponent* Ramp = NewObject<UStaticMeshComponent>(
-			this, *FString::Printf(TEXT("StairRamp_%d"), StairRamps.Num()));
-		Ramp->SetupAttachment(GetRootComponent());
-		Ramp->SetStaticMesh(Cube);
-		Ramp->SetMobility(EComponentMobility::Movable);
-		Ramp->SetRelativeLocation(FVector(BaseX + 200.0f, BaseY - 350.0f, 216.0f));
-		Ramp->SetRelativeRotation(FRotator(0.0f, 0.0f, StairRoll));
-		Ramp->SetRelativeScale3D(FVector(4.0f, StairLen / 100.0f, 0.2f));
-		Ramp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-		Ramp->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
-		Ramp->SetCanEverAffectNavigation(true);
-		Ramp->SetVisibility(false);
-		Ramp->RegisterComponent();
-		StairRamps.Add(Ramp);
+		const FVector2D BottomCenter(
+			(static_cast<float>(S.X) + 0.5f) * CellSize,
+			(static_cast<float>(GridH - S.Y) - 0.5f) * CellSize);
+		const FVector2D DirWorld(DirX[D], -DirY[D]);
+		// 从底部格的后缘开始, 走满 2 格
+		const FVector2D BackEdge = BottomCenter - DirWorld * (CellSize * 0.5f);
 
-		// Low side rails follow the same 700 cm run; the 100 cm top landing is
-		// open left/right so units can step onto the mezzanine.
-		for (float SideX : { BaseX + 10.0f, BaseX + 390.0f })
+		const bool bAlongY = (D == 0 || D == 2);
+		for (int32 I = 0; I < StairSteps; ++I)
 		{
+			const float T = (static_cast<float>(I) + 0.5f) * StepRun;
+			const FVector2D Pos = BackEdge + DirWorld * T;
+			const float Top = 16.0f + (static_cast<float>(I) + 1.0f) * StepRise;
+			const FVector Scale = bAlongY
+				? FVector(4.0f, StepRun / 100.0f, Top / 100.0f)
+				: FVector(StepRun / 100.0f, 4.0f, Top / 100.0f);
 			CollisionHISM->AddInstance(FTransform(
-				FRotator(0.0f, 0.0f, StairRoll),
-				FVector(SideX, BaseY - 350.0f, 216.0f),
-				FVector(0.2f, StairLen / 100.0f, 1.0f)), false);
+				FRotator::ZeroRotator,
+				FVector(Pos.X, Pos.Y, Top * 0.5f),
+				Scale), false);
 		}
 
-		// 1 m top landing at z=400, flush with the mezzanine slab.
+		// 顶部 1 格平台, 与夹层面层齐平 (z=416 顶面)
+		const FVector2D TopCenter = BottomCenter + DirWorld * (CellSize * 0.5f);
 		CollisionHISM->AddInstance(FTransform(
 			FRotator::ZeroRotator,
-			FVector(BaseX + 200.0f, BaseY - 750.0f, 408.0f),
-			FVector(4.0f, 1.0f, 0.16f)), false);
+			FVector(TopCenter.X, TopCenter.Y, 408.0f),
+			FVector(4.0f, 4.0f, 0.16f)), false);
 	}
 }
 
@@ -289,14 +305,6 @@ void AWFC3DArenaGenerator_Atrium::ClearGenerated()
 	{
 		CollisionHISM->ClearInstances();
 	}
-	for (TObjectPtr<UStaticMeshComponent>& Ramp : StairRamps)
-	{
-		if (Ramp)
-		{
-			Ramp->DestroyComponent();
-		}
-	}
-	StairRamps.Reset();
 }
 
 bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
@@ -322,14 +330,18 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 		return false;
 	}
 
-	// The L1 walkway beside the first stair is the stable upper-level probe;
-	// its X depends on the randomized aisle width.
+	// 上层导航探针: 取第一部楼梯的**顶部格**中心 (那里必定是回廊)
 	if (Plan.Stairs.Num() > 0)
 	{
+		static const int32 StairDX[4] = { 0, 1, 0, -1 };
+		static const int32 StairDY[4] = { 1, 0, -1, 0 };
 		const FArchStair& S = Plan.Stairs[0];
+		const int32 D = FMath::Clamp(S.Dir, 0, 3);
+		const int32 TopX = S.X + StairDX[D];
+		const int32 TopY = S.Y + StairDY[D];
 		LastResult.UpperNavProbe = FVector(
-			static_cast<float>(S.X - 1) * CellSize + 200.0f,
-			static_cast<float>(GridH - (S.Y + 1)) * CellSize - 200.0f,
+			(static_cast<float>(TopX) + 0.5f) * CellSize,
+			(static_cast<float>(GridH - TopY) - 0.5f) * CellSize,
 			420.0f);
 	}
 

@@ -2,6 +2,19 @@
 
 #include "WFCArchGrammar.h"
 #include "WFCKitTileTable.h"
+#include "HAL/IConsoleManager.h"
+
+/** WFC 竞技场布局风格 (0=旧房间图 1=十字中庭 2=Blackshard 大厅) */
+static TAutoConsoleVariable<int32> CVarArchLayout(
+	TEXT("ER.ArchLayout"), 2,
+	TEXT("WFC 竞技场布局: 0=旧房间图 1=十字中庭 2=Blackshard 大厅"),
+	ECVF_Cheat);
+
+/** 把生成出来的平面图打到日志 (调试用) */
+static TAutoConsoleVariable<int32> CVarArchDump(
+	TEXT("ER.ArchDump"), 0,
+	TEXT(">0 时把 WFC 竞技场的平面图打印到日志"),
+	ECVF_Cheat);
 
 namespace
 {
@@ -1240,16 +1253,783 @@ bool FWFCArchGrammar::ResolveWallTile(
 		return true;
 	}
 
+	// ---- Blackshard 大厅布局 ------------------------------------------------
+	//
+	//   76 x 76 m 的整块基座, 由内到外是三层:
+	//     · 中心 24-28 m 见方的双层挑空中庭, 地面铺深色金属, 正中是十字天桥
+	//     · 中庭外 1 格宽、+4 m 高的环形回廊, 回廊外侧一圈 4 m 方柱柱廊
+	//     · 四向各一部 8 m 宽的纪念性楼梯, 从大厅地面接上回廊
+	//     · 最外圈是 24 m 见方的大厅/房间; 房间朝中庭的转角被削成阶梯状
+	//       45° 斜面, 因此是 L 形而不是方块 (黑石建筑的体块感)
+	//   楼梯用 FArchStair::Dir 表示上行方向 (0=+Y 1=+X 2=-Y 3=-X), 生成器按
+	//   方向旋转模型, 并用一串台阶碰撞盒铺出可走坡道。
+
+	/** 一条连续的可开门边段: 固定行/列 + 沿边起止 */
+	struct FDoorRun
+	{
+		int32 Side = 0;
+		int32 Fixed = 0;
+		int32 Start = 0;
+		int32 Len = 0;
+	};
+
+	/** 把房间的一格挖成大厅地面 (用于削角 / 开缺口) */
+	static void CarveRoomCell(FArchPlan& Plan, int32 X, int32 Y, int32 RoomId)
+	{
+		if (!Plan.IsValid(X, Y))
+		{
+			return;
+		}
+		FArchCell& C = Plan.Cell(X, Y);
+		if (C.Kind == EArchCellKind::Room && C.Space == RoomId)
+		{
+			C.Kind = EArchCellKind::Corridor;
+			C.Space = INDEX_NONE;
+		}
+	}
+
+	/** 沿房间临大厅的边开 1-3 个 2 格宽门洞, 返回实际门格数 */
+	static int32 PlaceWideDoors(
+		FArchPlan& Plan, const FArchRect& Rect, int32 RoomId, FRandomStream& Rng, int32 MaxDoors)
+	{
+		TMap<int32, TArray<int32>> ByKey;
+		for (int32 Y = Rect.Y0; Y <= Rect.Y1; ++Y)
+		{
+			for (int32 X = Rect.X0; X <= Rect.X1; ++X)
+			{
+				const FArchCell& C = Plan.Cell(X, Y);
+				if (C.Kind != EArchCellKind::Room || C.Space != RoomId)
+				{
+					continue;
+				}
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					const int32 NX = X + DX[Side];
+					const int32 NY = Y + DY[Side];
+					if (!Plan.IsValid(NX, NY))
+					{
+						continue;
+					}
+					if (Plan.Cell(NX, NY).Kind != EArchCellKind::Corridor)
+					{
+						continue;
+					}
+					const bool bHorizontal = (Side == SideN || Side == SideS);
+					ByKey.FindOrAdd(Side * 100 + (bHorizontal ? Y : X))
+						.Add(bHorizontal ? X : Y);
+				}
+			}
+		}
+		if (ByKey.Num() == 0)
+		{
+			return 0;
+		}
+
+		TArray<FDoorRun> Runs;
+		for (const TPair<int32, TArray<int32>>& Pair : ByKey)
+		{
+			TArray<int32> List = Pair.Value;
+			List.Sort();
+			int32 RunStart = 0;
+			for (int32 K = 1; K <= List.Num(); ++K)
+			{
+				if (K == List.Num() || List[K] != List[K - 1] + 1)
+				{
+					FDoorRun Run;
+					Run.Side = Pair.Key / 100;
+					Run.Fixed = Pair.Key % 100;
+					Run.Start = List[RunStart];
+					Run.Len = K - RunStart;
+					Runs.Add(Run);
+					RunStart = K;
+				}
+			}
+		}
+		for (int32 K = Runs.Num() - 1; K > 0; --K)
+		{
+			Runs.Swap(K, Rng.RandRange(0, K));
+		}
+
+		auto ApplyDoor = [&Plan](int32 X, int32 Y, int32 Side) -> bool
+		{
+			FArchCell& C = Plan.Cell(X, Y);
+			if (C.Kind != EArchCellKind::Room || HasAnySpecial(C))
+			{
+				return false;
+			}
+			C.WallMask &= ~(1 << Side);
+			C.Special[Side] = TEXT('d');
+			const int32 NX = X + DX[Side];
+			const int32 NY = Y + DY[Side];
+			if (Plan.IsValid(NX, NY))
+			{
+				Plan.Cell(NX, NY).WallMask &= ~(1 << Opp[Side]);
+			}
+			return true;
+		};
+
+		const int32 WantDoors = (Runs.Num() >= 2)
+			? Rng.RandRange(2, FMath::Max(2, FMath::Min(MaxDoors, Runs.Num())))
+			: 1;
+		int32 Placed = 0;
+		for (int32 R = 0; R < Runs.Num() && Placed < WantDoors; ++R)
+		{
+			const FDoorRun& Run = Runs[R];
+			const int32 Width = (Run.Len >= 2) ? 2 : 1;
+			const int32 MaxStart = Run.Start + Run.Len - Width;
+			const int32 Start = (MaxStart > Run.Start)
+				? Rng.RandRange(Run.Start, MaxStart) : Run.Start;
+			for (int32 K = 0; K < Width; ++K)
+			{
+				const bool bHorizontal = (Run.Side == SideN || Run.Side == SideS);
+				const int32 X = bHorizontal ? (Start + K) : Run.Fixed;
+				const int32 Y = bHorizontal ? Run.Fixed : (Start + K);
+				if (ApplyDoor(X, Y, Run.Side))
+				{
+					++Placed;
+				}
+			}
+		}
+		return Placed;
+	}
+
+	static bool BuildBlackshardPlan(int32 Seed, FArchPlan& Plan, FRandomStream& Rng)
+	{
+		constexpr int32 W = 19;
+		constexpr int32 H = 19;
+
+		// ---------- 1) 十字大厅 + 中央中庭 ----------
+		const int32 ArmW = Rng.RandRange(4, 5);          // 16 / 20 m 宽的大厅
+		// 中庭 24-28 m 见方: 比大厅更宽, 是整场的视觉中心
+		const int32 AtriumSize = FMath::Clamp(ArmW + 2 + Rng.RandRange(0, 1), 6, 7);
+		const int32 Ax0 = 9 - AtriumSize / 2;
+		const int32 Ax1 = Ax0 + AtriumSize - 1;
+		const int32 Ay0 = Ax0;
+		const int32 Ay1 = Ax1;
+
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				C.Kind = EArchCellKind::Corridor;
+				C.Space = INDEX_NONE;
+			}
+		}
+		for (int32 Y = Ay0; Y <= Ay1; ++Y)
+		{
+			for (int32 X = Ax0; X <= Ax1; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				C.Kind = EArchCellKind::Atrium;
+				C.Space = 0;
+			}
+		}
+
+		// ---------- 2) 四个象限的大房间 ----------
+		FArchRect Quads[4];
+		Quads[0] = FArchRect(0, 0, Ax0 - 1, Ay0 - 1);
+		Quads[1] = FArchRect(Ax1 + 1, 0, W - 1, Ay0 - 1);
+		Quads[2] = FArchRect(0, Ay1 + 1, Ax0 - 1, H - 1);
+		Quads[3] = FArchRect(Ax1 + 1, Ay1 + 1, W - 1, H - 1);
+
+		int32 RoomCount = 0;
+		TArray<FArchRect> Plazas;
+		for (int32 Q = 0; Q < 4; ++Q)
+		{
+			const FArchRect& R = Quads[Q];
+			if (R.NumX() < 4 || R.NumY() < 4)
+			{
+				continue;
+			}
+			// 最多一个象限留作开放广场 (再多就显得空), 其余都是封闭大房间
+			if (Plazas.Num() == 0 && Rng.FRand() > 0.78f)
+			{
+				Plazas.Add(R);
+				continue;
+			}
+
+			const int32 Id = RoomCount++;
+			for (int32 Y = R.Y0; Y <= R.Y1; ++Y)
+			{
+				for (int32 X = R.X0; X <= R.X1; ++X)
+				{
+					FArchCell& C = Plan.Cell(X, Y);
+					C.Kind = EArchCellKind::Room;
+					C.Space = Id;
+				}
+			}
+
+			FArchRoom Room;
+			Room.Id = Id;
+			Room.Rect = R;
+			Room.Theme = FName(ThemeNames[Rng.RandRange(0, 3)]);
+			Room.Size = FName(*FString::Printf(TEXT("%dx%d"), R.NumX(), R.NumY()));
+			Plan.Rooms.Add(Room);
+
+			// 朝中庭的转角削成阶梯状 45° 斜面: 房间从方块变成 L 形
+			const int32 InnerX = (R.X0 > Ax1) ? R.X0 : R.X1;
+			const int32 InnerY = (R.Y0 > Ay1) ? R.Y0 : R.Y1;
+			const int32 Sx = (InnerX == R.X0) ? 1 : -1;
+			const int32 Sy = (InnerY == R.Y0) ? 1 : -1;
+			const int32 MaxLevels = FMath::Clamp(FMath::Min(R.NumX(), R.NumY()) - 3, 1, 3);
+			// 至少削两层, 否则缺口被中庭回廊吃掉, 看不出斜面
+			const int32 Levels = (MaxLevels >= 2) ? Rng.RandRange(2, MaxLevels) : MaxLevels;
+			for (int32 Level = 0; Level < Levels; ++Level)
+			{
+				for (int32 K = 0; K <= Level; ++K)
+				{
+					CarveRoomCell(Plan, InnerX + Sx * (Level - K), InnerY + Sy * K, Id);
+				}
+			}
+		}
+
+		// 中庭外圈留出 1 格宽的连续回廊带: 这样 +4 m 的回廊能绕着中庭走一圈,
+		// 而不是被四角的房间切断。房间因此退到回廊后面。
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				const int32 Dx = (X < Ax0) ? (Ax0 - X) : ((X > Ax1) ? (X - Ax1) : 0);
+				const int32 Dy = (Y < Ay0) ? (Ay0 - Y) : ((Y > Ay1) ? (Y - Ay1) : 0);
+				if (FMath::Max(Dx, Dy) != 1)
+				{
+					continue;
+				}
+				FArchCell& C = Plan.Cell(X, Y);
+				if (C.Kind == EArchCellKind::Room)
+				{
+					C.Kind = EArchCellKind::Corridor;
+					C.Space = INDEX_NONE;
+				}
+			}
+		}
+
+		// ---------- 3) 墙体: 只有房间画自己的墙 ----------
+		// 大厅/中庭不画墙, 否则相邻两格会在同一条边上各画一片墙 (共面闪烁)。
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				C.WallMask = 0;
+				C.Special[0] = C.Special[1] = C.Special[2] = C.Special[3] = 0;
+
+				const bool bRoom = C.Kind == EArchCellKind::Room;
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					const int32 NX = X + DX[Side];
+					const int32 NY = Y + DY[Side];
+					if (!Plan.IsValid(NX, NY))
+					{
+						C.WallMask |= (1 << Side);
+						continue;
+					}
+					const FArchCell& N = Plan.Cell(NX, NY);
+					if (N.Kind == EArchCellKind::Void)
+					{
+						C.WallMask |= (1 << Side);
+						continue;
+					}
+					if (bRoom && (N.Kind != EArchCellKind::Room || N.Space != C.Space))
+					{
+						C.WallMask |= (1 << Side);
+					}
+				}
+			}
+		}
+
+		// ---------- 4) 2 格宽 (8 m) 门洞 ----------
+		int32 TotalDoors = 0;
+		for (FArchRoom& Room : Plan.Rooms)
+		{
+			const int32 Doors = PlaceWideDoors(Plan, Room.Rect, Room.Id, Rng, 3);
+			TotalDoors += Doors;
+			for (int32 Y = Room.Rect.Y0; Y <= Room.Rect.Y1 && Room.DoorSide == 0 && Room.DoorX == 0; ++Y)
+			{
+				for (int32 X = Room.Rect.X0; X <= Room.Rect.X1; ++X)
+				{
+					const FArchCell& C = Plan.Cell(X, Y);
+					if (C.Kind != EArchCellKind::Room || C.Space != Room.Id)
+					{
+						continue;
+					}
+					for (int32 Side = 0; Side < 4; ++Side)
+					{
+						if (C.Special[Side] == TEXT('d'))
+						{
+							Room.DoorX = X;
+							Room.DoorY = Y;
+							Room.DoorSide = Side;
+						}
+					}
+				}
+			}
+		}
+
+		// ---------- 5) 回廊 / 天桥 / 楼梯 ----------
+		auto DistToAtrium = [&](int32 X, int32 Y) -> int32
+		{
+			const int32 Dx = (X < Ax0) ? (Ax0 - X) : ((X > Ax1) ? (X - Ax1) : 0);
+			const int32 Dy = (Y < Ay0) ? (Ay0 - Y) : ((Y > Ay1) ? (Y - Ay1) : 0);
+			return FMath::Max(Dx, Dy);
+		};
+
+		// +4 m 回廊: 中庭外一圈
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				if (DistToAtrium(X, Y) != 1)
+				{
+					continue;
+				}
+				FArchCell& C = Plan.Cell(X, Y);
+				if (C.Kind != EArchCellKind::Corridor)
+				{
+					continue;
+				}
+				C.UFloor = FName(TEXT("floor_plate"));
+			}
+		}
+
+		// 天桥: 中庭正中 2-3 格宽, 十字交叉, 是全场的高点
+		const int32 MidX = (Ax0 + Ax1) / 2;
+		const int32 MidY = (Ay0 + Ay1) / 2;
+		const int32 BridgeW = Rng.RandRange(2, 3);
+		const int32 BridgeX0 = MidX - 1;
+		const int32 BridgeY0 = MidY - 1;
+		for (int32 Y = Ay0; Y <= Ay1; ++Y)
+		{
+			for (int32 X = BridgeX0; X < BridgeX0 + BridgeW; ++X)
+			{
+				if (Plan.IsValid(X, Y))
+				{
+					Plan.Cell(X, Y).UFloor = FName(TEXT("floor_plate_b"));
+				}
+			}
+		}
+		for (int32 X = Ax0; X <= Ax1; ++X)
+		{
+			for (int32 Y = BridgeY0; Y < BridgeY0 + BridgeW; ++Y)
+			{
+				if (Plan.IsValid(X, Y))
+				{
+					Plan.Cell(X, Y).UFloor = FName(TEXT("floor_plate_b"));
+				}
+			}
+		}
+
+		// 栏杆 / 女儿墙
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				if (C.UFloor.IsNone())
+				{
+					continue;
+				}
+
+				TArray<int32> VoidSides;
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					const int32 NX = X + DX[Side];
+					const int32 NY = Y + DY[Side];
+					if (!Plan.IsValid(NX, NY))
+					{
+						continue;
+					}
+					const FArchCell& N = Plan.Cell(NX, NY);
+					// 挑空中庭, 或者通高的房间: 都要栏杆, 否则会从回廊掉下去
+					if ((N.Kind == EArchCellKind::Atrium && N.UFloor.IsNone())
+						|| N.Kind == EArchCellKind::Room)
+					{
+						VoidSides.Add(Side);
+					}
+				}
+				for (int32 I = 0; I < VoidSides.Num() && I < 2; ++I)
+				{
+					FName Rail;
+					FString Pat;
+					if (FWFCArchGrammar::ResolveWallTile(0, VoidSides[I], TEXT('h'), Rng, Rail, Pat)
+						&& Pat.Len() == 4 && Pat[VoidSides[I]] == TEXT('h'))
+					{
+						if (I == 0)
+						{
+							C.URailing = Rail;
+						}
+						else
+						{
+							C.URailing2 = Rail;
+						}
+					}
+				}
+
+				uint8 PerMask = 0;
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					if (IsPerimeterSide(Plan, X, Y, Side))
+					{
+						PerMask |= (1 << Side);
+					}
+				}
+				if (PerMask != 0)
+				{
+					FName Tile;
+					FString Pat;
+					if (FWFCArchGrammar::ResolveWallTile(PerMask, INDEX_NONE, 0, Rng, Tile, Pat))
+					{
+						C.UWall = Tile;
+					}
+				}
+			}
+		}
+
+		// 四向各一部 8 m 宽楼梯 (两格并排), 从大厅地面爬回廊
+		auto AddStairPair = [&](int32 X, int32 Y, int32 Dir)
+		{
+			for (int32 K = 0; K < 2; ++K)
+			{
+				FArchStair S;
+				S.Dir = Dir;
+				S.X = (Dir == 0 || Dir == 2) ? (X + K) : X;
+				S.Y = (Dir == 0 || Dir == 2) ? Y : (Y + K);
+				S.Tile = FName(TEXT("stair_core"));
+				if (Plan.IsValid(S.X, S.Y))
+				{
+					Plan.Stairs.Add(S);
+				}
+			}
+		};
+		// 南侧 (向上北行): 底 Ay0-2 -> 顶 Ay0-1
+		AddStairPair(MidX - 1, Ay0 - 2, 0);
+		// 北侧 (向上南行): 底 Ay1+2 -> 顶 Ay1+1
+		AddStairPair(MidX - 1, Ay1 + 2, 2);
+		// 西侧 (向上东行): 底 Ax0-2 -> 顶 Ax0-1
+		AddStairPair(Ax0 - 2, MidY - 1, 1);
+		// 东侧 (向上西行): 底 Ax1+2 -> 顶 Ax1+1
+		AddStairPair(Ax1 + 2, MidY - 1, 3);
+
+		// 回廊外侧的柱廊: 立在离中庭 2 格的厅内, 不占回廊本身 (回廊要能走通)
+		TArray<FIntPoint> StairCells;
+		for (const FArchStair& S : Plan.Stairs)
+		{
+			StairCells.Add(FIntPoint(S.X, S.Y));
+			StairCells.Add(FIntPoint(S.X + DX[S.Dir], S.Y + DY[S.Dir]));
+		}
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				if (DistToAtrium(X, Y) != 2 || ((X + Y) % 2) != 0)
+				{
+					continue;
+				}
+				FArchCell& C = Plan.Cell(X, Y);
+				if (C.Kind != EArchCellKind::Corridor || C.WallMask != 0 || HasAnySpecial(C))
+				{
+					continue;
+				}
+				if (StairCells.Contains(FIntPoint(X, Y)))
+				{
+					continue;
+				}
+				C.bColumn = true;
+			}
+		}
+
+		// 广场象限: 铺一片柱林, 免得留出 24x24 m 的空地
+		for (const FArchRect& R : Plazas)
+		{
+			for (int32 Y = R.Y0 + 1; Y <= R.Y1 - 1; Y += 2)
+			{
+				for (int32 X = R.X0 + 1; X <= R.X1 - 1; X += 2)
+				{
+					FArchCell& C = Plan.Cell(X, Y);
+					if (C.Kind == EArchCellKind::Corridor && C.WallMask == 0 && !HasAnySpecial(C)
+						&& !StairCells.Contains(FIntPoint(X, Y)))
+					{
+						C.bColumn = true;
+					}
+				}
+			}
+		}
+
+		// 大房间内部也立柱 (列柱厅): 沿房间长边每两格一根, 跳过门口和房间正中
+		for (const FArchRoom& Room : Plan.Rooms)
+		{
+			const FArchRect& R = Room.Rect;
+			if (R.NumX() < 5 || R.NumY() < 5)
+			{
+				continue;
+			}
+			const bool bAlongX = R.NumX() >= R.NumY();
+			const int32 Fixed = bAlongX ? ((R.Y0 + R.Y1) / 2) : ((R.X0 + R.X1) / 2);
+			for (int32 Y = R.Y0; Y <= R.Y1; ++Y)
+			{
+				for (int32 X = R.X0; X <= R.X1; ++X)
+				{
+					const int32 Perp = bAlongX ? Y : X;
+					const int32 Along = bAlongX ? X : Y;
+					if (Perp != Fixed || (Along % 2) != 0)
+					{
+						continue;
+					}
+					FArchCell& C = Plan.Cell(X, Y);
+					if (C.Kind != EArchCellKind::Room || C.Space != Room.Id)
+					{
+						continue;
+					}
+					if (C.WallMask != 0 || HasAnySpecial(C))
+					{
+						continue;
+					}
+					// 门口附近不立柱, 免得把 8 m 门洞堵住
+					bool bNearDoor = false;
+					for (int32 Side = 0; Side < 4 && !bNearDoor; ++Side)
+					{
+						const int32 NX = X + DX[Side];
+						const int32 NY = Y + DY[Side];
+						if (Plan.IsValid(NX, NY) && HasAnySpecial(Plan.Cell(NX, NY)))
+						{
+							bNearDoor = true;
+						}
+					}
+					if (bNearDoor)
+					{
+						continue;
+					}
+					C.bColumn = true;
+				}
+			}
+		}
+
+		// ---------- 6) 地面 / 道具 ----------
+		auto Hash = [](int32 X, int32 Y, int32 S)
+		{
+			return static_cast<uint32>(X * 73856093) ^ static_cast<uint32>(Y * 19349663)
+				^ static_cast<uint32>(S * 83492791);
+		};
+
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				if (C.Kind == EArchCellKind::Void)
+				{
+					continue;
+				}
+				const uint32 Hsh = Hash(X, Y, Seed);
+				C.CeilTile = NAME_None;
+
+				if (C.Kind == EArchCellKind::Room)
+				{
+					switch (Hsh % 4)
+					{
+					case 0: C.FloorTile = FName(TEXT("floor_plain")); break;
+					case 1: C.FloorTile = FName(TEXT("floor_plain_b")); break;
+					case 2: C.FloorTile = FName(TEXT("floor_plain_c")); break;
+					default: C.FloorTile = FName(TEXT("floor_plate")); break;
+					}
+				}
+				else if (C.Kind == EArchCellKind::Atrium)
+				{
+					// 中庭地面: 深色金属 + 少量发光带, 突出中心
+					C.FloorTile = (Hsh % 100 < 22)
+						? FName(TEXT("floor_light")) : FName(TEXT("floor_tech_b"));
+				}
+				else
+				{
+					// 大厅/走廊: 深色金属, 和房间的素色地面拉开对比
+					switch (Hsh % 5)
+					{
+					case 0: C.FloorTile = FName(TEXT("floor_tech")); break;
+					case 1: C.FloorTile = FName(TEXT("floor_tech_b")); break;
+					case 2: C.FloorTile = FName(TEXT("floor_plate_b")); break;
+					case 3: C.FloorTile = FName(TEXT("floor_grate")); break;
+					default: C.FloorTile = FName(TEXT("floor_tech")); break;
+					}
+				}
+
+				// 道具: 房间按主题摆 2-4 个; 大厅只在中庭边缘点缀
+				if (HasAnySpecial(C) || C.bColumn || C.PropTile != NAME_None)
+				{
+					continue;
+				}
+				if (C.Kind == EArchCellKind::Room && Hsh % 100 < 34)
+				{
+					const TCHAR* Props[] = { TEXT("prop_crate"), TEXT("prop_console"),
+						TEXT("prop_barrel"), TEXT("prop_pipes"), TEXT("prop_planter") };
+					C.PropTile = FName(Props[Hsh % 5]);
+				}
+			}
+		}
+
+		// 中庭中心的仪式感布置: 四根信标 + 四个花池
+		const FIntPoint CenterProps[] =
+		{
+			FIntPoint(MidX, MidY + 1), FIntPoint(MidX + 1, MidY),
+			FIntPoint(MidX, MidY - 1), FIntPoint(MidX - 1, MidY),
+			FIntPoint(Ax0 + 1, Ay0 + 1), FIntPoint(Ax1 - 1, Ay0 + 1),
+			FIntPoint(Ax0 + 1, Ay1 - 1), FIntPoint(Ax1 - 1, Ay1 - 1)
+		};
+		for (int32 I = 0; I < 8; ++I)
+		{
+			const FIntPoint& P = CenterProps[I];
+			if (!Plan.IsValid(P.X, P.Y))
+			{
+				continue;
+			}
+			FArchCell& C = Plan.Cell(P.X, P.Y);
+			if (C.Kind != EArchCellKind::Atrium || !C.UFloor.IsNone() || C.PropTile != NAME_None)
+			{
+				continue;
+			}
+			C.PropTile = FName((I < 4) ? TEXT("prop_beacon") : TEXT("prop_planter"));
+		}
+
+		// ---------- 7) 解析成实际 kit 瓦片 ----------
+		// 门/窗/栏杆可能没有精确匹配的墙板, ResolveWallTile 会退化成 p/o/w,
+		// 所以要把实际落下的图案解析回来, 让墙体和碰撞保持一致。
+		for (int32 Y = 0; Y < H; ++Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				FArchCell& C = Plan.Cell(X, Y);
+				if (C.bColumn)
+				{
+					C.WallTile = FName(TEXT("wall_oooo_column"));
+					C.WallMask = 0;
+					C.Special[0] = C.Special[1] = C.Special[2] = C.Special[3] = 0;
+					continue;
+				}
+
+				int32 SpecialSide = INDEX_NONE;
+				TCHAR SpecialCode = 0;
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					if (C.Special[Side])
+					{
+						SpecialSide = Side;
+						SpecialCode = C.Special[Side];
+						break;
+					}
+				}
+
+				FName Tile;
+				FString Pat;
+				if (!FWFCArchGrammar::ResolveWallTile(
+					C.WallMask, SpecialSide, SpecialCode, Rng, Tile, Pat))
+				{
+					Tile = FName(TEXT("wall_wwww"));
+					Pat = TEXT("wwww");
+				}
+				C.WallTile = Tile;
+				C.WallMask = 0;
+				C.Special[0] = C.Special[1] = C.Special[2] = C.Special[3] = 0;
+				for (int32 Side = 0; Side < 4; ++Side)
+				{
+					const TCHAR Ch = (Side < Pat.Len()) ? Pat[Side] : TEXT('o');
+					if (Ch == TEXT('w'))
+					{
+						C.WallMask |= (1 << Side);
+					}
+					else if (Ch == TEXT('d') || Ch == TEXT('p')
+						|| Ch == TEXT('n') || Ch == TEXT('h'))
+					{
+						C.Special[Side] = Ch;
+					}
+				}
+			}
+		}
+
+		Plan.AisleWidth = 0;
+
+		int32 DoorCells = 0;
+		int32 RoomCells = 0;
+		for (int32 I = 0; I < W * H; ++I)
+		{
+			const FArchCell& C = Plan.Cells[I];
+			if (C.Kind == EArchCellKind::Room)
+			{
+				++RoomCells;
+			}
+			if (HasAnySpecial(C))
+			{
+				++DoorCells;
+			}
+		}
+
+		UE_LOG(LogTemp, Log,
+			TEXT("[Arch] Blackshard seed=%d rooms=%d(%d cells) hall=%dx%d atrium=%dx%d doors=%d stairs=%d bridges=2."),
+			Seed, Plan.Rooms.Num(), RoomCells, ArmW, ArmW,
+			Ax1 - Ax0 + 1, Ay1 - Ay0 + 1, DoorCells, Plan.Stairs.Num());
+
+		// 调试: ER.ArchDump 1 或命令行 -ArchDump 时把平面图打到日志
+		if (CVarArchDump.GetValueOnGameThread() > 0
+			|| FParse::Param(FCommandLine::Get(), TEXT("ArchDump")))
+		{
+			UE_LOG(LogTemp, Log, TEXT("[ArchDump] 平面图 (Y 从北到南, X 从西到东):"));
+			for (int32 Y = H - 1; Y >= 0; --Y)
+			{
+				FString Row;
+				Row.Reserve(W);
+				for (int32 X = 0; X < W; ++X)
+				{
+					const FArchCell& C = Plan.Cell(X, Y);
+					TCHAR Ch = TEXT('.');
+					if (C.Kind == EArchCellKind::Atrium)
+					{
+						Ch = C.UFloor.IsNone() ? TEXT(' ') : TEXT('=');
+					}
+					else if (C.Kind == EArchCellKind::Room)
+					{
+						Ch = HasAnySpecial(C) ? TEXT('D') : TEXT('#');
+					}
+					else if (C.bColumn)
+					{
+						Ch = TEXT('o');
+					}
+					else if (!C.UFloor.IsNone())
+					{
+						Ch = TEXT('~');
+					}
+					Row.AppendChar(Ch);
+				}
+				UE_LOG(LogTemp, Log, TEXT("[ArchDump] %s"), *Row);
+			}
+			for (const FArchStair& S : Plan.Stairs)
+			{
+				UE_LOG(LogTemp, Log, TEXT("[ArchDump] stair (%d,%d) dir=%d"), S.X, S.Y, S.Dir);
+			}
+		}
+		return true;
+	}
+
 bool FWFCArchGrammar::Build(int32 Seed, FArchPlan& OutPlan)
 {
 	OutPlan.Init(GSize, GSize, Seed);
 	FRandomStream Rng(Seed ^ 0x9E3779B9);
 
-	// The room-and-corridor graph is now the primary macro layout (99.5%).
-	// The older cross atrium below stays as a rare fallback/style.
-	if (Rng.FRand() < 0.995f)
+	// 布局风格:
+	//   0 = 旧的「房间图」(10-12 个 2x2 小房间 + 1 格宽走廊)
+	//   1 = 旧的「十字中庭」(四角房间 + 中庭 + 夹层)
+	//   2 = Blackshard 大厅 (默认: 宽十字大厅 + 大房间 + 回廊天桥 + 纪念性楼梯)
+	const int32 Layout = CVarArchLayout.GetValueOnGameThread();
+
+	if (Layout == 0)
 	{
 		return BuildRoomGraphPlan(Seed, OutPlan, Rng);
+	}
+	if (Layout == 1)
+	{
+		// fall through to the legacy cross atrium below
+	}
+	else
+	{
+		return BuildBlackshardPlan(Seed, OutPlan, Rng);
 	}
 
 	// 1) Open hall: crossing + four arms + side aisles.

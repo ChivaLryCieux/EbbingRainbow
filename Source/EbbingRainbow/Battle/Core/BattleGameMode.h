@@ -147,4 +147,9 @@ private:
 	TArray<int32> PlayerPartyIndices;
 	FTimerHandle AutoWinTimerHandle;
 	FTimerHandle AutoReturnTimerHandle;
+	FTimerHandle AutoShotTimerHandle;
+
+	/** 调试截图用的临时俯瞰相机 */
+	UPROPERTY()
+	TObjectPtr<class ACameraActor> ShotCamera = nullptr;
 };

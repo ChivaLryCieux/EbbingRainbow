@@ -17,10 +17,16 @@
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "TimerManager.h"
+#include "UnrealClient.h"
+#include "Camera/CameraActor.h"
 
 /** 调试：>0 时战斗开始 4 秒后自动判胜，便于验证"战斗→航线图"回环。 */
 static TAutoConsoleVariable<int32> CVarAutoWin(
 	TEXT("ER.AutoWin"), 0, TEXT("调试：>0 时战斗开始 4 秒后自动判定胜利。"), ECVF_Cheat);
+
+/** 调试：>0 时竞技场就绪后自动拉远镜头截一张图，便于离线检查生成结果。 */
+static TAutoConsoleVariable<int32> CVarAutoShot(
+	TEXT("ER.AutoShot"), 0, TEXT("调试：>0 时竞技场就绪后自动截图到 Saved/Screenshots。"), ECVF_Cheat);
 
 ABattleGameMode::ABattleGameMode()
 {
@@ -175,6 +181,41 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 	}
 
 	bSetupComplete = true;
+
+	// 调试: ER.AutoShot > 0 (或命令行 -AutoShot) 时把镜头拉到全场中心并截一张图
+	if (CVarAutoShot.GetValueOnGameThread() > 0
+		|| FParse::Param(FCommandLine::Get(), TEXT("AutoShot")))
+	{
+		const FVector Center = Arena->GetActorLocation() + FVector(3800.0f, 3800.0f, 0.0f);
+		GetWorldTimerManager().SetTimer(AutoShotTimerHandle, FTimerDelegate::CreateWeakLambda(
+			this, [this, Center]()
+			{
+				// 临时俯瞰相机: 比战术镜头看得全, 便于离线检查整场构图
+				FActorSpawnParameters Params;
+				Params.SpawnCollisionHandlingOverride =
+					ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+				ACameraActor* ShotCam = GetWorld()->SpawnActor<ACameraActor>(
+					ACameraActor::StaticClass(),
+					Center + FVector(0.0f, 0.0f, 5600.0f),
+					FRotator(-58.0f, -32.0f, 0.0f),
+					Params);
+				if (ShotCam)
+				{
+					if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+					{
+						PC->SetViewTargetWithBlend(ShotCam, 0.0f);
+					}
+					ShotCamera = ShotCam;
+				}
+
+				GetWorldTimerManager().SetTimer(AutoShotTimerHandle, FTimerDelegate::CreateWeakLambda(
+					this, [this]()
+					{
+						FScreenshotRequest::RequestScreenshot(true);
+						UE_LOG(LogTemp, Log, TEXT("[Battle] AutoShot: 已请求截图。"));
+					}), 2.5f, false);
+			}), 1.5f, false);
+	}
 
 	// 创建并启动战斗管理器
 	BattleManager = NewObject<UBattleManager>(this, TEXT("BattleManager"));

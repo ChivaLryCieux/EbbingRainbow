@@ -42,9 +42,6 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> CollisionHISM = nullptr;
 
-	UPROPERTY(Transient)
-	TArray<TObjectPtr<UStaticMeshComponent>> StairRamps;
-
 	TMap<FName, TObjectPtr<UStaticMesh>> MeshCache;
 
 	static constexpr int32 GridW = 19;
