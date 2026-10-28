@@ -1702,14 +1702,14 @@ bool FWFCArchGrammar::ResolveWallTile(
 				}
 			}
 		};
-		// 南侧 (向上北行): 底 Ay0-2 -> 顶 Ay0-1
-		AddStairPair(MidX - 1, Ay0 - 2, 0);
-		// 北侧 (向上南行): 底 Ay1+2 -> 顶 Ay1+1
-		AddStairPair(MidX - 1, Ay1 + 2, 2);
-		// 西侧 (向上东行): 底 Ax0-2 -> 顶 Ax0-1
-		AddStairPair(Ax0 - 2, MidY - 1, 1);
-		// 东侧 (向上西行): 底 Ax1+2 -> 顶 Ax1+1
-		AddStairPair(Ax1 + 2, MidY - 1, 3);
+		// 南侧 (向上北行): 底 Ay0-3 -> 顶 Ay0-2, 最后一级正好与回廊楼板同高
+		AddStairPair(MidX - 1, Ay0 - 3, 0);
+		// 北侧 (向上南行): 底 Ay1+3 -> 顶 Ay1+2
+		AddStairPair(MidX - 1, Ay1 + 3, 2);
+		// 西侧 (向上东行): 底 Ax0-3 -> 顶 Ax0-2
+		AddStairPair(Ax0 - 3, MidY - 1, 1);
+		// 东侧 (向上西行): 底 Ax1+3 -> 顶 Ax1+2
+		AddStairPair(Ax1 + 3, MidY - 1, 3);
 
 		// 回廊外侧的柱廊: 立在离中庭 2 格的厅内, 不占回廊本身 (回廊要能走通)
 		TArray<FIntPoint> StairCells;

@@ -289,12 +289,8 @@ void AWFC3DArenaGenerator_Atrium::BuildCollision(const FArchPlan& Plan)
 				Scale), false);
 		}
 
-		// 顶部 1 格平台, 与夹层面层齐平 (z=416 顶面)
-		const FVector2D TopCenter = BottomCenter + DirWorld * (CellSize * 0.5f);
-		CollisionHISM->AddInstance(FTransform(
-			FRotator::ZeroRotator,
-			FVector(TopCenter.X, TopCenter.Y, 408.0f),
-			FVector(4.0f, 4.0f, 0.16f)), false);
+		// 最后一级台阶顶面正好 416, 与回廊楼板齐平, 不再另铺平台
+		// (铺平台会把楼梯上半段埋进楼板, 导航直接从台阶跳到楼板顶, 走不上去)
 	}
 }
 
@@ -330,19 +326,27 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 		return false;
 	}
 
-	// 上层导航探针: 取第一部楼梯的**顶部格**中心 (那里必定是回廊)
+	// 上层导航探针: 从第一部楼梯的顶部格再往前一格 (那一格必定是 +4 m 回廊)
 	if (Plan.Stairs.Num() > 0)
 	{
 		static const int32 StairDX[4] = { 0, 1, 0, -1 };
 		static const int32 StairDY[4] = { 1, 0, -1, 0 };
 		const FArchStair& S = Plan.Stairs[0];
 		const int32 D = FMath::Clamp(S.Dir, 0, 3);
-		const int32 TopX = S.X + StairDX[D];
-		const int32 TopY = S.Y + StairDY[D];
+		const int32 TopX = S.X + StairDX[D] * 2;
+		const int32 TopY = S.Y + StairDY[D] * 2;
 		LastResult.UpperNavProbe = FVector(
 			(static_cast<float>(TopX) + 0.5f) * CellSize,
 			(static_cast<float>(GridH - TopY) - 0.5f) * CellSize,
 			420.0f);
+
+		// 楼梯中段 (抬到台阶高度) 用于确认台阶碰撞真的烘焙进了 navmesh
+		const float MidX = (static_cast<float>(S.X) + 0.5f) * CellSize;
+		const float MidY = (static_cast<float>(GridH - S.Y) - 0.5f) * CellSize;
+		LastResult.StairMidProbe = FVector(
+			MidX + static_cast<float>(StairDX[D]) * CellSize * 0.5f,
+			MidY - static_cast<float>(StairDY[D]) * CellSize * 0.5f,
+			220.0f);
 	}
 
 	int32 InstanceCount = 0;

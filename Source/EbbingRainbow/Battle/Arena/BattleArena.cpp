@@ -6,6 +6,7 @@
 #include "Arch/WFC3DArenaGenerator_Atrium.h"
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
+#include "NavMesh/RecastNavMesh.h"
 #include "NavMesh/NavMeshBoundsVolume.h"
 #include "Components/BrushComponent.h"
 #include "EngineUtils.h"
@@ -192,6 +193,14 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 
 	// Mezzanine connectivity probe. Graph layouts are single-level for now and
 	// report a zero probe; cross layouts report the L1 walkway beside a stair.
+	if (ARecastNavMesh* Recast = Cast<ARecastNavMesh>(NavSys->GetDefaultNavDataInstance()))
+	{
+		UE_LOG(LogBattleArena, Log,
+			TEXT("Nav config: step=%.1f radius=%.1f height=%.1f cell=%.1f cellH=%.1f slope=%.1f"),
+			Recast->AgentMaxStepHeight, Recast->AgentRadius, Recast->AgentHeight,
+			Recast->CellSize, Recast->CellHeight, Recast->AgentMaxSlope);
+	}
+
 	if (!GenResult.UpperNavProbe.IsNearlyZero())
 	{
 		const FVector UpperProbe = GenResult.UpperNavProbe;
@@ -200,6 +209,17 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 			UpperProbe, UpperNav, FVector(200.0f, 200.0f, 200.0f));
 		UE_LOG(LogBattleArena, Log, TEXT("Upper mezzanine nav: %s at %s"),
 			bUpperNav ? TEXT("ok") : TEXT("MISSING"), *UpperNav.Location.ToString());
+
+		// 楼梯中段是否有 navmesh (没有就说明台阶碰撞没被烘焙进去)
+		if (!GenResult.StairMidProbe.IsNearlyZero())
+		{
+			FNavLocation StairNav;
+			const bool bStairNav = NavSys->ProjectPointToNavigation(
+				GenResult.StairMidProbe, StairNav, FVector(120.0f, 120.0f, 160.0f));
+			UE_LOG(LogBattleArena, Log, TEXT("Stair mid nav: %s at %s (probe %s)"),
+				bStairNav ? TEXT("ok") : TEXT("MISSING"),
+				*StairNav.Location.ToString(), *GenResult.StairMidProbe.ToString());
+		}
 
 		// Full connectivity probe from the nave floor to the reported L1 walkway.
 		if (UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(

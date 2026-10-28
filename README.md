@@ -188,7 +188,8 @@ ArenaHost->Generate(Request);
 - 中庭正中两条 8–12 m 宽的天桥十字交叉，四向各一部 8 m 宽的纪念性楼梯（`FArchStair::Dir` 支持 ±X/±Y 四个上行方向，模型按方向旋转，碰撞用 20 级台阶盒铺出可走坡道）；
 - 3–4 个 24 m 级大房间，朝中庭的转角削成阶梯状 45° 斜面（L 形而不是方块），每条临大厅的边开 1–3 个 2 格宽（8 m）门洞；
 - 至多一个象限留作柱林广场；房间内部沿长边每两格立一根方柱（列柱厅）。
-- 实测：`rooms=4(154 cells) atrium=6x6 doors=9 stairs=8`、`Upper mezzanine nav: ok`、`Arena ready attempts=1`。
+- 楼梯落点在回廊**外侧**一格：最后一级台阶顶面 416 cm 与回廊楼板齐平，导航 `partial=no` 可直接从大厅走上 +4 m 回廊（台阶碰撞是 20 级轴对齐盒，每级 20 cm，低于 `AgentMaxStepHeight=35`）。
+- 实测：`rooms=4(154 cells) atrium=6x6 doors=9 stairs=8`、`Upper mezzanine nav: ok`、`Stair mid nav: ok`、`Mezzanine path: partial=no`、`Arena ready attempts=1`。
 
 **调试**
 
@@ -201,4 +202,4 @@ ArenaHost->Generate(Request);
 1. **门洞统一为 2 格宽**：目前短边仍会退化成 1 格门，可把门洞改成“至少 2 格、必要时削掉相邻角”；
 2. **把回廊接进战斗逻辑**：给 L1 加射界/高度优势判定，让楼梯与天桥真正成为战术选择；
 3. **体块再分层**：大房间局部加 +4 m 平台或夹层，形成三级高差；
-4. **验收标准**：`rooms 3–4`、每间 ≥1 个门洞、`Upper mezzanine nav: ok`、`Arena ready` 一次通过，并保留随机 seed 的复现日志。
+4. **验收标准**：`rooms 3–4`、每间 ≥1 个门洞、`Upper mezzanine nav: ok`、`Mezzanine path: partial=no`、`Arena ready` 一次通过，并保留随机 seed 的复现日志。

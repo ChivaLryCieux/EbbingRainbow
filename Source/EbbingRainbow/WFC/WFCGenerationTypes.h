@@ -68,6 +68,10 @@ struct FWFCGenerationResult
 	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
 	FVector UpperNavProbe = FVector::ZeroVector;
 
+	/** 第一段楼梯中段的世界坐标探针 (调试: 检查台阶是否进了 navmesh) */
+	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
+	FVector StairMidProbe = FVector::ZeroVector;
+
 	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
 	int32 ModuleCount = 0;
 
