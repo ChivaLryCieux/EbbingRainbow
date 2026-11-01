@@ -19,7 +19,9 @@ public class EbbingRainbow : ModuleRules
 			"Slate",
 			"AssetRegistry",
 			"NavigationSystem",
-			"SlateCore"
+			"SlateCore",
+			// ShaderCore.h (AddShaderSourceDirectoryMapping) lives in RenderCore in UE5.8
+			"RenderCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

@@ -1,0 +1,441 @@
+// =============================================================================
+//  PainterlyCommon.ush
+//  Shared building blocks for digital concept art / thick paint (厚涂) look:
+//  - Directional stroke flow field with depth-guided atmospheric sweep
+//  - Multi-scale anisotropic faceted Kuwahara filter (palette knife & flat brush)
+//  - Edge dry-brush scumble & knife-edge highlight (枯笔飞白与刮刀边缘质感，非卡通描边)
+//  - Impasto relief with bristle striations & wet oil paint specular sheen
+//  - Chromatic vibration & pigment accentuation (色彩振荡与点彩提鲜)
+//  - Fine linen canvas & gesso tooth
+// =============================================================================
+#pragma once
+
+// Scene texture ids -- mirrors ESceneTextureId (Runtime/Engine/Public/MaterialSceneTextureId.h)
+#define PAINT_TEX_SCENE_COLOR  14   // PPI_PostProcessInput0
+#define PAINT_TEX_SCENE_DEPTH  1    // PPI_SceneDepth
+#define PAINT_TEX_WORLD_NORMAL 8    // PPI_WorldNormal
+
+#define PAINT_PI     3.14159265f
+#define PAINT_TWO_PI 6.28318531f
+
+// -----------------------------------------------------------------------------
+//  Small helpers
+// -----------------------------------------------------------------------------
+float Paint_Luma(float3 C)
+{
+	return dot(C, float3(0.2126f, 0.7152f, 0.0722f));
+}
+
+float4 Paint_SceneColor(float2 UV)
+{
+	return SceneTextureLookup(UV, PAINT_TEX_SCENE_COLOR, true);
+}
+
+float Paint_SceneDepth(float2 UV)
+{
+	return SceneTextureLookup(UV, PAINT_TEX_SCENE_DEPTH, false).r;
+}
+
+float3 Paint_SceneNormal(float2 UV)
+{
+	float3 N = SceneTextureLookup(UV, PAINT_TEX_WORLD_NORMAL, false).xyz;
+	float L = length(N);
+	return (L > 1.0e-5f) ? (N / L) : float3(0.0f, 0.0f, 1.0f);
+}
+
+// -----------------------------------------------------------------------------
+//  Hashing / procedural noise
+// -----------------------------------------------------------------------------
+float Paint_Hash21(float2 P)
+{
+	float3 P3 = frac(float3(P.xyx) * 0.1031f);
+	P3 += dot(P3, P3.yzx + 33.33f);
+	return frac((P3.x + P3.y) * P3.z);
+}
+
+float Paint_ValueNoise(float2 P)
+{
+	float2 I = floor(P);
+	float2 F = frac(P);
+	float2 U = F * F * (3.0f - 2.0f * F);
+
+	float A = Paint_Hash21(I + float2(0.0f, 0.0f));
+	float B = Paint_Hash21(I + float2(1.0f, 0.0f));
+	float C = Paint_Hash21(I + float2(0.0f, 1.0f));
+	float D = Paint_Hash21(I + float2(1.0f, 1.0f));
+
+	return lerp(lerp(A, B, U.x), lerp(C, D, U.x), U.y);
+}
+
+// Four octave fbm, normalised to 0..1
+float Paint_FBM4(float2 P)
+{
+	float Sum = 0.0f;
+	float Amp = 0.5f;
+
+	Sum += Amp * Paint_ValueNoise(P); P = P * 2.03f + 19.7f; Amp *= 0.5f;
+	Sum += Amp * Paint_ValueNoise(P); P = P * 2.03f + 19.7f; Amp *= 0.5f;
+	Sum += Amp * Paint_ValueNoise(P); P = P * 2.03f + 19.7f; Amp *= 0.5f;
+	Sum += Amp * Paint_ValueNoise(P);
+
+	return Sum / 0.9375f;
+}
+
+// Two octave fbm for brush-scale relief
+float Paint_FBM2(float2 P)
+{
+	float Sum = 0.0f;
+	float Amp = 0.5f;
+
+	Sum += Amp * Paint_ValueNoise(P); P = P * 2.03f + 19.7f; Amp *= 0.5f;
+	Sum += Amp * Paint_ValueNoise(P);
+
+	return Sum / 0.75f;
+}
+
+// -----------------------------------------------------------------------------
+//  Stroke flow field
+//  Blends local contrast edge tangents with a coherent low-frequency noise flow.
+//  In distant areas and the sky, it smoothly transitions into a sweeping
+//  atmospheric drag (classic concept art matte-painting directional pull).
+// -----------------------------------------------------------------------------
+struct FPaintFlow
+{
+	float2 Tangent;     // unit stroke direction
+	float2 Gradient;    // luma gradient
+	float  Confidence;  // 0 = flat / noise, 1 = strong edge alignment
+	float  Contrast;    // local luma range
+	float  Depth;       // scene depth
+};
+
+FPaintFlow Paint_BuildFlow(float2 UV, float2 Texel, float CenterLuma, float Radius, float FlowFreq, float Jitter)
+{
+	FPaintFlow F;
+
+	F.Depth = Paint_SceneDepth(UV);
+	float2 O = Texel * max(Radius, 0.5f);
+
+	float L00 = Paint_Luma(Paint_SceneColor(UV + float2(-O.x, -O.y)).rgb);
+	float L10 = Paint_Luma(Paint_SceneColor(UV + float2(0.0f, -O.y)).rgb);
+	float L20 = Paint_Luma(Paint_SceneColor(UV + float2(O.x, -O.y)).rgb);
+	float L01 = Paint_Luma(Paint_SceneColor(UV + float2(-O.x, 0.0f)).rgb);
+	float L21 = Paint_Luma(Paint_SceneColor(UV + float2(O.x, 0.0f)).rgb);
+	float L02 = Paint_Luma(Paint_SceneColor(UV + float2(-O.x, O.y)).rgb);
+	float L12 = Paint_Luma(Paint_SceneColor(UV + float2(0.0f, O.y)).rgb);
+	float L22 = Paint_Luma(Paint_SceneColor(UV + float2(O.x, O.y)).rgb);
+
+	float Gx = ((L20 + 2.0f * L21 + L22) - (L00 + 2.0f * L01 + L02)) * 0.125f;
+	float Gy = ((L02 + 2.0f * L12 + L22) - (L00 + 2.0f * L10 + L20)) * 0.125f;
+	F.Gradient = float2(Gx, Gy);
+
+	float LMax = max(max(max(L00, L10), max(L20, L01)), max(max(L21, L02), max(L12, L22)));
+	float LMin = min(min(min(L00, L10), min(L20, L01)), min(min(L21, L02), min(L12, L22)));
+	LMax = max(LMax, CenterLuma);
+	LMin = min(LMin, CenterLuma);
+	F.Contrast = max(LMax - LMin, 0.0f);
+
+	float Mag = length(F.Gradient);
+	float Rel = Mag / max(F.Contrast, 1.0e-4f);
+	F.Confidence = saturate(Rel * 1.25f) * smoothstep(0.005f, 0.040f, F.Contrast);
+
+	// Edge tangent = gradient rotated 90 degrees, double angle
+	float2 VEdge = float2(0.0f, 0.0f);
+	if (Mag > 1.0e-6f)
+	{
+		float2 TE = float2(-Gy, Gx) / Mag;
+		VEdge = float2(TE.x * TE.x - TE.y * TE.y, 2.0f * TE.x * TE.y);
+	}
+
+	// Coherent low frequency flow for flat surfaces
+	float N = Paint_FBM4(UV * FlowFreq + 3.7f);
+	float2 VFlow = float2(cos(N * PAINT_TWO_PI), sin(N * PAINT_TWO_PI));
+
+	// Distance / Sky atmospheric sweep (sweeping diagonal concept art pull ~68 deg)
+	float DistFactor = saturate((F.Depth - 8000.0f) / 45000.0f);
+	float2 VAtmo = normalize(float2(0.55f, 0.835f));
+	float2 VAtmoDouble = float2(VAtmo.x * VAtmo.x - VAtmo.y * VAtmo.y, 2.0f * VAtmo.x * VAtmo.y);
+	VFlow = lerp(VFlow, VAtmoDouble, DistFactor * 0.70f);
+
+	float2 V = lerp(VFlow, VEdge, F.Confidence);
+
+	// Jitter so the field is organic and hand-rendered
+	float J = (Paint_ValueNoise(UV * FlowFreq * 3.0f + 17.0f) - 0.5f) * Jitter * 2.0f;
+	float2 VJ = float2(cos(J), sin(J));
+	V = float2(V.x * VJ.x - V.y * VJ.y, V.x * VJ.y + V.y * VJ.x);
+
+	float Theta = 0.5f * atan2(V.y, V.x);
+	F.Tangent = float2(cos(Theta), sin(Theta));
+	return F;
+}
+
+// -----------------------------------------------------------------------------
+//  Anisotropic Faceted Kuwahara (Palette Knife & Flat Brush)
+//  Produces chunky, crisp planar facets that scale organically with depth.
+// -----------------------------------------------------------------------------
+float3 Paint_Kuwahara(
+	float2 UV,
+	float2 Texel,
+	float2 T,
+	float Radius,
+	float Stretch,
+	float Patchiness,
+	float Contrast,
+	float Depth,
+	float DepthScale)
+{
+	const int SECTORS = 8;
+	const int STEPS = 5;
+
+	// Scale stroke size with distance so sky and background mountains get
+	// grand, broad concept art strokes while foreground retains fine impasto
+	float DepthRatio = saturate((Depth - 3000.0f) / 45000.0f);
+	float EffRadius = max(Radius * (1.0f + DepthRatio * max(DepthScale, 0.0f)), 1.2f);
+
+	float2 N = float2(-T.y, T.x);
+	float2 AxisT = T * (EffRadius * (1.0f + Stretch * 1.85f));
+	float2 AxisN = N * (EffRadius * max(0.18f, 1.0f - Stretch * 0.82f));
+
+	float VarRef = max(Contrast * Contrast, 1.0e-5f);
+
+	float3 SumColor = float3(0.0f, 0.0f, 0.0f);
+	float SumWeight = 0.0f;
+
+	[unroll]
+	for (int S = 0; S < SECTORS; ++S)
+	{
+		float A = (float(S) + 0.5f) * (PAINT_TWO_PI / float(SECTORS));
+		float2 Dir = cos(A) * AxisT + sin(A) * AxisN;
+
+		float3 Mean = float3(0.0f, 0.0f, 0.0f);
+		float M1 = 0.0f;
+		float M2 = 0.0f;
+
+		[unroll]
+		for (int K = 0; K < STEPS; ++K)
+		{
+			float R = (float(K) + 0.55f) / float(STEPS);
+			float3 C = Paint_SceneColor(UV + Dir * Texel * R).rgb;
+			float L = Paint_Luma(C);
+			Mean += C;
+			M1 += L;
+			M2 += L * L;
+		}
+
+		float Inv = 1.0f / float(STEPS);
+		Mean *= Inv;
+		M1 *= Inv;
+		M2 *= Inv;
+
+		float Var = max(M2 - M1 * M1, 0.0f);
+		// Sharper sector exponent for decisive, chunky facetization (刮刀切割感)
+		float W = 1.0f / pow(1.0f + (Var / VarRef) * 7.5f, max(Patchiness, 0.4f));
+
+		SumColor += Mean * W;
+		SumWeight += W;
+	}
+
+	float3 Result = SumColor / max(SumWeight, 1.0e-5f);
+
+	// Directional flat-brush scumble: slightly blend a drag along the stroke tangent
+	float3 DragPos = Paint_SceneColor(UV + AxisT * Texel * 0.45f).rgb;
+	float3 DragNeg = Paint_SceneColor(UV - AxisT * Texel * 0.45f).rgb;
+	float3 DragColor = (DragPos + DragNeg) * 0.5f;
+
+	return lerp(Result, DragColor, 0.16f * saturate(Stretch));
+}
+
+// -----------------------------------------------------------------------------
+//  Impasto: Physical Paint Relief & Bristle Sheen
+//  Combines flat palette-knife facets with fine bristle grooves.
+// -----------------------------------------------------------------------------
+float Paint_BrushHeight(float2 PX, float2 T, float Scale, float BristleStrength, float Seed)
+{
+	float2 N = float2(-T.y, T.x);
+	float2 SP = float2(dot(PX, T), dot(PX, N));
+
+	// 1. Palette knife block & ridges
+	float2 Q = float2(SP.x * 0.016f, SP.y * 0.075f) * Scale + float2(Seed, Seed * 1.37f);
+	float HKnife = Paint_FBM2(Q);
+	HKnife = 1.0f - abs(2.0f * HKnife - 1.0f);
+
+	// 2. Bristle striations (fine parallel brush grooves along tangent)
+	float BristleWave = sin(SP.y * Scale * 0.48f + 2.0f * sin(SP.x * Scale * 0.08f + Seed));
+	float HBristle = BristleWave * BristleWave;
+
+	return lerp(HKnife, HBristle, saturate(BristleStrength) * 0.35f);
+}
+
+float3 Paint_ImpastoNormal(float2 PX, float2 T, float Scale, float BristleStrength, float Seed, float Relief)
+{
+	float H0 = Paint_BrushHeight(PX, T, Scale, BristleStrength, Seed);
+	float HX = Paint_BrushHeight(PX + float2(1.0f, 0.0f), T, Scale, BristleStrength, Seed);
+	float HY = Paint_BrushHeight(PX + float2(0.0f, 1.0f), T, Scale, BristleStrength, Seed);
+
+	float2 G = float2(HX - H0, HY - H0);
+	return normalize(float3(-G * Relief, 1.0f));
+}
+
+float3 Paint_ImpastoShade(
+	float3 Color,
+	float2 PX,
+	float2 T,
+	float Scale,
+	float BristleStrength,
+	float Seed,
+	float Angle,
+	float Strength,
+	float Relief)
+{
+	float2 L2 = float2(cos(Angle), sin(Angle)) * 1.4f;
+
+	float Hc = Paint_BrushHeight(PX, T, Scale, BristleStrength, Seed);
+	float Hp = Paint_BrushHeight(PX + L2, T, Scale, BristleStrength, Seed);
+	float Hn = Paint_BrushHeight(PX - L2, T, Scale, BristleStrength, Seed);
+
+	// Stationary slope derivative keeps overall exposure strictly conserved
+	float Slope = (Hp - Hn) * 0.5f;
+	float Shade = clamp(1.0f + Slope * Relief * 1.15f, 0.50f, 1.65f);
+
+	// Impasto paint specular sheen: crisp reflections on raised paint ridges
+	float Spec = pow(saturate(Hc), 8.0f) * saturate(Slope * 0.85f + 0.65f);
+
+	float3 OutColor = Color * lerp(1.0f, Shade, saturate(Strength));
+	OutColor += Spec * Strength * 0.16f * (0.22f + Paint_Luma(Color));
+	return OutColor;
+}
+
+// -----------------------------------------------------------------------------
+//  Dry-Brush Scumble & Silhouette Relief (枯笔飞白与刮刀边缘质感)
+//  Replaces artificial comic ink lines with authentic hand-painted edge breakup.
+// -----------------------------------------------------------------------------
+struct FEdgeDryBrush
+{
+	float DryEdge;    // 0..1 broken dry-brush edge
+	float KnifeRim;   // 0..1 specular catchlight on raised knife edge
+};
+
+FEdgeDryBrush Paint_EdgeStyling(
+	float2 UV,
+	float2 Texel,
+	float2 Gradient,
+	float Contrast,
+	float Width,
+	float ImpastoAngle,
+	float Seed,
+	float2 ScreenSize)
+{
+	FEdgeDryBrush Out;
+	float2 O = Texel * (1.2f + Width * 2.2f);
+
+	// Absolute contrast gate
+	float Gate = smoothstep(0.025f, 0.150f, Contrast);
+	float ColorEdge = saturate(length(Gradient) / max(Contrast, 1.0e-3f) * 1.25f) * Gate;
+
+	// Depth discontinuity
+	float DC = Paint_SceneDepth(UV);
+	float D0 = Paint_SceneDepth(UV + float2(-O.x, 0.0f));
+	float D1 = Paint_SceneDepth(UV + float2(O.x, 0.0f));
+	float D2 = Paint_SceneDepth(UV + float2(0.0f, -O.y));
+	float D3 = Paint_SceneDepth(UV + float2(0.0f, O.y));
+
+	float DMin = min(min(min(D0, D1), min(D2, D3)), DC);
+	float DMax = max(max(max(D0, D1), max(D2, D3)), DC);
+
+	float DepthEdge = 0.0f;
+	if (DMin < 1.0e5f && DMin > 1.0e-3f)
+	{
+		DepthEdge = saturate((DMax - DMin) / DMin * 7.5f);
+	}
+
+	// Normal break
+	float3 N0 = Paint_SceneNormal(UV + float2(-O.x, 0.0f));
+	float3 N1 = Paint_SceneNormal(UV + float2(O.x, 0.0f));
+	float3 N2 = Paint_SceneNormal(UV + float2(0.0f, -O.y));
+	float3 N3 = Paint_SceneNormal(UV + float2(0.0f, O.y));
+
+	float NormalEdge = saturate((1.0f - dot(N0, N1)) * 1.2f);
+	NormalEdge = max(NormalEdge, saturate((1.0f - dot(N2, N3)) * 1.2f));
+
+	float Edge = saturate(max(ColorEdge, max(DepthEdge, NormalEdge)));
+
+	// Dry-brush bristle breakup (枯笔飞白)
+	float2 PixelPos = UV * ScreenSize;
+	float DryNoise = Paint_ValueNoise(PixelPos * 0.14f + Seed) * 0.65f
+	               + Paint_ValueNoise(PixelPos * 0.35f - Seed * 2.0f) * 0.35f;
+
+	// Edge modulation: breaks into broken strokes rather than a solid black line
+	float DryThreshold = 0.70f - DryNoise * 0.35f;
+	Out.DryEdge = smoothstep(DryThreshold - 0.15f, DryThreshold + 0.15f, Edge) * smoothstep(0.20f, 0.75f, DryNoise);
+
+	// Palette knife rim highlight: paint catching light along grazing ridge
+	float2 LightDir2D = float2(cos(ImpastoAngle), sin(ImpastoAngle));
+	float2 EdgeNormal2D = normalize(Gradient + float2(1e-5f, 1e-5f));
+	Out.KnifeRim = Edge * saturate(dot(EdgeNormal2D, LightDir2D)) * (1.0f - Out.DryEdge * 0.5f);
+
+	return Out;
+}
+
+// -----------------------------------------------------------------------------
+//  Chromatic Vibration & Pigment Accents (色彩振荡与点彩提鲜)
+// -----------------------------------------------------------------------------
+float3 Paint_ChromaVibration(float3 Color, float2 PX, float2 T, float ChromaVibe, float Seed)
+{
+	// 1. Subtle warm/cool temperature oscillation along stroke direction
+	float Phase = sin(dot(PX, T) * 0.045f + Seed);
+	float3 Vibe = float3(Phase * 0.024f, Phase * 0.010f, -Phase * 0.028f) * ChromaVibe;
+	Color = max(Color + Vibe, 0.0f);
+
+	// 2. Selective pigment accentuation: boost vibrant pigments (turquoise/cyan/emerald/amber)
+	float MaxC = max(Color.r, max(Color.g, Color.b));
+	float MinC = min(Color.r, min(Color.g, Color.b));
+	float Sat = (MaxC - MinC) / max(MaxC, 1.0e-4f);
+
+	// Boost saturated mid-tones (the jewel-toned paint accents in matte painting)
+	float PigmentBoost = smoothstep(0.18f, 0.65f, Sat) * ChromaVibe * 0.45f;
+	Color = lerp(Color, Color * (1.0f + PigmentBoost), saturate(Sat * 2.0f));
+
+	return Color;
+}
+
+// -----------------------------------------------------------------------------
+//  Fine Canvas Tooth (亚麻画板与底纹)
+// -----------------------------------------------------------------------------
+float Paint_Canvas(float2 PX, float Scale, float Seed)
+{
+	float2 C = PX * Scale * 0.24f + Seed;
+
+	float W1 = sin(C.x * PAINT_PI + 1.8f * sin(C.y * 0.55f + Seed));
+	float W2 = sin(C.y * PAINT_PI + 1.8f * sin(C.x * 0.55f - Seed));
+	float Weave = W1 * W2;
+
+	float Grain = Paint_ValueNoise(PX * Scale * 0.55f + Seed * 3.1f) * 2.0f - 1.0f;
+
+	return Weave * 0.70f + Grain * 0.30f;
+}
+
+// -----------------------------------------------------------------------------
+//  Palette: quantise luminance only (keeps hue), then split-tone grade
+// -----------------------------------------------------------------------------
+float3 Paint_Quantize(float3 Color, float Steps, float Strength)
+{
+	float L = Paint_Luma(Color);
+	float QL = floor(L * Steps + 0.5f) / Steps;
+	float D = (QL - L) * saturate(Strength);
+	return Color + D;
+}
+
+float3 Paint_Grade(float3 Color, float Saturation, float Warmth, float Vignette, float2 UV)
+{
+	float L = Paint_Luma(Color);
+	Color = lerp(L.xxx, Color, Saturation);
+
+	float3 Warm = float3(1.055f, 1.010f, 0.930f);
+	float3 Cool = float3(0.930f, 0.980f, 1.065f);
+	float3 Tint = lerp(Cool, Warm, saturate(Warmth * 0.5f + 0.5f));
+	Color *= lerp(float3(1.0f, 1.0f, 1.0f), Tint, 0.55f);
+
+	float2 V = UV - 0.5f;
+	Color *= saturate(1.0f - Vignette * dot(V, V) * 1.25f);
+
+	return max(Color, 0.0f);
+}

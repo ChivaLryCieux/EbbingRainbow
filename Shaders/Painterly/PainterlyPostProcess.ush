@@ -1,0 +1,127 @@
+// =============================================================================
+//  PainterlyPostProcess.ush
+//  Entry point for the digital impasto / concept art painterly post process.
+//
+//  Usage (material graph, Post Process domain, blendable = After Tonemapping):
+//      Custom node, Include File Paths = /Project/Painterly/PainterlyPostProcess.ush
+//      Code: build FPaintParams from node inputs and call Paint_Main().
+// =============================================================================
+#pragma once
+
+#include "/Project/Painterly/PainterlyCommon.ush"
+
+struct FPaintParams
+{
+	float2 ScreenSize;
+
+	// Brush / flow
+	float BrushRadius;      // px, footprint of one brush dab
+	float StrokeStretch;    // 0..1, elongation of the filter along the flow
+	float Patchiness;       // 0.5..8, how hard the filter snaps to flat patches
+	float TensorRadius;     // px, gradient sampling radius for the flow field
+	float FlowFreq;         // noise frequency of the flat-area flow
+	float FlowJitter;       // 0..1, per stroke direction jitter
+	float DepthScale;       // scale stroke size into the distance (atmospheric brush sweeps)
+
+	// Impasto
+	float ImpastoStrength;  // 0..1
+	float ImpastoAngle;     // radians, screen space light direction
+	float ImpastoScale;     // brush relief density
+	float BristleStrength;  // 0..1, bristle groove striations
+
+	// Canvas
+	float CanvasStrength;   // 0..1
+
+	// Edge dry-brush scumble & knife relief
+	float InkStrength;      // 0..1, edge dry-brush scumble strength
+	float InkWidth;         // multiplier on the edge sampling radius
+
+	// Palette & Chroma
+	float QuantSteps;       // luma levels
+	float QuantStrength;    // 0..1
+	float ChromaVibe;       // 0..2, color vibration & pigment accentuation
+	float Saturation;
+	float Warmth;           // -1 cool .. 1 warm
+	float Vignette;         // 0..1
+
+	float DebugMode;        // 0 final, 1 flow, 2 dry-brush edge, 3 impasto normal, 4 raw filter, 5 confidence
+};
+
+float3 Paint_Main(float2 UV, float3 SceneColor, FPaintParams P)
+{
+	float2 ScreenSize = max(P.ScreenSize, float2(1.0f, 1.0f));
+	float2 Texel = 1.0f / ScreenSize;
+	float3 Center = max(SceneColor, 0.0f);
+	float CenterLuma = Paint_Luma(Center);
+
+	// 1. Stroke flow field with distance atmospheric sweep ------------------
+	FPaintFlow Flow = Paint_BuildFlow(UV, Texel, CenterLuma, P.TensorRadius, P.FlowFreq, P.FlowJitter);
+
+	// 2. Anisotropic Faceted Kuwahara: palette knife & flat brush planes ----
+	float3 Filtered = Paint_Kuwahara(
+		UV, Texel, Flow.Tangent,
+		max(P.BrushRadius, 0.0f),
+		saturate(P.StrokeStretch),
+		max(P.Patchiness, 0.25f),
+		Flow.Contrast,
+		Flow.Depth,
+		max(P.DepthScale, 0.0f));
+
+	// 3. Dry-brush edge scumble & knife-edge highlight (no cartoon outlines) -
+	FEdgeDryBrush EdgeStyle = Paint_EdgeStyling(
+		UV, Texel, Flow.Gradient, Flow.Contrast,
+		max(P.InkWidth, 0.2f), P.ImpastoAngle, 11.37f, ScreenSize);
+
+	// Broken dry-brush charcoal/dark pigment in shadowed crevices
+	float3 DryEdgeColor = float3(0.080f, 0.065f, 0.075f);
+	float3 Color = lerp(Filtered, DryEdgeColor, EdgeStyle.DryEdge * saturate(P.InkStrength) * 0.40f);
+
+	// Palette knife specular catchlight on raised paint boundary
+	Color += EdgeStyle.KnifeRim * saturate(P.ImpastoStrength) * 0.25f * (0.35f + CenterLuma);
+
+	// 4. Physical impasto relief & bristle grooves ---------------------------
+	float2 PixelPos = UV * ScreenSize;
+	float3 PaintNormal = Paint_ImpastoNormal(PixelPos, Flow.Tangent, max(P.ImpastoScale, 0.05f),
+		saturate(P.BristleStrength), 0.0f, 0.65f);
+
+	Color = Paint_ImpastoShade(
+		Color, PixelPos, Flow.Tangent, max(P.ImpastoScale, 0.05f),
+		saturate(P.BristleStrength), 0.0f,
+		P.ImpastoAngle, saturate(P.ImpastoStrength), 1.25f);
+
+	// 5. Chromatic vibration & pigment accentuation -------------------------
+	Color = Paint_ChromaVibration(Color, PixelPos, Flow.Tangent, max(P.ChromaVibe, 0.0f), 7.13f);
+
+	// 6. Canvas tooth --------------------------------------------------------
+	float Canvas = Paint_Canvas(PixelPos, 1.0f, 0.0f);
+	Color *= 1.0f + Canvas * P.CanvasStrength * 0.075f;
+
+	// 7. Palette: planar value quantization & split-tone grade --------------
+	Color = Paint_Quantize(Color, max(P.QuantSteps, 2.0f), P.QuantStrength);
+	Color = Paint_Grade(Color, P.Saturation, P.Warmth, P.Vignette, UV);
+
+	// 8. Debug views ---------------------------------------------------------
+	int Dbg = (int)round(P.DebugMode);
+	if (Dbg == 1)
+	{
+		return float3(Flow.Tangent * 0.5f + 0.5f, 1.0f);
+	}
+	if (Dbg == 2)
+	{
+		return EdgeStyle.DryEdge.xxx;
+	}
+	if (Dbg == 3)
+	{
+		return PaintNormal * 0.5f + 0.5f;
+	}
+	if (Dbg == 4)
+	{
+		return Filtered;
+	}
+	if (Dbg == 5)
+	{
+		return Flow.Confidence.xxx;
+	}
+
+	return Color;
+}
