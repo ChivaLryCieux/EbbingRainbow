@@ -48,3 +48,7 @@ desktop.ini
 
 # Crash reports
 CrashReportClient/
+
+# Python cache
+__pycache__/
+*.pyc

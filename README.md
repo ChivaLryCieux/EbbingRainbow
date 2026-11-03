@@ -121,6 +121,46 @@ ArenaHost->Generate(Request);
 
 新增一种风格：新建 `WFC3DArenaGenerator_XXX.h/.cpp`，在 StyleTable 资产里加一条 `Style -> GeneratorClass` 记录即可，Host、Base、Solver、战斗层都不需要改。
 
+#### 材质与纹理：Futuristic 纹理集
+
+生成的瓦片（`SM_wall_* / SM_floor_* / SM_ceil_* / SM_prop_*`）的材质槽直接指向 `MI_WFC_*`，生成器只是把 SM 塞进 HISM、不覆写材质——所以**换皮只改 MI**，WFC 算法、空间语法、碰撞与 navmesh 都不用动。
+
+- **纹理源**：`Content/Futuristic` 下的 PNG 按 `<名称>_BC / _N / _ORM` 成组导入到 `/Game/Futuristic`（1024²）：
+  - `_BC` 基础色（sRGB 开、默认压缩）；`_N` 法线（sRGB 关、`TC_Normalmap`）；`_ORM` 打包遮罩（**R=AO、G=Roughness、B=Metallic**，sRGB 关、`TC_Masks`）。
+- **母材质 `M_WFC_TintedPBR`**（唯一被改动的材质）：
+  - `BaseColor = BaseColorTex × Tint`；
+  - `Normal = NormalTex`；
+  - `AO / Roughness / Metallic = ORMTex.R / .G / .B`；
+  - 原先直接写死的 `ceiling_mat_Normal / _Roughness / _Metallic` 采样节点已删除，母材质不再引用 Fab 贴图。
+- **实例映射**：
+
+| 材质实例 | 纹理组 | 主要用途 |
+| :--- | :--- | :--- |
+| `MI_WFC_Wall_A` | `T_Wall_TechRecess` | 主墙体 |
+| `MI_WFC_Wall_B` | `T_Wall_PortalTechInset` | 门框 / 拱门 |
+| `MI_WFC_Wall_C` | `T_Wall_DarkStructuralMetal` | 结构墙、方柱 |
+| `MI_WFC_Wall_D` | `T_Wall_WarmSandstone` | 暖色房间墙 |
+| `MI_WFC_Dark` | `T_Wall_DarkStructuralMetal`（Tint 0.55） | 踢脚、压条、栏杆 |
+| `MI_WFC_Floor_A` | `T_Floor_LargeSlab` | 大厅 / 房间地面 |
+| `MI_WFC_Floor_B` | `T_Floor_DeckPlating` | 回廊 / 平台 |
+| `MI_WFC_Floor_C` | `T_Floor_TreadGrating` | 格栅、楼梯踏板 |
+| `MI_WFC_Ceil` | `T_Ceiling_Panel` | 天花板 |
+
+- **发光条**：`MI_WFC_Emit_A / C / W` 走 `M_WFC_Emissive`（Unlit，`EmissiveColor × EmissiveStrength`），是纯色光带，不参与贴图替换。
+- **换纹理后重导 / 重绑**（编辑器需先关闭）：
+
+```bat
+"D:\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" D:\EbbingRainbow\EbbingRainbow.uproject ^
+  -ExecutePythonScript="D:\EbbingRainbow\Scripts\wfc_import_futuristic_textures.py" ^
+  -unattended -nosplash -nullrhi -stdout
+
+"D:\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" D:\EbbingRainbow\EbbingRainbow.uproject ^
+  -ExecutePythonScript="D:\EbbingRainbow\Scripts\wfc_apply_futuristic_materials.py" ^
+  -unattended -nosplash -nullrhi -stdout
+```
+
+> 注意：`Content/WFCKit/Materials` 下的 `.uasset` 如果被标记为只读，保存会静默失败；`wfc_apply_futuristic_materials.py` 会先清掉只读位再保存，两个脚本都是幂等的，可以反复跑。
+
 ---
 
 ## 🛠️ 技术选型与技术栈
