@@ -331,6 +331,16 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 	{
 		static const int32 StairDX[4] = { 0, 1, 0, -1 };
 		static const int32 StairDY[4] = { 1, 0, -1, 0 };
+
+		for (const FArchStair& S0 : Plan.Stairs)
+		{
+			const int32 D0 = FMath::Clamp(S0.Dir, 0, 3);
+			LastResult.LandingProbes.Add(FVector(
+				(static_cast<float>(S0.X + StairDX[D0] * 2) + 0.5f) * CellSize,
+				(static_cast<float>(GridH - (S0.Y + StairDY[D0] * 2)) - 0.5f) * CellSize,
+				420.0f));
+		}
+
 		const FArchStair& S = Plan.Stairs[0];
 		const int32 D = FMath::Clamp(S.Dir, 0, 3);
 		const int32 TopX = S.X + StairDX[D] * 2;
@@ -358,6 +368,11 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 
 			AddTile(C.WallTile, X, Y, 0.0f);
 			AddTile(C.FloorTile, X, Y, 0.0f);
+			// 裂谷底部的暗光板: 深渊的深度暗示,也是唯一的强调色
+			if (C.Kind == EArchCellKind::Void)
+			{
+				AddTile(FName(TEXT("floor_light")), X, Y, -700.0f);
+			}
 			AddTile(C.CeilTile, X, Y, 0.0f);
 			AddTile(C.PropTile, X, Y, 0.0f);
 

@@ -72,6 +72,10 @@ struct FWFCGenerationResult
 	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
 	FVector StairMidProbe = FVector::ZeroVector;
 
+	/** 每部楼梯的夹层落点探针 (世界坐标),用于逐一验证上层可达性 */
+	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
+	TArray<FVector> LandingProbes;
+
 	UPROPERTY(BlueprintReadOnly, Category = "WFC|Result")
 	int32 ModuleCount = 0;
 

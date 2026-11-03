@@ -133,6 +133,9 @@ private:
 	TArray<FVector> EnemySpawnPoints;
 	int32 UsedSeed = 0;
 
+	// 编辑器里 nav tile 烘焙滞后于生成,夹层可达性用 FTicker 轮询重试
+	int32 MezzProbeTries = 0;
+
 	/** 生成器实际使用的格子世界尺寸；用于包围盒、出生区与采样去重 */
 	FVector UsedCellWorldSize = FVector::ZeroVector;
 

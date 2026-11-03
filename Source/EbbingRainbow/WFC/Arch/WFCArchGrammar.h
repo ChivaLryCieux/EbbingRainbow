@@ -30,4 +30,11 @@ public:
 		bool bAllowColumn = false);
 
 	static bool HasWallPattern(const FString& Pattern);
+
+	/**
+	 * Plan-level validity check: ground-floor connectivity (doors/bridges
+	 * count as passable, walls/parapets do not) and stair landing sanity.
+	 * Returns false with a short reason in OutWhy when the plan is broken.
+	 */
+	static bool ValidatePlan(const FArchPlan& Plan, FString& OutWhy);
 };

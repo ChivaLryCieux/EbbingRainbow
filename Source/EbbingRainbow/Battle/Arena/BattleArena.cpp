@@ -12,6 +12,7 @@
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "Containers/Ticker.h"
 
 DEFINE_LOG_CATEGORY(LogBattleArena);
 
@@ -185,6 +186,12 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 
 	// 同步重建导航网格,保证后续查询基于最新地形
 	NavSys->Build();
+	// Recast 的 tile 烘焙是异步的,编辑器失焦时可能拖数分钟;
+	// EnsureBuildCompletion 强制同步完成,否则下面的探测会撞上未建好的 tile。
+	if (ANavigationData* NavData = NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate))
+	{
+		NavData->EnsureBuildCompletion();
+	}
 	if (!NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate))
 	{
 		UE_LOG(LogBattleArena, Error, TEXT("No NavData. Add a NavMeshBoundsVolume covering the arena (and set Runtime Generation = Dynamic)."));
@@ -234,6 +241,74 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 			{
 				UE_LOG(LogBattleArena, Log, TEXT("  path[%d] = %s"),
 					PointIndex, *Path->PathPoints[PointIndex].ToString());
+			}
+		}
+
+		// 逐楼梯落点验证: 所有夹层落点都应从地面可达。
+		// 编辑器 nav tile 烘焙滞后于生成,先立即测一轮,未全通则用定时器每 2s 重试。
+		const TArray<FVector> LandingProbes = GenResult.LandingProbes;
+		auto ProbeOnce = [this, NavSys, &LandingProbes](const TCHAR* Tag) -> int32
+		{
+			int32 Ok = 0;
+			for (int32 LIdx = 0; LIdx < LandingProbes.Num(); ++LIdx)
+			{
+				UNavigationPath* LPath = NavSys->FindPathToLocationSynchronously(
+					this, FVector(3800.0f, 6000.0f, 20.0f), LandingProbes[LIdx]);
+				const bool bOk = LPath && LPath->IsValid() && !LPath->IsPartial();
+				if (bOk) { ++Ok; }
+				else
+				{
+					UE_LOG(LogBattleArena, Log, TEXT("  landing[%d] at %s: UNREACHABLE (%s)"),
+						LIdx, *LandingProbes[LIdx].ToString(), Tag);
+				}
+			}
+			return Ok;
+		};
+		if (LandingProbes.Num() > 0)
+		{
+			int32 Ok = ProbeOnce(TEXT("initial"));
+			UE_LOG(LogBattleArena, Log, TEXT("Landings reachable: %d/%d"),
+				Ok, LandingProbes.Num());
+			if (Ok < LandingProbes.Num())
+			{
+				TWeakObjectPtr<UNavigationSystemV1> WeakNav = NavSys;
+				TWeakObjectPtr<ABattleArena> WeakSelf(this);
+				TSharedPtr<int32> Tries = MakeShared<int32>(0);
+				// 编辑器里 nav tile 烘焙滞后于生成且无法同步等完,用 FTicker 轮询
+				// GetNumRemainingBuildTasks,队列清空后再做决定性的可达性报告。
+				FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+					[WeakSelf, WeakNav, LandingProbes, Tries](float) -> bool
+					{
+						ABattleArena* Self = WeakSelf.Get();
+						UNavigationSystemV1* NS = WeakNav.Get();
+						if (!NS || !Self) { return false; }
+						++(*Tries);
+						// 编辑器 nav 烘焙不进 build-task 队列且按时间片慢速推进,
+						// 放大时间片配额并同步泵完成;全通即提前收敛
+						if (*Tries == 1)
+						{
+							NS->GetMutableNavRegenTimeSliceManager().SetMaxTimeSliceDuration(30.0);
+						}
+						if (ANavigationData* D = NS->GetDefaultNavDataInstance(FNavigationSystem::DontCreate))
+						{
+							D->EnsureBuildCompletion();
+						}
+						int32 Ok = 0;
+						for (const FVector& LP : LandingProbes)
+						{
+							UNavigationPath* P = NS->FindPathToLocationSynchronously(
+								Self, FVector(3800.0f, 6000.0f, 20.0f), LP);
+							if (P && P->IsValid() && !P->IsPartial()) { ++Ok; }
+						}
+						const bool bDone = (Ok == LandingProbes.Num()) || (*Tries) >= 300;
+						if (bDone || (*Tries % 30) == 0)
+						{
+							UE_LOG(LogBattleArena, Log,
+								TEXT("Landings reachable (deferred, try %d): %d/%d%s"),
+								*Tries, Ok, LandingProbes.Num(), bDone ? TEXT(" FINAL") : TEXT(""));
+						}
+						return !bDone;
+					}), 2.0f);
 			}
 		}
 	}
