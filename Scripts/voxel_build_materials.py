@@ -14,15 +14,23 @@ mel = unreal.MaterialEditingLibrary
 tools = unreal.AssetToolsHelpers.get_asset_tools()
 
 
-def delete_if_exists(name):
-    path = "%s/%s.%s" % (PKG, name, name)
-    if unreal.EditorAssetLibrary.does_asset_exist(path):
-        unreal.EditorAssetLibrary.delete_asset(path)
-
-
 def new_material(name):
-    delete_if_exists(name)
-    return tools.create_asset(name, PKG, unreal.Material, unreal.MaterialFactoryNew())
+    path = "%s/%s.%s" % (PKG, name, name)
+    m = None
+    if unreal.EditorAssetLibrary.does_asset_exist(path):
+        m = unreal.load_asset(path)
+        try:
+            mel.delete_all_material_expressions(m)
+        except Exception:
+            pass
+    if m is None:
+        m = tools.create_asset(name, PKG, unreal.Material,
+                              unreal.MaterialFactoryNew())
+    if m is None:
+        # 残留包/竞态: 直接尝试加载
+        m = unreal.load_asset(path)
+    assert m, "cannot create or load %s" % path
+    return m
 
 
 def expr(material, cls, x, y, **props):
@@ -100,6 +108,21 @@ def build_lerp(material, g, x, y):
     return lerp
 
 
+def set_ism_usage(m):
+    # HISM 渲染需要打开 InstancedStaticMeshes usage flag
+    for attr in ("b_used_with_instanced_static_meshes",
+                 "used_with_instanced_static_meshes"):
+        try:
+            m.set_editor_property(attr, True)
+            return
+        except Exception:
+            pass
+    try:
+        unreal.MaterialEditingLibrary.set_material_usage(m, True)
+    except Exception as e:
+        unreal.log_warning("[voxel_mats] usage flag failed: %s" % e)
+
+
 def main():
     unreal.log("[voxel_mats] building materials in %s" % PKG)
 
@@ -111,6 +134,7 @@ def main():
                                   unreal.MaterialProperty.MP_ROUGHNESS)
     mel.connect_material_property(const1(m, 0.0, -400, 320), "",
                                   unreal.MaterialProperty.MP_METALLIC)
+    set_ism_usage(m)
     mel.recompile_material(m)
     unreal.EditorAssetLibrary.save_loaded_asset(m)
 
@@ -122,6 +146,7 @@ def main():
                                   unreal.MaterialProperty.MP_ROUGHNESS)
     mel.connect_material_property(const1(m, 0.0, -400, 320), "",
                                   unreal.MaterialProperty.MP_METALLIC)
+    set_ism_usage(m)
     mel.recompile_material(m)
     unreal.EditorAssetLibrary.save_loaded_asset(m)
 
@@ -138,6 +163,7 @@ def main():
     link(lerp, "", emis, "A")
     link(strength, "", emis, "B")
     mel.connect_material_property(emis, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    set_ism_usage(m)
     mel.recompile_material(m)
     unreal.EditorAssetLibrary.save_loaded_asset(m)
 
@@ -156,6 +182,7 @@ def main():
                                   unreal.MaterialProperty.MP_OPACITY)
     mel.connect_material_property(const1(m, 0.1, -400, 450), "",
                                   unreal.MaterialProperty.MP_ROUGHNESS)
+    set_ism_usage(m)
     mel.recompile_material(m)
     unreal.EditorAssetLibrary.save_loaded_asset(m)
 
