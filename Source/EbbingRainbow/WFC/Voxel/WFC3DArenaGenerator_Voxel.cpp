@@ -381,6 +381,10 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 {
 	const int32 N = GridW * GridH;
 	Plan.RegionOf.Init(-1, N);
+	if (Plan.RegionOf.Num() != N)
+	{
+		return false;
+	}
 
 	// 同高连通区域编号
 	TArray<int32> RegionSize;
@@ -419,6 +423,8 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		}
 	}
 
+	UE_LOG(LogTemp, Log, TEXT("[VoxelDbg] regions=%d"), RegionSize.Num());
+
 	// 区域间 ΔL=1 的邻接: (Ra,Rb) -> 共享边列表 (低侧格, 方向)
 	struct FAdj
 	{
@@ -426,7 +432,7 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		int32 Rb = 0;
 		TArray<FVoxStair> Edges;
 	};
-	TMap<int64, FAdj> Adj;
+	TArray<FAdj> Adjs;
 	for (int32 Y = 0; Y < GridH; ++Y)
 	{
 		for (int32 X = 0; X < GridW; ++X)
@@ -435,13 +441,14 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 			{
 				const int32 BX = X + DX[S];
 				const int32 BY = Y + DY[S];
-				if (BX >= GridW || BY >= GridH)
+				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 				{
 					continue;
 				}
 				const int32 A = CellIndex(X, Y);
 				const int32 B = CellIndex(BX, BY);
-				if (Plan.L[A] == LVoid || Plan.L[B] == LVoid)
+				if (Plan.L[A] == LVoid || Plan.L[B] == LVoid
+					|| Plan.RegionOf[A] < 0 || Plan.RegionOf[B] < 0)
 				{
 					continue;
 				}
@@ -451,27 +458,39 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 				{
 					continue;
 				}
-				const int32 Ra = Plan.RegionOf[A];
-				const int32 Rb = Plan.RegionOf[B];
-				const int64 Key = (Ra < Rb)
-					? (static_cast<int64>(Ra) << 32) | Rb
-					: (static_cast<int64>(Rb) << 32) | Ra;
-				FAdj& E = Adj.FindOrAdd(Key);
-				E.Ra = FMath::Min(Ra, Rb);
-				E.Rb = FMath::Max(Ra, Rb);
+				const int32 Ra = FMath::Min(Plan.RegionOf[A], Plan.RegionOf[B]);
+				const int32 Rb = FMath::Max(Plan.RegionOf[A], Plan.RegionOf[B]);
+				FAdj* Found = nullptr;
+				for (FAdj& E : Adjs)
+				{
+					if (E.Ra == Ra && E.Rb == Rb)
+					{
+						Found = &E;
+						break;
+					}
+				}
+				if (!Found)
+				{
+					FAdj NewAdj;
+					NewAdj.Ra = Ra;
+					NewAdj.Rb = Rb;
+					Found = &Adjs[Adjs.Add(NewAdj)];
+				}
 				FVoxStair St;
 				if (La < Lb) { St.LowX = X; St.LowY = Y; St.Dir = S; }
 				else { St.LowX = BX; St.LowY = BY; St.Dir = (S + 2) % 4; }
-				E.Edges.Add(St);
+				Found->Edges.Add(St);
 			}
 		}
 	}
 
+	UE_LOG(LogTemp, Log, TEXT("[VoxelDbg] adj=%d"), Adjs.Num());
+
 	// Kruskal: 先保证全连通 (生成树), 再额外加 ~30% 环路
-	TArray<FAdj*> Edges;
-	for (TPair<int64, FAdj>& P : Adj)
+	TArray<int32> Edges;
+	for (int32 I = 0; I < Adjs.Num(); ++I)
 	{
-		Edges.Add(&P.Value);
+		Edges.Add(I);
 	}
 	for (int32 I = Edges.Num() - 1; I > 0; --I)
 	{
@@ -486,12 +505,12 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		return R;
 	};
 
-	TArray<FAdj*> Chosen;
-	TArray<FAdj*> Leftover;
-	for (FAdj* E : Edges)
+	TArray<int32> Chosen;
+	TArray<int32> Leftover;
+	for (int32 E : Edges)
 	{
-		const int32 Pa = Find(E->Ra);
-		const int32 Pb = Find(E->Rb);
+		const int32 Pa = Find(Adjs[E].Ra);
+		const int32 Pb = Find(Adjs[E].Rb);
 		if (Pa != Pb)
 		{
 			Parent[Pa] = Pb;
@@ -502,17 +521,20 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 			Leftover.Add(E);
 		}
 	}
-	const int32 Extra = FMath::CeilToInt(Leftover.Num() * 0.3f);
+	const int32 Extra = FMath::Min(Leftover.Num(),
+		FMath::CeilToInt(Leftover.Num() * 0.3f));
 	for (int32 I = 0; I < Extra; ++I)
 	{
 		Chosen.Add(Leftover[I]);
 	}
 
+	UE_LOG(LogTemp, Log, TEXT("[VoxelDbg] chosen=%d leftover=%d"), Chosen.Num(), Leftover.Num());
+
 	// 每个邻接在共享边中随机选一条; 每低侧格最多一部楼梯, 入口格不能 Void/更高
 	TSet<int64> UsedLow;
-	for (FAdj* E : Chosen)
+	for (int32 E : Chosen)
 	{
-		TArray<FVoxStair> Cands = E->Edges;
+		TArray<FVoxStair> Cands = Adjs[E].Edges;
 		for (int32 I = Cands.Num() - 1; I > 0; --I)
 		{
 			Cands.Swap(I, Rng.RandRange(0, I));
@@ -764,6 +786,7 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(const FVoxPlan& Plan, FRandomStr
 	{
 		CollisionHISM->AddInstance(FTransform(Rot, Center, Size / 100.0f), false);
 	};
+	(void)AddColRot;
 
 	TSet<int64> StairCells;
 	for (const FVoxStair& St : Plan.Stairs)
@@ -789,25 +812,26 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(const FVoxPlan& Plan, FRandomStr
 		}
 	}
 
-	// 楼梯斜坡碰撞盒: 低格远端 (z=低顶) 爬升到高格边 (z=高顶), 略插入高侧
-	static const float YawForDir[4] = { 90.0f, 0.0f, 270.0f, 180.0f };
+	// 楼梯碰撞: 8 级轴对齐台阶盒 (与可见台阶同足迹同顶面)。
+	// 旋转斜坡盒 navmesh 烘不成连通面 (Atrium 已踩过坑), 台阶盒最稳:
+	// 步高 25 < AgentMaxStepHeight, 最后一级顶面与高侧柱顶齐平。
 	for (const FVoxStair& St : Plan.Stairs)
 	{
-		const int32 LowL = Plan.L[CellIndex(St.LowX, St.LowY)];
-		const float LowTop = LowL * LayerH;
-		const float HighTop = LowTop + LayerH;
+		const float LowTop = Plan.L[CellIndex(St.LowX, St.LowY)] * LayerH;
 		const float LX = St.LowX * CellSize + 200.0f;
 		const float LY = St.LowY * CellSize + 200.0f;
 		const float DxF = DX[St.Dir];
 		const float DyF = DY[St.Dir];
-		// 起点: 低格远端边 (反向 200); 终点: 高格边+插入 30 (同向 430)
-		const FVector A(LX - DxF * 200.0f, LY - DyF * 200.0f, LowTop);
-		const FVector B(LX + DxF * 430.0f, LY + DyF * 430.0f, HighTop);
-		const FVector Mid = (A + B) * 0.5f;
-		const float Run = (B - A).Size2D();
-		const float Len = FMath::Sqrt(Run * Run + LayerH * LayerH);
-		const float Pitch = -FMath::RadiansToDegrees(FMath::Atan2(LayerH, Run));
-		AddColRot(FRotator(Pitch, YawForDir[St.Dir], 0.0f), Mid, FVector(Len, 300.0f, 40.0f));
+		for (int32 I = 0; I < 8; ++I)
+		{
+			const float Along = -200.0f + (I + 0.5f) * 50.0f;
+			const float Top = LowTop + (I + 1) * 25.0f;
+			const FVector C(LX + DxF * Along, LY + DyF * Along, (Top - 100.0f) * 0.5f);
+			const FVector Size = (St.Dir == 1 || St.Dir == 3)
+				? FVector(50.0f, 300.0f, Top + 100.0f)
+				: FVector(300.0f, 50.0f, Top + 100.0f);
+			AddCol(C, Size);
+		}
 	}
 
 	// 掩体: 每 ~12 个非楼梯格 1 个, 避开楼梯格/入口/落点
@@ -885,11 +909,15 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 				int32 RH = 1;
 				for (;;)
 				{
+					if (Y + RH >= GridH)
+					{
+						break;
+					}
 					bool bRow = true;
 					for (int32 K = 0; K < RW; ++K)
 					{
 						const int32 J = CellIndex(X + K, Y + RH);
-						if (Y + RH >= GridH || Used[J] || Plan.L[J] != Lev)
+						if (Used[J] || Plan.L[J] != Lev)
 						{
 							bRow = false;
 							break;
