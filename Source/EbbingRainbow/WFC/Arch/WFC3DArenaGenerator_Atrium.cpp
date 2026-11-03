@@ -7,6 +7,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "HAL/PlatformTime.h"
+#include "HAL/IConsoleManager.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 
 AWFC3DArenaGenerator_Atrium::AWFC3DArenaGenerator_Atrium()
 {
@@ -390,6 +393,109 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 	}
 
 	AddStairs(Plan);
+
+	// 重合诊断 (ER.ArchDump 1 或 -ArchDump): z-fighting 排查。
+	//  a) 实例级: 同网格/跨网格、位置差 <2cm 且朝向相同的重合实例。
+	//  b) 平面级: 相邻格在同一条边上「双方都画了面」的边对 (按墙面代码统计)。
+	const IConsoleVariable* ArchDumpCVar =
+		IConsoleManager::Get().FindConsoleVariable(TEXT("ER.ArchDump"));
+	const bool bArchDump = (ArchDumpCVar && ArchDumpCVar->GetInt() > 0)
+		|| FParse::Param(FCommandLine::Get(), TEXT("ArchDump"));
+	if (bArchDump)
+	{
+		struct FInstRec { FString Mesh; FVector Pos; FQuat Rot; };
+		TArray<FInstRec> Insts;
+		for (const TPair<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>>& Pair
+			: InstancedMeshComponents)
+		{
+			if (!Pair.Key || !Pair.Value)
+			{
+				continue;
+			}
+			const int32 N = Pair.Value->GetInstanceCount();
+			for (int32 I = 0; I < N; ++I)
+			{
+				FTransform T;
+				if (Pair.Value->GetInstanceTransform(I, T))
+				{
+					Insts.Add({ Pair.Key->GetName(), T.GetLocation(), T.GetRotation() });
+				}
+			}
+		}
+
+		int32 SameMeshDup = 0;
+		TMap<FString, int32> CrossPairs;
+		for (int32 A = 0; A < Insts.Num(); ++A)
+		{
+			for (int32 B = A + 1; B < Insts.Num(); ++B)
+			{
+				if (!Insts[A].Pos.Equals(Insts[B].Pos, 2.0f)
+					|| FMath::Abs(Insts[A].Rot | Insts[B].Rot) < 0.9999f)
+				{
+					continue;
+				}
+				if (Insts[A].Mesh == Insts[B].Mesh)
+				{
+					++SameMeshDup;
+				}
+				else
+				{
+					const FString Key = (Insts[A].Mesh < Insts[B].Mesh)
+						? Insts[A].Mesh + TEXT(" + ") + Insts[B].Mesh
+						: Insts[B].Mesh + TEXT(" + ") + Insts[A].Mesh;
+					CrossPairs.FindOrAdd(Key)++;
+				}
+			}
+		}
+		UE_LOG(LogTemp, Log,
+			TEXT("[ArchDump] 重合诊断: 实例=%d 同网格重合=%d 跨网格重合对种类=%d"),
+			Insts.Num(), SameMeshDup, CrossPairs.Num());
+		for (const TPair<FString, int32>& P : CrossPairs)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[ArchDump]   %s x%d"), *P.Key, P.Value);
+		}
+
+		// 平面级: 只查东/南两个方向的共享边, 避免重复计数
+		auto SideCode = [](const FArchCell& C, int32 S) -> TCHAR
+		{
+			if (C.WallMask & (1 << S)) return TEXT('w');
+			if (C.Special[S]) return C.Special[S];
+			return TEXT('o');
+		};
+		TMap<FString, int32> EdgePairs;
+		for (int32 Y = 0; Y < Plan.H; ++Y)
+		{
+			for (int32 X = 0; X < Plan.W; ++X)
+			{
+				const FArchCell& C = Plan.Cell(X, Y);
+				static const int32 FX[2] = { 1, 0 };
+				static const int32 FY[2] = { 0, 1 };
+				static const int32 FS[2] = { 1, 2 };
+				for (int32 K = 0; K < 2; ++K)
+				{
+					const int32 NX = X + FX[K];
+					const int32 NY = Y + FY[K];
+					if (!Plan.IsValid(NX, NY))
+					{
+						continue;
+					}
+					const TCHAR CA = SideCode(C, FS[K]);
+					const TCHAR CB = SideCode(Plan.Cell(NX, NY), (FS[K] + 2) % 4);
+					if (CA != TEXT('o') && CB != TEXT('o'))
+					{
+						const TCHAR Lo = FMath::Min(CA, CB);
+						const TCHAR Hi = FMath::Max(CA, CB);
+						EdgePairs.FindOrAdd(FString::Printf(TEXT("%c-%c"), Lo, Hi))++;
+					}
+				}
+			}
+		}
+		for (const TPair<FString, int32>& P : EdgePairs)
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("[ArchDump] 双面共边: %s x%d (可能共面闪烁)"), *P.Key, P.Value);
+		}
+	}
 
 	// Visual HISM keeps no collision: the explicit collision boxes below are
 	// the single source of truth. Otherwise an imported wall mesh's own simple

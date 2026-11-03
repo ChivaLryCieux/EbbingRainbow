@@ -13,6 +13,8 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "Containers/Ticker.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 
 DEFINE_LOG_CATEGORY(LogBattleArena);
 
@@ -104,7 +106,9 @@ bool ABattleArena::GenerateArena()
 		return false;
 	}
 
-	const int32 StartSeed = (BaseSeed != 0) ? BaseSeed : FMath::RandRange(1, MAX_int32 / 2);
+	int32 StartSeed = (BaseSeed != 0) ? BaseSeed : FMath::RandRange(1, MAX_int32 / 2);
+	// 命令行 -ArenaSeed=N 覆盖, 便于可复现的离线截图/诊断
+	FParse::Value(FCommandLine::Get(), TEXT("ArenaSeed="), StartSeed);
 
 	for (int32 Attempt = 0; Attempt < MaxGenerationAttempts; ++Attempt)
 	{

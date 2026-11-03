@@ -1641,9 +1641,9 @@ bool FWFCArchGrammar::ResolveWallTile(
 						continue;
 					}
 					const FArchCell& N = Plan.Cell(NX, NY);
-					// 挑空中庭, 或者通高的房间: 都要栏杆, 否则会从回廊掉下去
-					if ((N.Kind == EArchCellKind::Atrium && N.UFloor.IsNone())
-						|| N.Kind == EArchCellKind::Room)
+					// 只有挑空中庭要栏杆。临房间的一侧不加: 房间自己的整墙已经挡人,
+					// 再加一片女儿墙既多余又会和相邻栏杆在转角处重合闪烁。
+					if (N.Kind == EArchCellKind::Atrium && N.UFloor.IsNone())
 					{
 						VoidSides.Add(Side);
 					}
@@ -1824,33 +1824,27 @@ bool FWFCArchGrammar::ResolveWallTile(
 				const uint32 Hsh = Hash(X, Y, Seed);
 				C.CeilTile = NAME_None;
 
+				// 楼梯网格自带底面并占满 2 格足迹, 下面再铺地板会共面闪烁
+				if (StairCells.Contains(FIntPoint(X, Y)))
+				{
+					continue;
+				}
+
 				if (C.Kind == EArchCellKind::Room)
 				{
-					switch (Hsh % 4)
-					{
-					case 0: C.FloorTile = FName(TEXT("floor_plain")); break;
-					case 1: C.FloorTile = FName(TEXT("floor_plain_b")); break;
-					case 2: C.FloorTile = FName(TEXT("floor_plain_c")); break;
-					default: C.FloorTile = FName(TEXT("floor_plate")); break;
-					}
+					// 同一房间统一一种素色砖 (按 Space+Seed 二选一), 不再逐格随机
+					C.FloorTile = (Hash(C.Space, 0, Seed) % 2 == 0)
+						? FName(TEXT("floor_plain")) : FName(TEXT("floor_plain_b"));
 				}
 				else if (C.Kind == EArchCellKind::Atrium)
 				{
-					// 中庭地面: 深色金属 + 少量发光带, 突出中心
-					C.FloorTile = (Hsh % 100 < 22)
-						? FName(TEXT("floor_light")) : FName(TEXT("floor_tech_b"));
+					// 中庭地面统一素色, 把视觉焦点让给天桥与信标
+					C.FloorTile = FName(TEXT("floor_plain_c"));
 				}
 				else
 				{
-					// 大厅/走廊: 深色金属, 和房间的素色地面拉开对比
-					switch (Hsh % 5)
-					{
-					case 0: C.FloorTile = FName(TEXT("floor_tech")); break;
-					case 1: C.FloorTile = FName(TEXT("floor_tech_b")); break;
-					case 2: C.FloorTile = FName(TEXT("floor_plate_b")); break;
-					case 3: C.FloorTile = FName(TEXT("floor_grate")); break;
-					default: C.FloorTile = FName(TEXT("floor_tech")); break;
-					}
+					// 大厅/走廊统一素色板
+					C.FloorTile = FName(TEXT("floor_plate"));
 				}
 
 				// 道具: 房间按主题摆 2-4 个; 大厅只在中庭边缘点缀
@@ -1858,24 +1852,21 @@ bool FWFCArchGrammar::ResolveWallTile(
 				{
 					continue;
 				}
-				if (C.Kind == EArchCellKind::Room && Hsh % 100 < 34)
+				if (C.Kind == EArchCellKind::Room && Hsh % 100 < 10)
 				{
-					const TCHAR* Props[] = { TEXT("prop_crate"), TEXT("prop_console"),
-						TEXT("prop_barrel"), TEXT("prop_pipes"), TEXT("prop_planter") };
-					C.PropTile = FName(Props[Hsh % 5]);
+					const TCHAR* Props[] = { TEXT("prop_crate"), TEXT("prop_console") };
+					C.PropTile = FName(Props[Hsh % 2]);
 				}
 			}
 		}
 
-		// 中庭中心的仪式感布置: 四根信标 + 四个花池
+		// 中庭中心的仪式感布置: 四根信标
 		const FIntPoint CenterProps[] =
 		{
 			FIntPoint(MidX, MidY + 1), FIntPoint(MidX + 1, MidY),
-			FIntPoint(MidX, MidY - 1), FIntPoint(MidX - 1, MidY),
-			FIntPoint(Ax0 + 1, Ay0 + 1), FIntPoint(Ax1 - 1, Ay0 + 1),
-			FIntPoint(Ax0 + 1, Ay1 - 1), FIntPoint(Ax1 - 1, Ay1 - 1)
+			FIntPoint(MidX, MidY - 1), FIntPoint(MidX - 1, MidY)
 		};
-		for (int32 I = 0; I < 8; ++I)
+		for (int32 I = 0; I < 4; ++I)
 		{
 			const FIntPoint& P = CenterProps[I];
 			if (!Plan.IsValid(P.X, P.Y))
@@ -1887,7 +1878,7 @@ bool FWFCArchGrammar::ResolveWallTile(
 			{
 				continue;
 			}
-			C.PropTile = FName((I < 4) ? TEXT("prop_beacon") : TEXT("prop_planter"));
+			C.PropTile = FName(TEXT("prop_beacon"));
 		}
 
 		// ---------- 7) 解析成实际 kit 瓦片 ----------
@@ -1904,6 +1895,27 @@ bool FWFCArchGrammar::ResolveWallTile(
 					C.WallMask = 0;
 					C.Special[0] = C.Special[1] = C.Special[2] = C.Special[3] = 0;
 					continue;
+				}
+
+				// 界外/临 Void 的整面墙降为女儿墙 ('h'): 「漂浮沙盘」边缘
+				if (!HasAnySpecial(C))
+				{
+					for (int32 Side = 0; Side < 4; ++Side)
+					{
+						if ((C.WallMask & (1 << Side)) == 0)
+						{
+							continue;
+						}
+						const int32 NX = X + DX[Side];
+						const int32 NY = Y + DY[Side];
+						if (Plan.IsValid(NX, NY) && Plan.Cell(NX, NY).Kind != EArchCellKind::Void)
+						{
+							continue;
+						}
+						C.WallMask &= ~(1 << Side);
+						C.Special[Side] = TEXT('h');
+						break;
+					}
 				}
 
 				int32 SpecialSide = INDEX_NONE;
