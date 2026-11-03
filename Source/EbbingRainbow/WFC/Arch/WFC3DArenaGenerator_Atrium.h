@@ -12,6 +12,9 @@ class UStaticMeshComponent;
 class UHierarchicalInstancedStaticMeshComponent;
 
 /**
+ * 旧版(Legacy): WFC 空间语法 + 科幻套件瓦片; 默认已改用
+ * AWFC3DArenaGenerator_Voxel, 保留以备切回 (ER.ArenaGenerator=1)。
+ *
  * Macro-architecture arena generator for the WFC_Kit.
  *
  * It bypasses the per-cell socket solver on purpose: FWFCArchGrammar owns the

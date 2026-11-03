@@ -4,6 +4,7 @@
 #include "WFC3DArenaHost.h"
 #include "WFC3DStyleTable.h"
 #include "Arch/WFC3DArenaGenerator_Atrium.h"
+#include "Voxel/WFC3DArenaGenerator_Voxel.h"
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
 #include "NavMesh/RecastNavMesh.h"
@@ -17,6 +18,21 @@
 #include "Misc/Parse.h"
 
 DEFINE_LOG_CATEGORY(LogBattleArena);
+
+// 竞技场生成器选择: 0 = 多尺度体素 (默认), 1 = 旧版 Atrium (WFC 空间语法)。
+// 也可用命令行 -ArenaGenerator=N 覆盖。
+static TAutoConsoleVariable<int32> CVarArenaGenerator(
+	TEXT("ER.ArenaGenerator"), 0,
+	TEXT("竞技场生成器: 0=Voxel(默认) 1=Legacy Atrium。"), ECVF_Cheat);
+
+static TSubclassOf<AWFC3DArenaGeneratorBase> ResolveArenaGeneratorClass()
+{
+	int32 Choice = CVarArenaGenerator.GetValueOnGameThread();
+	FParse::Value(FCommandLine::Get(), TEXT("ArenaGenerator="), Choice);
+	return (Choice == 1)
+		? TSubclassOf<AWFC3DArenaGeneratorBase>(AWFC3DArenaGenerator_Atrium::StaticClass())
+		: TSubclassOf<AWFC3DArenaGeneratorBase>(AWFC3DArenaGenerator_Voxel::StaticClass());
+}
 
 ABattleArena::ABattleArena()
 {
@@ -73,13 +89,21 @@ AWFC3DArenaHost* ABattleArena::EnsureHost()
 
 	if (ArenaHost)
 	{
-		ArenaHost->StyleTable = StyleTable;
-		ArenaHost->FallbackGeneratorClass = AWFC3DArenaGenerator_Atrium::StaticClass();
 		ArenaHost->bAutoGenerateOnBeginPlay = false;
 
 		// 编辑器预览参数与竞技场默认保持一致
 		ArenaHost->PreviewRequest.Style = Style;
 		ArenaHost->PreviewRequest.Scale = GridCells;
+	}
+
+	if (ArenaHost)
+	{
+		// 每次生成都按当前 CVar/命令行重选生成器, 便于不切地图直接对比。
+		// Voxel(0) 时绕过 StyleTable 直接用类; Legacy(1) 时 StyleTable 照旧生效。
+		const TSubclassOf<AWFC3DArenaGeneratorBase> GenClass = ResolveArenaGeneratorClass();
+		ArenaHost->FallbackGeneratorClass = GenClass;
+		ArenaHost->StyleTable = (GenClass == AWFC3DArenaGenerator_Voxel::StaticClass())
+			? nullptr : StyleTable;
 	}
 
 	return ArenaHost;
@@ -202,6 +226,10 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 		return false;
 	}
 
+	// 地面层可达性起点: 生成器上报 GroundNavProbe 优先, 否则回退大厅中轴固定点
+	const FVector GroundProbe = GenResult.GroundNavProbe.IsNearlyZero()
+		? FVector(3800.0f, 6000.0f, 20.0f) : GenResult.GroundNavProbe;
+
 	// Mezzanine connectivity probe. Graph layouts are single-level for now and
 	// report a zero probe; cross layouts report the L1 walkway beside a stair.
 	if (ARecastNavMesh* Recast = Cast<ARecastNavMesh>(NavSys->GetDefaultNavDataInstance()))
@@ -234,7 +262,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 
 		// Full connectivity probe from the nave floor to the reported L1 walkway.
 		if (UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(
-			this, FVector(3800.0f, 6000.0f, 20.0f), UpperProbe))
+			this, GroundProbe, UpperProbe))
 		{
 			UE_LOG(LogBattleArena, Log,
 				TEXT("Mezzanine path: valid=%s partial=%s length=%.0f points=%d"),
@@ -251,13 +279,13 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 		// 逐楼梯落点验证: 所有夹层落点都应从地面可达。
 		// 编辑器 nav tile 烘焙滞后于生成,先立即测一轮,未全通则用定时器每 2s 重试。
 		const TArray<FVector> LandingProbes = GenResult.LandingProbes;
-		auto ProbeOnce = [this, NavSys, &LandingProbes](const TCHAR* Tag) -> int32
+		auto ProbeOnce = [this, NavSys, &LandingProbes, &GroundProbe](const TCHAR* Tag) -> int32
 		{
 			int32 Ok = 0;
 			for (int32 LIdx = 0; LIdx < LandingProbes.Num(); ++LIdx)
 			{
 				UNavigationPath* LPath = NavSys->FindPathToLocationSynchronously(
-					this, FVector(3800.0f, 6000.0f, 20.0f), LandingProbes[LIdx]);
+					this, GroundProbe, LandingProbes[LIdx]);
 				const bool bOk = LPath && LPath->IsValid() && !LPath->IsPartial();
 				if (bOk) { ++Ok; }
 				else
@@ -281,7 +309,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 				// 编辑器里 nav tile 烘焙滞后于生成且无法同步等完,用 FTicker 轮询
 				// GetNumRemainingBuildTasks,队列清空后再做决定性的可达性报告。
 				FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
-					[WeakSelf, WeakNav, LandingProbes, Tries](float) -> bool
+					[WeakSelf, WeakNav, LandingProbes, Tries, GroundProbe](float) -> bool
 					{
 						ABattleArena* Self = WeakSelf.Get();
 						UNavigationSystemV1* NS = WeakNav.Get();
@@ -301,7 +329,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 						for (const FVector& LP : LandingProbes)
 						{
 							UNavigationPath* P = NS->FindPathToLocationSynchronously(
-								Self, FVector(3800.0f, 6000.0f, 20.0f), LP);
+								Self, GroundProbe, LP);
 							if (P && P->IsValid() && !P->IsPartial()) { ++Ok; }
 						}
 						const bool bDone = (Ok == LandingProbes.Num()) || (*Tries) >= 300;
