@@ -32,6 +32,7 @@ public class EbbingRainbow : ModuleRules
 			"EbbingRainbow/WFC",
 			"EbbingRainbow/WFC/Arch",
 			"EbbingRainbow/WFC/Styles",
+			"EbbingRainbow/WFC/Voxel",
 			"EbbingRainbow/Battle",
 			"EbbingRainbow/Battle/Core",
 			"EbbingRainbow/Battle/Arena",

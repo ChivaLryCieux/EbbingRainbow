@@ -1,0 +1,113 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "WFC3DArenaGeneratorBase.h"
+#include "WFC3DArenaGenerator_Voxel.generated.h"
+
+class UStaticMesh;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
+class UInstancedStaticMeshComponent;
+class UHierarchicalInstancedStaticMeshComponent;
+
+/**
+ * 多尺度体素竞技场生成器 (默认, ER.ArenaGenerator=0)。
+ *
+ * 不用 FWFC3DSolver/模块库: 自写一个轻量 2D WFC 高度场 (标签 Void/0..3,
+ * |ΔL|<=1, 外部允许破碎 Void 边缘), 再按区域连通性放楼梯,
+ * 最后把地形/崖面/钟乳/破碎外壳全部实例化成轴对齐立方体
+ * (同一个 /Engine/BasicShapes/Cube, 按材质分 HISM)。
+ *
+ * 坐标契约: 19x19, CellSize=400, 格 (x,y) 占局部 [x*400,(x+1)*400]^2,
+ * 高度层 L 顶面 z = L*200。所有随机只从 FRandomStream(Seed) 派生。
+ */
+UCLASS()
+class EBBINGRAINBOW_API AWFC3DArenaGenerator_Voxel : public AWFC3DArenaGeneratorBase
+{
+	GENERATED_BODY()
+
+public:
+	AWFC3DArenaGenerator_Voxel();
+
+	virtual bool Generate(const FWFCGenerationRequest& Request) override;
+	virtual void ClearGenerated() override;
+
+protected:
+	virtual FVector GetCellWorldSize() const override { return FVector(400.0f, 400.0f, 400.0f); }
+
+private:
+	/** 体素材质槽 (HISM 按槽分组) */
+	enum class EVoxMat : uint8 { Concrete = 0, Marble, Glow, Glass, Count };
+
+	struct FVoxStair
+	{
+		int32 LowX = 0;
+		int32 LowY = 0;
+		int32 Dir = 0; // 0=+Y 1=+X 2=-Y 3=-X, 指向高侧格
+	};
+
+	struct FVoxPlan
+	{
+		uint8 L[19 * 19];            // 高度层, 255 = Void
+		TArray<FVoxStair> Stairs;
+		TArray<int32> RegionOf;      // 每格区域号 (Void = -1)
+		int32 Motif = 0;             // 0=Bowl 1=Ziggurat
+		float ShellR = 0.0f;
+	};
+
+	// ---- 高度场 ----
+	bool BuildPlan(int32 Seed, FRandomStream& Rng, FVoxPlan& OutPlan);
+	bool CollapseHeightField(FRandomStream& Rng, int32 Motif,
+		float Cx, float Cy, uint8* OutL);
+	float PriorWeight(int32 Motif, int32 MaxL, float Cx, float Cy,
+		int32 X, int32 Y, int32 Label) const;
+	void FixupSmallRegions(uint8* L);
+	bool PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan);
+	bool CheckConnectivity(const FVoxPlan& Plan) const;
+
+	// ---- 实例化 ----
+	void BuildCollision(const FVoxPlan& Plan, FRandomStream& Rng);
+	void BuildVisual(const FVoxPlan& Plan, FRandomStream& Rng);
+	UInstancedStaticMeshComponent* GetMatComponent(EVoxMat Slot);
+	void AddBox(EVoxMat Slot, const FVector& Center, const FVector& Size);
+	void BuildShell(const FVoxPlan& Plan, FRandomStream& Rng,
+		TArray<FTransform>& OutConcrete, TArray<FTransform>& OutMarble,
+		TArray<FTransform>& OutGlow, TArray<FTransform>& OutGlass);
+
+	UMaterialInterface* LoadMat(const TCHAR* Path);
+	float ValueNoise3(float X, float Y, float Z) const;
+
+	static constexpr int32 GridW = 19;
+	static constexpr int32 GridH = 19;
+	static constexpr float CellSize = 400.0f;
+	static constexpr float LayerH = 200.0f;
+	static constexpr uint8 LVoid = 255;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMesh> CubeMesh = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> MatConcrete = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> MatMarble = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> MatGlowBase = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> MatGlassBase = nullptr;
+
+	/** 每次生成按种子创建的渐变动态材质 */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> DynMats;
+
+	/** 按 EVoxMat 分组的可见体素 HISM */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UInstancedStaticMeshComponent>> MatComponents;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> CollisionHISM = nullptr;
+};
