@@ -18,10 +18,10 @@
 
 namespace
 {
-	const int32 DX[4] = { 0, 1, 0, -1 };
-	const int32 DY[4] = { 1, 0, -1, 0 };
+	const int32 VDX[4] = { 0, 1, 0, -1 };
+	const int32 VDY[4] = { 1, 0, -1, 0 };
 
-	FORCEINLINE int32 CellIndex(int32 X, int32 Y) { return Y * 19 + X; }
+	FORCEINLINE int32 VoxCell(int32 X, int32 Y) { return Y * 19 + X; }
 
 	// 标签位: bit0 = Void, bit1..4 = L0..L3
 	constexpr uint8 DomAll = 0x1F;
@@ -157,8 +157,8 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 			const int32 AY = A / MW;
 			for (int32 S = 0; S < 4; ++S)
 			{
-				const int32 BX = AX + DX[S];
-				const int32 BY = AY + DY[S];
+				const int32 BX = AX + VDX[S];
+				const int32 BY = AY + VDY[S];
 				if (BX < 0 || BY < 0 || BX >= MW || BY >= MH)
 				{
 					continue;
@@ -229,8 +229,8 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 		int32 SameN[5] = { 0, 0, 0, 0, 0 };
 		for (int32 S = 0; S < 4; ++S)
 		{
-			const int32 NX = X + DX[S];
-			const int32 NY = Y + DY[S];
+			const int32 NX = X + VDX[S];
+			const int32 NY = Y + VDY[S];
 			if (NX < 0 || NY < 0 || NX >= MW || NY >= MH)
 			{
 				continue;
@@ -284,7 +284,7 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 		for (int32 X = 0; X < GridW; ++X)
 		{
 			const int32 Lb = FMath::FloorLog2(Dom[MIdx(X / 2, Y / 2)]);
-			OutL[CellIndex(X, Y)] = (Lb == 0) ? LVoid : static_cast<uint8>(Lb - 1);
+			OutL[VoxCell(X, Y)] = (Lb == 0) ? LVoid : static_cast<uint8>(Lb - 1);
 		}
 	}
 	return true;
@@ -343,8 +343,8 @@ bool AWFC3DArenaGenerator_Voxel::BuildBowlField(
 				if (M[A] == LVoid) { continue; }
 				for (int32 S = 1; S <= 2; ++S)
 				{
-					const int32 BX = MX + DX[S];
-					const int32 BY = MY + DY[S];
+					const int32 BX = MX + VDX[S];
+					const int32 BY = MY + VDY[S];
 					if (BX >= MW || BY >= MH) { continue; }
 					const int32 B = MIdx(BX, BY);
 					if (M[B] == LVoid) { continue; }
@@ -360,7 +360,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildBowlField(
 	{
 		for (int32 X = 0; X < GridW; ++X)
 		{
-			OutL[CellIndex(X, Y)] = M[MIdx(X / 2, Y / 2)];
+			OutL[VoxCell(X, Y)] = M[MIdx(X / 2, Y / 2)];
 		}
 	}
 	return true;
@@ -396,13 +396,13 @@ void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 				const int32 AY = A / GridW;
 				for (int32 S = 0; S < 4; ++S)
 				{
-					const int32 BX = AX + DX[S];
-					const int32 BY = AY + DY[S];
+					const int32 BX = AX + VDX[S];
+					const int32 BY = AY + VDY[S];
 					if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 					{
 						continue;
 					}
-					const int32 B = CellIndex(BX, BY);
+					const int32 B = VoxCell(BX, BY);
 					if (Region[B] == -1 && L[B] == L[A])
 					{
 						Region[B] = Rid;
@@ -424,13 +424,13 @@ void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 			int32 Touch[4] = { 0, 0, 0, 0 };
 			for (int32 S = 0; S < 4; ++S)
 			{
-				const int32 BX = AX + DX[S];
-				const int32 BY = AY + DY[S];
+				const int32 BX = AX + VDX[S];
+				const int32 BY = AY + VDY[S];
 				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 				{
 					continue;
 				}
-				const uint8 NL = L[CellIndex(BX, BY)];
+				const uint8 NL = L[VoxCell(BX, BY)];
 				if (NL != LVoid)
 				{
 					++Touch[NL];
@@ -462,20 +462,20 @@ void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 		{
 			for (int32 X = 0; X < GridW; ++X)
 			{
-				const int32 A = CellIndex(X, Y);
+				const int32 A = VoxCell(X, Y);
 				if (L[A] == LVoid)
 				{
 					continue;
 				}
 				for (int32 S = 1; S <= 2; ++S)
 				{
-					const int32 BX = X + DX[S];
-					const int32 BY = Y + DY[S];
+					const int32 BX = X + VDX[S];
+					const int32 BY = Y + VDY[S];
 					if (BX >= GridW || BY >= GridH)
 					{
 						continue;
 					}
-					const int32 B = CellIndex(BX, BY);
+					const int32 B = VoxCell(BX, BY);
 					if (L[B] == LVoid)
 					{
 						continue;
@@ -517,13 +517,13 @@ void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 				const int32 AY = A / GridW;
 				for (int32 S = 0; S < 4; ++S)
 				{
-					const int32 BX = AX + DX[S];
-					const int32 BY = AY + DY[S];
+					const int32 BX = AX + VDX[S];
+					const int32 BY = AY + VDY[S];
 					if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 					{
 						continue;
 					}
-					const int32 B = CellIndex(BX, BY);
+					const int32 B = VoxCell(BX, BY);
 					if (Region[B] == -1 && L[B] == L[A])
 					{
 						Region[B] = Rid;
@@ -541,13 +541,13 @@ void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 			const int32 AY = I / GridW;
 			for (int32 S = 0; S < 4; ++S)
 			{
-				const int32 BX = AX + DX[S];
-				const int32 BY = AY + DY[S];
+				const int32 BX = AX + VDX[S];
+				const int32 BY = AY + VDY[S];
 				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 				{
 					continue;
 				}
-				const int32 B = CellIndex(BX, BY);
+				const int32 B = VoxCell(BX, BY);
 				if (L[B] == LVoid || Region[B] == Region[I])
 				{
 					continue;
@@ -607,13 +607,13 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 			const int32 AY = A / GridW;
 			for (int32 S = 0; S < 4; ++S)
 			{
-				const int32 BX = AX + DX[S];
-				const int32 BY = AY + DY[S];
+				const int32 BX = AX + VDX[S];
+				const int32 BY = AY + VDY[S];
 				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 				{
 					continue;
 				}
-				const int32 B = CellIndex(BX, BY);
+				const int32 B = VoxCell(BX, BY);
 				if (Plan.RegionOf[B] == -1 && Plan.L[B] == Plan.L[A])
 				{
 					Plan.RegionOf[B] = Rid;
@@ -638,14 +638,14 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		{
 			for (int32 S = 1; S <= 2; ++S)
 			{
-				const int32 BX = X + DX[S];
-				const int32 BY = Y + DY[S];
+				const int32 BX = X + VDX[S];
+				const int32 BY = Y + VDY[S];
 				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 				{
 					continue;
 				}
-				const int32 A = CellIndex(X, Y);
-				const int32 B = CellIndex(BX, BY);
+				const int32 A = VoxCell(X, Y);
+				const int32 B = VoxCell(BX, BY);
 				if (Plan.L[A] == LVoid || Plan.L[B] == LVoid
 					|| Plan.RegionOf[A] < 0 || Plan.RegionOf[B] < 0)
 				{
@@ -753,21 +753,21 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		int32 SkipNoApp = 0, SkipRole = 0;
 		for (const FVoxStair& St : Cands)
 		{
-			const int32 LowIdx = CellIndex(St.LowX, St.LowY);
-			const int32 HighIdx = CellIndex(St.LowX + DX[St.Dir],
-				St.LowY + DY[St.Dir]);
+			const int32 LowIdx = VoxCell(St.LowX, St.LowY);
+			const int32 HighIdx = VoxCell(St.LowX + VDX[St.Dir],
+				St.LowY + VDY[St.Dir]);
 			const uint8 LowL = Plan.L[LowIdx];
 			// 实测: 侧向登梯 nav 烘不出 (台阶侧边 25cm 唇沿不被当成可跨步),
 			// 只认正对入口 (低格反方向同层格)。同层侧邻居仍打角色格,
 			// 防止掩体把梯脚围死。
-			const int32 EX = St.LowX - DX[St.Dir];
-			const int32 EY = St.LowY - DY[St.Dir];
+			const int32 EX = St.LowX - VDX[St.Dir];
+			const int32 EY = St.LowY - VDY[St.Dir];
 			if (EX < 0 || EY < 0 || EX >= GridW || EY >= GridH)
 			{
 				++SkipNoApp;
 				continue;
 			}
-			const int32 EntryIdx = CellIndex(EX, EY);
+			const int32 EntryIdx = VoxCell(EX, EY);
 			if (Plan.L[EntryIdx] != LowL || Plan.RoleCells.Contains(EntryIdx))
 			{
 				++SkipNoApp;
@@ -785,13 +785,13 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 			for (int32 S2 = 0; S2 < 4; ++S2)
 			{
 				if (S2 == St.Dir) { continue; }
-				const int32 NX = St.LowX + DX[S2];
-				const int32 NY = St.LowY + DY[S2];
+				const int32 NX = St.LowX + VDX[S2];
+				const int32 NY = St.LowY + VDY[S2];
 				if (NX < 0 || NY < 0 || NX >= GridW || NY >= GridH)
 				{
 					continue;
 				}
-				const int32 NI = CellIndex(NX, NY);
+				const int32 NI = VoxCell(NX, NY);
 				if (Plan.L[NI] == LowL)
 				{
 					Plan.RoleCells.Add(NI);
@@ -810,16 +810,16 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		{
 			for (const FVoxStair& St : Cands)
 			{
-				const int32 LowIdx = CellIndex(St.LowX, St.LowY);
-				const int32 EX = St.LowX - DX[St.Dir];
-				const int32 EY = St.LowY - DY[St.Dir];
+				const int32 LowIdx = VoxCell(St.LowX, St.LowY);
+				const int32 EX = St.LowX - VDX[St.Dir];
+				const int32 EY = St.LowY - VDY[St.Dir];
 				if (EX < 0 || EY < 0 || EX >= GridW || EY >= GridH)
 				{
 					continue;
 				}
-				const int32 EntryIdx = CellIndex(EX, EY);
-				const int32 HighIdx = CellIndex(St.LowX + DX[St.Dir],
-					St.LowY + DY[St.Dir]);
+				const int32 EntryIdx = VoxCell(EX, EY);
+				const int32 HighIdx = VoxCell(St.LowX + VDX[St.Dir],
+					St.LowY + VDY[St.Dir]);
 				if (Plan.RoleCells.Contains(LowIdx) || Plan.RoleCells.Contains(EntryIdx)
 					|| Plan.RoleCells.Contains(HighIdx))
 				{
@@ -829,13 +829,13 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 				bool bFlatOk = true;
 				for (int32 S2 = 0; S2 < 4 && bFlatOk; ++S2)
 				{
-					const int32 NX = EX + DX[S2];
-					const int32 NY = EY + DY[S2];
+					const int32 NX = EX + VDX[S2];
+					const int32 NY = EY + VDY[S2];
 					if (NX < 0 || NY < 0 || NX >= GridW || NY >= GridH)
 					{
 						continue;
 					}
-					const int32 NI = CellIndex(NX, NY);
+					const int32 NI = VoxCell(NX, NY);
 					if (NI == LowIdx)
 					{
 						continue;
@@ -910,13 +910,13 @@ bool AWFC3DArenaGenerator_Voxel::CheckConnectivity(
 		const int32 AY = A / GridW;
 		for (int32 S = 0; S < 4; ++S)
 		{
-			const int32 BX = AX + DX[S];
-			const int32 BY = AY + DY[S];
+			const int32 BX = AX + VDX[S];
+			const int32 BY = AY + VDY[S];
 			if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 			{
 				continue;
 			}
-			const int32 B = CellIndex(BX, BY);
+			const int32 B = VoxCell(BX, BY);
 			if (Visited[B] || Plan.L[B] == LVoid)
 			{
 				continue;
@@ -975,13 +975,13 @@ bool AWFC3DArenaGenerator_Voxel::MergeSmallestUnreached(FVoxPlan& Plan) const
 		const int32 AY = A / GridW;
 		for (int32 S = 0; S < 4; ++S)
 		{
-			const int32 BX = AX + DX[S];
-			const int32 BY = AY + DY[S];
+			const int32 BX = AX + VDX[S];
+			const int32 BY = AY + VDY[S];
 			if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 			{
 				continue;
 			}
-			const int32 B = CellIndex(BX, BY);
+			const int32 B = VoxCell(BX, BY);
 			if (Visited[B] || Plan.L[B] == LVoid)
 			{
 				continue;
@@ -1041,13 +1041,13 @@ bool AWFC3DArenaGenerator_Voxel::MergeSmallestUnreached(FVoxPlan& Plan) const
 			const int32 AY = A / GridW;
 			for (int32 D = 0; D < 4; ++D)
 			{
-				const int32 BX = AX + DX[D];
-				const int32 BY = AY + DY[D];
+				const int32 BX = AX + VDX[D];
+				const int32 BY = AY + VDY[D];
 				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 				{
 					continue;
 				}
-				const int32 B = CellIndex(BX, BY);
+				const int32 B = VoxCell(BX, BY);
 				if (!InComp.Contains(B) && Plan.L[B] != LVoid && !Visited[B])
 				{
 					InComp.Add(B);
@@ -1068,13 +1068,13 @@ bool AWFC3DArenaGenerator_Voxel::MergeSmallestUnreached(FVoxPlan& Plan) const
 		const int32 AY = I / GridW;
 		for (int32 D = 0; D < 4; ++D)
 		{
-			const int32 BX = AX + DX[D];
-			const int32 BY = AY + DY[D];
+			const int32 BX = AX + VDX[D];
+			const int32 BY = AY + VDY[D];
 			if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 			{
 				continue;
 			}
-			const int32 B = CellIndex(BX, BY);
+			const int32 B = VoxCell(BX, BY);
 			if (Plan.L[B] != LVoid && !CompSet.Contains(B))
 			{
 				++Touch[Plan.L[B]];
@@ -1140,13 +1140,13 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 			const int32 AY = A / GridW;
 			for (int32 S = 0; S < 4; ++S)
 			{
-				const int32 BX = AX + DX[S];
-				const int32 BY = AY + DY[S];
+				const int32 BX = AX + VDX[S];
+				const int32 BY = AY + VDY[S];
 				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
 				{
 					continue;
 				}
-				const int32 B = CellIndex(BX, BY);
+				const int32 B = VoxCell(BX, BY);
 				if (Region[B] == -1 && OutPlan.L[B] == OutPlan.L[A])
 				{
 					Region[B] = 1;
@@ -1171,7 +1171,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 	{
 		for (int32 X = 0; X < GridW; ++X)
 		{
-			if (OutPlan.L[CellIndex(X, Y)] == LVoid)
+			if (OutPlan.L[VoxCell(X, Y)] == LVoid)
 			{
 				continue;
 			}
@@ -1231,7 +1231,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 				FString Row;
 				for (int32 DX_ = 0; DX_ < GridW; ++DX_)
 				{
-					const int32 I = CellIndex(DX_, DY_);
+					const int32 I = VoxCell(DX_, DY_);
 					if (OutPlan.L[I] == LVoid) { Row += TEXT("~"); }
 					else if (OutPlan.LowEntry.Contains(I)) { Row += TEXT("l"); }
 					else { Row += FString::Printf(TEXT("%d"), OutPlan.L[I]); }
@@ -1342,7 +1342,7 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(
 	for (const FVoxStair& St : Plan.Stairs)
 	{
 		StairCells.Add((static_cast<int64>(St.LowX) << 32) | St.LowY);
-		StairCells.Add((static_cast<int64>(St.LowX + DX[St.Dir]) << 32) | (St.LowY + DY[St.Dir]));
+		StairCells.Add((static_cast<int64>(St.LowX + VDX[St.Dir]) << 32) | (St.LowY + VDY[St.Dir]));
 	}
 	(void)StairCells;
 
@@ -1351,7 +1351,7 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(
 	{
 		for (int32 X = 0; X < GridW; ++X)
 		{
-			const uint8 L = Plan.L[CellIndex(X, Y)];
+			const uint8 L = Plan.L[VoxCell(X, Y)];
 			if (L == LVoid)
 			{
 				continue;
@@ -1368,11 +1368,11 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(
 	// 步高 25 < AgentMaxStepHeight, 最后一级顶面与高侧柱顶齐平。
 	for (const FVoxStair& St : Plan.Stairs)
 	{
-		const float LowTop = Plan.L[CellIndex(St.LowX, St.LowY)] * LayerH;
+		const float LowTop = Plan.L[VoxCell(St.LowX, St.LowY)] * LayerH;
 		const float LX = St.LowX * CellSize + 200.0f;
 		const float LY = St.LowY * CellSize + 200.0f;
-		const float DxF = DX[St.Dir];
-		const float DyF = DY[St.Dir];
+		const float DxF = VDX[St.Dir];
+		const float DyF = VDY[St.Dir];
 		for (int32 I = 0; I < 8; ++I)
 		{
 			const float Along = -200.0f + (I + 0.5f) * 50.0f;
@@ -1391,7 +1391,7 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(
 	{
 		for (int32 X = 0; X < GridW; ++X)
 		{
-			const int32 Idx = CellIndex(X, Y);
+			const int32 Idx = VoxCell(X, Y);
 			if (Plan.L[Idx] == LVoid || Plan.RoleCells.Contains(Idx)
 				|| Idx == ProbeCell)
 			{
@@ -1409,7 +1409,7 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(
 	{
 		const int32 X = CoverCand[I] % GridW;
 		const int32 Y = CoverCand[I] / GridW;
-		const float Top = Plan.L[CellIndex(X, Y)] * LayerH;
+		const float Top = Plan.L[VoxCell(X, Y)] * LayerH;
 		const float W = Rng.FRandRange(100.0f, 200.0f);
 		const float H = (Rng.FRand() < 0.5f) ? 100.0f : 150.0f;
 		const FVector C(
@@ -1433,15 +1433,15 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 		{
 			for (int32 X = 0; X < GridW; ++X)
 			{
-				const int32 Idx = CellIndex(X, Y);
+				const int32 Idx = VoxCell(X, Y);
 				if (Used[Idx] || Plan.L[Idx] != Lev)
 				{
 					continue;
 				}
 				// 贪心最大矩形
 				int32 RW = 0;
-				while (X + RW < GridW && !Used[CellIndex(X + RW, Y)]
-					&& Plan.L[CellIndex(X + RW, Y)] == Lev)
+				while (X + RW < GridW && !Used[VoxCell(X + RW, Y)]
+					&& Plan.L[VoxCell(X + RW, Y)] == Lev)
 				{
 					++RW;
 				}
@@ -1455,7 +1455,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 					bool bRow = true;
 					for (int32 K = 0; K < RW; ++K)
 					{
-						const int32 J = CellIndex(X + K, Y + RH);
+						const int32 J = VoxCell(X + K, Y + RH);
 						if (Used[J] || Plan.L[J] != Lev)
 						{
 							bRow = false;
@@ -1469,7 +1469,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 				{
 					for (int32 J = 0; J < RH; ++J)
 					{
-						Used[CellIndex(X + K, Y + J)] = 1;
+						Used[VoxCell(X + K, Y + J)] = 1;
 					}
 				}
 
@@ -1506,13 +1506,13 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 				continue;
 			}
 			// 面心 = 格边中点沿 dir 移出
-			const float FX = X * CellSize + 200.0f + DX[S] * (200.0f + Out);
-			const float FY = Y * CellSize + 200.0f + DY[S] * (200.0f + Out);
+			const float FX = X * CellSize + 200.0f + VDX[S] * (200.0f + Out);
+			const float FY = Y * CellSize + 200.0f + VDY[S] * (200.0f + Out);
 			FVector Pos(FX, FY, Z);
 			// 沿面切向偏移
 			const int32 T = (S + 1) % 4;
-			Pos.X += DX[T] * (Along - 200.0f);
-			Pos.Y += DY[T] * (Along - 200.0f);
+			Pos.X += VDX[T] * (Along - 200.0f);
+			Pos.Y += VDY[T] * (Along - 200.0f);
 			const float R = Rng.FRand();
 			const EVoxMat M = (R < 0.05f) ? EVoxMat::Glow : (R < 0.08f) ? EVoxMat::Glass : EVoxMat::Concrete;
 			const FVector Size = (S == 1 || S == 3)
@@ -1526,7 +1526,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 	{
 		for (int32 X = 0; X < GridW; ++X)
 		{
-			const uint8 L = Plan.L[CellIndex(X, Y)];
+			const uint8 L = Plan.L[VoxCell(X, Y)];
 			if (L == LVoid)
 			{
 				continue;
@@ -1534,8 +1534,8 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 			const float Top = L * LayerH;
 			for (int32 S = 0; S < 4; ++S)
 			{
-				const int32 NX = X + DX[S];
-				const int32 NY = Y + DY[S];
+				const int32 NX = X + VDX[S];
+				const int32 NY = Y + VDY[S];
 				float LoTop = -100.0f;
 				bool bFace = false;
 				if (NX < 0 || NY < 0 || NX >= GridW || NY >= GridH)
@@ -1544,7 +1544,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 				}
 				else
 				{
-					const uint8 NL = Plan.L[CellIndex(NX, NY)];
+					const uint8 NL = Plan.L[VoxCell(NX, NY)];
 					if (NL == LVoid)
 					{
 						bFace = true;
@@ -1568,7 +1568,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 	{
 		for (int32 X = 0; X < GridW; ++X)
 		{
-			if (Plan.L[CellIndex(X, Y)] == LVoid)
+			if (Plan.L[VoxCell(X, Y)] == LVoid)
 			{
 				continue;
 			}
@@ -1577,10 +1577,10 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 			{
 				for (int32 S = 0; S < 4 && !bEdge; ++S)
 				{
-					const int32 NX = X + DX[S];
-					const int32 NY = Y + DY[S];
+					const int32 NX = X + VDX[S];
+					const int32 NY = Y + VDY[S];
 					if (NX < 0 || NY < 0 || NX >= GridW || NY >= GridH
-						|| Plan.L[CellIndex(NX, NY)] == LVoid)
+						|| Plan.L[VoxCell(NX, NY)] == LVoid)
 					{
 						bEdge = true;
 					}
@@ -1615,7 +1615,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 	// ---- 4) 楼梯视觉: 8 级台阶, 25 高 x 50 深 x 300 宽 ----
 	for (const FVoxStair& St : Plan.Stairs)
 	{
-		const float LowTop = Plan.L[CellIndex(St.LowX, St.LowY)] * LayerH;
+		const float LowTop = Plan.L[VoxCell(St.LowX, St.LowY)] * LayerH;
 		const float LX = St.LowX * CellSize + 200.0f;
 		const float LY = St.LowY * CellSize + 200.0f;
 		for (int32 I = 0; I < 8; ++I)
@@ -1624,7 +1624,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 			const float Along = -200.0f + (I + 0.5f) * 50.0f;
 			const float TopZ = LowTop + (I + 1) * 25.0f;
 			const FVector C(
-				LX + DX[St.Dir] * Along, LY + DY[St.Dir] * Along,
+				LX + VDX[St.Dir] * Along, LY + VDY[St.Dir] * Along,
 				(LowTop - 100.0f + TopZ) * 0.5f);
 			const FVector Size = (St.Dir == 1 || St.Dir == 3)
 				? FVector(50.0f, 400.0f, TopZ - LowTop + 100.0f)
@@ -1648,9 +1648,9 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		if (Fr < 0.92f) { return EVoxMat::Marble; }
 		return (Fr < 0.96f) ? EVoxMat::Glow : EVoxMat::Glass;
 	};
-	auto PushBox = [&](EVoxMat M, const FVector& C, float Sz)
+	auto PushBox = [&](EVoxMat M, const FVector& C, float Sz, const FRotator& Rot)
 	{
-		const FTransform T(FRotator::ZeroRotator, C, FVector(Sz / 100.0f));
+		const FTransform T(Rot, C, FVector(Sz / 100.0f));
 		switch (M)
 		{
 		case EVoxMat::Concrete: OutConcrete.Add(T); break;
@@ -1675,10 +1675,10 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		{
 			return;
 		}
-		// 方形半边 4600 (3800..8400), 目标 max-norm 5500 (>800 边距)
+		// 方形半边 4600 (3800..8400), 目标 max-norm 6000 (>1400 边距)
 		if (FMath::Abs(P.X - Center.X) < 4600.0f && FMath::Abs(P.Y - Center.Y) < 4600.0f)
 		{
-			const float T = 5500.0f / M;
+			const float T = 6000.0f / M;
 			P.X = Center.X + DX_ * T;
 			P.Y = Center.Y + DY_ * T;
 		}
@@ -1693,20 +1693,26 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		const float Rad = FMath::Sqrt(FMath::Max(0.0f, 1.0f - Z * Z));
 		const float Theta = Golden * I;
 		const FVector Dir(Rad * FMath::Cos(Theta), Rad * FMath::Sin(Theta), Z);
-		FVector P = Center + Dir * R;
-		if (P.Z > 0.35f * R)
+		FVector P = Center + Dir * (R * 1.18f);
+		if (P.Z > 0.15f * R)
 		{
 			continue;
 		}
 		PushOutside(P);
-		// 噪声阈值保留 ~35%
-		if (ValueNoise3(Dir.X * 2.3f + 7.0f, Dir.Y * 2.3f + 3.0f, Dir.Z * 2.3f + 11.0f) < 0.45f)
+		// 低频噪声 -> 成簇破洞而不是均匀盐粒
+		if (ValueNoise3(Dir.X * 1.4f + 7.0f, Dir.Y * 1.4f + 3.0f, Dir.Z * 1.4f + 11.0f) < 0.42f)
 		{
 			continue;
 		}
-		const float Mother = Rng.FRandRange(400.0f, 1200.0f);
+		// 双峰尺寸: 多数中块 + 少量巨块
+		const float RF = Rng.FRand();
+		const float Mother = (RF < 0.75f) ? Rng.FRandRange(300.0f, 800.0f)
+			: (RF < 0.95f) ? Rng.FRandRange(800.0f, 1500.0f)
+			: Rng.FRandRange(1500.0f, 2200.0f);
 		const EVoxMat M = MatPick(Rng.FRand());
-		PushBox(M, P, Mother);
+		const FRotator MotherRot(Rng.FRandRange(-9.0f, 9.0f),
+			Rng.FRandRange(0.0f, 360.0f), Rng.FRandRange(-9.0f, 9.0f));
+		PushBox(M, P, Mother, MotherRot);
 		// 子块簇: 3-12 个, 边长逐级减半, 沿切向偏移
 		const int32 Kids = Rng.RandRange(3, 12);
 		const FVector T1 = FVector::CrossProduct(Dir, FVector::UpVector).GetSafeNormal();
@@ -1720,7 +1726,9 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 				+ Dir * Rng.FRandRange(-Mother * 0.3f, Mother * 0.3f);
 			FVector KP = P + Off;
 			PushOutside(KP);
-			PushBox(MatPick(Rng.FRand()), KP, FMath::Max(Sz, 50.0f));
+			const FRotator KRot(Rng.FRandRange(-20.0f, 20.0f),
+				Rng.FRandRange(0.0f, 360.0f), Rng.FRandRange(-20.0f, 20.0f));
+			PushBox(MatPick(Rng.FRand()), KP, FMath::Max(Sz, 50.0f), KRot);
 		}
 	}
 
@@ -1748,17 +1756,18 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		}
 	}
 
-	// 漂浮碎屑
-	const int32 Debris = Rng.RandRange(150, 250);
+	// 漂浮碎屑: 偏向内侧/下方, 越远越稀
+	const int32 Debris = Rng.RandRange(130, 200);
 	for (int32 I = 0; I < Debris; ++I)
 	{
 		const float Ang = Rng.FRandRange(0.0f, 2.0f * PI);
-		const float Dist = Rng.FRandRange(4200.0f, R * 0.9f);
+		const float Dist = 4000.0f + (R * 1.05f - 4000.0f) * FMath::Square(Rng.FRand());
 		FVector P(Center.X + FMath::Cos(Ang) * Dist,
 			Center.Y + FMath::Sin(Ang) * Dist,
-			Rng.FRandRange(-3000.0f, 2000.0f));
+			Rng.FRandRange(-3400.0f, 1200.0f));
 		PushOutside(P);
-		PushBox(MatPick(Rng.FRand()), P, Rng.FRandRange(25.0f, 100.0f));
+		PushBox(MatPick(Rng.FRand()), P, Rng.FRandRange(25.0f, 100.0f),
+			FRotator::ZeroRotator);
 	}
 }
 
@@ -1836,9 +1845,9 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 	int32 MaxHighL = -1;
 	for (const FVoxStair& St : Plan.Stairs)
 	{
-		const int32 HX = St.LowX + DX[St.Dir];
-		const int32 HY = St.LowY + DY[St.Dir];
-		const int32 HighL = Plan.L[CellIndex(HX, HY)];
+		const int32 HX = St.LowX + VDX[St.Dir];
+		const int32 HY = St.LowY + VDY[St.Dir];
+		const int32 HighL = Plan.L[VoxCell(HX, HY)];
 		const FVector Landing(HX * CellSize + 200.0f, HY * CellSize + 200.0f,
 			HighL * LayerH + 20.0f);
 		LastResult.LandingProbes.Add(Landing);
@@ -1851,10 +1860,10 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 	if (Plan.Stairs.Num() > 0)
 	{
 		const FVoxStair& St = Plan.Stairs[0];
-		const float LowTop = Plan.L[CellIndex(St.LowX, St.LowY)] * LayerH;
+		const float LowTop = Plan.L[VoxCell(St.LowX, St.LowY)] * LayerH;
 		LastResult.StairMidProbe = FVector(
-			(St.LowX + 0.5f + DX[St.Dir] * 0.5f) * CellSize,
-			(St.LowY + 0.5f + DY[St.Dir] * 0.5f) * CellSize,
+			(St.LowX + 0.5f + VDX[St.Dir] * 0.5f) * CellSize,
+			(St.LowY + 0.5f + VDY[St.Dir] * 0.5f) * CellSize,
 			LowTop + 100.0f);
 	}
 	// 地面探针: L=0 非角色格, 4 邻居也全是 L=0 非角色格, 离楼梯最远;
@@ -1868,7 +1877,7 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 		{
 			for (int32 X = 0; X < GridW; ++X)
 			{
-				const int32 I = CellIndex(X, Y);
+				const int32 I = VoxCell(X, Y);
 				if (Plan.L[I] != 0 || Plan.RoleCells.Contains(I))
 				{
 					continue;
@@ -1878,10 +1887,10 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 					bool bOk = true;
 					for (int32 S = 0; S < 4 && bOk; ++S)
 					{
-						const int32 NX = X + DX[S];
-						const int32 NY = Y + DY[S];
+						const int32 NX = X + VDX[S];
+						const int32 NY = Y + VDY[S];
 						const int32 NI = (NX >= 0 && NY >= 0 && NX < GridW && NY < GridH)
-							? CellIndex(NX, NY) : INDEX_NONE;
+							? VoxCell(NX, NY) : INDEX_NONE;
 						if (NI == INDEX_NONE || Plan.L[NI] != 0
 							|| Plan.RoleCells.Contains(NI))
 						{

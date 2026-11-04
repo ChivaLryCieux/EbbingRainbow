@@ -191,13 +191,16 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 			this, [this, Center]()
 			{
 				// 临时俯瞰相机: 比战术镜头看得全, 便于离线检查整场构图
+				// -AutoShotTop 用正俯机位评估平面构图/破碎外壳剪影
+				const bool bTop = FParse::Param(FCommandLine::Get(), TEXT("AutoShotTop"));
 				FActorSpawnParameters Params;
 				Params.SpawnCollisionHandlingOverride =
 					ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 				ACameraActor* ShotCam = GetWorld()->SpawnActor<ACameraActor>(
 					ACameraActor::StaticClass(),
-					Center + FVector(0.0f, 0.0f, 5600.0f),
-					FRotator(-58.0f, -32.0f, 0.0f),
+					Center + FVector(0.0f, 0.0f, bTop ? 10000.0f : 5600.0f),
+					bTop ? FRotator(-90.0f, 0.0f, 0.0f)
+						 : FRotator(-58.0f, -32.0f, 0.0f),
 					Params);
 				if (ShotCam)
 				{
