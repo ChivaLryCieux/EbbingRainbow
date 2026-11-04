@@ -55,7 +55,8 @@ private:
 		int32 W = 1;
 		int32 H = 1;
 		uint8 Lev = 0;
-		float TopOff = 0.0f;
+		uint8 bPinned = 0;           // 含楼梯角色格/探针格: 顶面锁定 L*200
+		float TopOff = 0.0f;         // Perlin 起伏 (cm, 可负)
 		float Bottom = -100.0f;
 		EVoxMat Mat = EVoxMat::Concrete;
 	};

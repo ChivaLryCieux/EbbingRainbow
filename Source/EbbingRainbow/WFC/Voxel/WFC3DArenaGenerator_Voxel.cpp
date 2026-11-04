@@ -1317,6 +1317,9 @@ void AWFC3DArenaGenerator_Voxel::PartitionBlocks(
 	// 中块切分: 1x1 / 2x1 / 1x2 / 2x2 拼合, 平台不再是大板+碎粒而是
 	// 中等块拼缝; 独立随机流 (Seed+7919) 不影响地形/楼梯序列。
 	FRandomStream BR(Seed + 7919);
+	// Perlin 噪声原点偏移 (种子化)
+	const float NoOX = (Seed % 1013) * 0.731f + 11.3f;
+	const float NoOY = (Seed % 797) * 0.417f + 3.7f;
 	Plan.Blocks.Reset();
 	FMemory::Memset(Plan.BlockOf, 0xFF, sizeof(Plan.BlockOf));
 
@@ -1380,8 +1383,7 @@ void AWFC3DArenaGenerator_Voxel::PartitionBlocks(
 			Bl.Lev = Lev;
 			const float Cx = X + W * 0.5f;
 			const float Cy = Y + H * 0.5f;
-			const float N = ValueNoise3(Cx * 0.35f + 17.0f, Cy * 0.35f + 5.0f,
-				(Seed % 97) * 0.13f);
+
 			bool bRole = (ProbeCell == Idx);
 			for (int32 DY_ = 0; DY_ < H && !bRole; ++DY_)
 			{
@@ -1394,12 +1396,19 @@ void AWFC3DArenaGenerator_Voxel::PartitionBlocks(
 					}
 				}
 			}
-			Bl.TopOff = (!bRole && N > 0.58f) ? 25.0f : 0.0f;
+			Bl.bPinned = bRole ? 1 : 0;
+			// Perlin 双频起伏: 宏观 45cm + 微观 8cm+抖动; pinned 块锁 0
+			const float Macro = 45.0f * FMath::PerlinNoise2D(
+				FVector2D(Cx * 0.12f + NoOX, Cy * 0.12f + NoOY));
+			const float Micro = 8.0f * FMath::PerlinNoise2D(
+				FVector2D(Cx * 0.83f + NoOY, Cy * 0.83f + NoOX))
+				+ BR.FRandRange(-4.0f, 4.0f); // 每块必抽, 固定流序
+			Bl.TopOff = bRole ? 0.0f
+				: FMath::Clamp(Macro + Micro, -55.0f, 55.0f);
 			static const float BottomSteps[4] = { 0.0f, 200.0f, 400.0f, 600.0f };
 			Bl.Bottom = -100.0f - BottomSteps[BR.RandRange(0, 3)];
-			const float M = ValueNoise3(Cx * 0.22f + 3.0f, Cy * 0.22f + 41.0f, 7.0f);
-			Bl.Mat = (M > ((Lev == 0) ? 0.66f : 0.56f))
-				? EVoxMat::Marble : EVoxMat::Concrete;
+			// 平台基底先全混凝土, 大理石以后只做点缀
+			Bl.Mat = EVoxMat::Concrete;
 
 			const int32 BIdx = Plan.Blocks.Add(Bl);
 			for (int32 DY_ = 0; DY_ < H; ++DY_)
@@ -1411,6 +1420,118 @@ void AWFC3DArenaGenerator_Voxel::PartitionBlocks(
 				}
 			}
 		}
+	}
+
+	// 自检修复: 任何非空格必须落在合法块里 (异常值补 1x1 兜底块 + 诊断日志)
+	for (int32 I = 0; I < GridW * GridH; ++I)
+	{
+		if (Plan.L[I] == LVoid)
+		{
+			continue;
+		}
+		const int32 B = Plan.BlockOf[I];
+		if (B >= 0 && B < Plan.Blocks.Num())
+		{
+			continue;
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Voxel] bad BlockOf[%d]=%d (L=%d, blocks=%d) -> 1x1 fallback block"),
+			I, B, Plan.L[I], Plan.Blocks.Num());
+		FVoxBlock Bl;
+		Bl.X = I % GridW; Bl.Y = I / GridW; Bl.W = 1; Bl.H = 1;
+		Bl.Lev = Plan.L[I]; Bl.Bottom = -100.0f; Bl.Mat = EVoxMat::Concrete;
+		Plan.BlockOf[I] = static_cast<int16>(Plan.Blocks.Add(Bl));
+	}
+
+	// ---- nav 安全松弛: 同层相邻块 |Δh|<=30 (step 35 留余量) ----
+	// 块邻接 = 同层且共享至少一条格边
+	TSet<uint32> AdjPairs;
+	for (int32 Y = 0; Y < GridH; ++Y)
+	{
+		for (int32 X = 0; X < GridW; ++X)
+		{
+			const int32 A = Plan.BlockOf[VoxCell(X, Y)];
+			if (A < 0 || A >= Plan.Blocks.Num())
+			{
+				continue;
+			}
+			for (int32 S = 1; S <= 2; ++S)
+			{
+				const int32 BX = X + VDX[S];
+				const int32 BY = Y + VDY[S];
+				if (BX >= GridW || BY >= GridH)
+				{
+					continue;
+				}
+				const int32 B = Plan.BlockOf[VoxCell(BX, BY)];
+				if (B < 0 || B >= Plan.Blocks.Num() || B == A
+					|| Plan.Blocks[B].Lev != Plan.Blocks[A].Lev)
+				{
+					continue;
+				}
+				AdjPairs.Add((A < B) ? ((A << 16) | B) : ((B << 16) | A));
+			}
+		}
+	}
+	TArray<TPair<int32, int32>> Adj;
+	for (uint32 P : AdjPairs)
+	{
+		Adj.Add(TPair<int32, int32>(P >> 16, P & 0xFFFF));
+	}
+	for (int32 Pass = 0; Pass < 64; ++Pass)
+	{
+		bool bAny = false;
+		for (TPair<int32, int32>& P : Adj)
+		{
+			for (int32 T = 0; T < 2; ++T)
+			{
+				FVoxBlock& B0 = Plan.Blocks[T ? P.Value : P.Key];
+				const FVoxBlock& B1 = Plan.Blocks[T ? P.Key : P.Value];
+				if (B0.bPinned)
+				{
+					continue;
+				}
+				const float NewH = FMath::Clamp(B0.TopOff,
+					B1.TopOff - 30.0f, B1.TopOff + 30.0f);
+				if (FMath::Abs(NewH - B0.TopOff) > 0.01f)
+				{
+					B0.TopOff = NewH;
+					bAny = true;
+				}
+			}
+		}
+		if (!bAny)
+		{
+			break;
+		}
+	}
+	// 整厘米化 + 统计
+	float HMin = FLT_MAX;
+	float HMax = -FLT_MAX;
+	float MaxAdj = 0.0f;
+	int32 Pinned = 0;
+	for (FVoxBlock& B : Plan.Blocks)
+	{
+		B.TopOff = FMath::RoundToFloat(B.TopOff);
+		HMin = FMath::Min(HMin, B.TopOff);
+		HMax = FMath::Max(HMax, B.TopOff);
+		Pinned += B.bPinned;
+	}
+	for (TPair<int32, int32>& P : Adj)
+	{
+		MaxAdj = FMath::Max(MaxAdj,
+			FMath::Abs(Plan.Blocks[P.Key].TopOff - Plan.Blocks[P.Value].TopOff));
+	}
+	if (Plan.Blocks.Num() > 0)
+	{
+		if (MaxAdj > 30.0f)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Voxel] Relief: maxAdj %.0f exceeds nav-safe 30"), MaxAdj);
+		}
+		UE_LOG(LogTemp, Log,
+			TEXT("[Voxel] Relief: min=%.0f max=%.0f maxAdj=%.0f pinned=%d blocks=%d"),
+			HMin, HMax, MaxAdj, Pinned, Plan.Blocks.Num());
 	}
 }
 
@@ -1526,8 +1647,8 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(
 		const FVector Size = bXLong ? FVector(400.0f, 200.0f, H)
 			: FVector(200.0f, 400.0f, H);
 		AddCol(C, Size);
-		// 掩体可见部分用大理石 (不可见碰撞已挡导航)
-		AddBox(EVoxMat::Marble, C, Size);
+		// 掩体可见部分混凝土 (不可见碰撞已挡导航)
+		AddBox(EVoxMat::Concrete, C, Size);
 	}
 }
 
@@ -1567,7 +1688,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 		const int32 T = (S + 1) % 4;
 		P2.X += VDX[T] * TOff;
 		P2.Y += VDY[T] * TOff;
-		const EVoxMat M = (Rng.FRand() < 0.85f) ? EVoxMat::Concrete : EVoxMat::Marble;
+		const EVoxMat M = EVoxMat::Concrete;
 		const FVector Size = (S == 1 || S == 3)
 			? FVector(Thick, Along, Height)
 			: FVector(Along, Thick, Height);
@@ -1605,7 +1726,8 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 					else if (NL < L)
 					{
 						bFace = true;
-						LoTop = NL * LayerH;
+						LoTop = NL * LayerH
+							+ Plan.Blocks[Plan.BlockOf[VoxCell(NX, NY)]].TopOff;
 					}
 				}
 				if (bFace && Top > LoTop + 20.0f)
@@ -1666,7 +1788,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 		}
 	}
 
-	// ---- 4) 楼梯视觉: 8 级台阶, 25 高 x 50 深 x 300 宽 ----
+	// ---- 4) 楼梯视觉: 8 级台阶, 25 高 x 50 深, 混凝土 ----
 	for (const FVoxStair& St : Plan.Stairs)
 	{
 		const float LowTop = Plan.L[VoxCell(St.LowX, St.LowY)] * LayerH;
@@ -1683,7 +1805,7 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 			const FVector Size = (St.Dir == 1 || St.Dir == 3)
 				? FVector(50.0f, 400.0f, TopZ - LowTop + 100.0f)
 				: FVector(400.0f, 50.0f, TopZ - LowTop + 100.0f);
-			AddBox(EVoxMat::Marble, C, Size);
+			AddBox(EVoxMat::Concrete, C, Size);
 		}
 	}
 }

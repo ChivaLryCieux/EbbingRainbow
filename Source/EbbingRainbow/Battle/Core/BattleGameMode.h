@@ -143,6 +143,8 @@ private:
 	/** 本场对应的路线节点 / 遭遇种子 */
 	int32 PendingNodeId = INDEX_NONE;
 	int32 PendingEncounterSeed = 0;
+	/** -1=默认生成器; 2=自然岛 (BattleNature 节点) */
+	int32 PendingGeneratorChoice = -1;
 	/** 战斗单位 -> 队伍下标的映射（阵亡成员不生成，所以不能按下标硬对） */
 	TArray<int32> PlayerPartyIndices;
 	FTimerHandle AutoWinTimerHandle;

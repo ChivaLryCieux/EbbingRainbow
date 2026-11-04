@@ -85,6 +85,9 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 				{
 					PendingNodeId = Node->Id;
 					PendingEncounterSeed = Node->EncounterSeed;
+					// 自然战斗节点 -> Nature 生成器; 其余按默认 (Voxel)
+					PendingGeneratorChoice =
+						(Node->Type == ERouteNodeType::BattleNature) ? 2 : -1;
 					bRunBattle = true;
 					UE_LOG(LogTemp, Log, TEXT("[Battle] 来自航线图节点 %d (第 %d 层, 遭遇种子 %d)"),
 						Node->Id, Node->Layer + 1, Node->EncounterSeed);
@@ -104,6 +107,7 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 		{
 			// 在 BeginPlay 生成之前写入本场战斗的三参数（后续可改为从 RunState 读取）
 			Arena->Style = ArenaStyle;
+			Arena->GeneratorChoice = PendingGeneratorChoice;
 			Arena->GridCells = ArenaScale;
 			Arena->StyleTable = WFCStyleTable;
 			if (bRunBattle)
@@ -214,6 +218,13 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 				GetWorldTimerManager().SetTimer(AutoShotTimerHandle, FTimerDelegate::CreateWeakLambda(
 					this, [this]()
 					{
+						if (FParse::Param(FCommandLine::Get(), TEXT("ShowNav")))
+						{
+							if (APlayerController* PC2 = GetWorld()->GetFirstPlayerController())
+							{
+								PC2->ConsoleCommand(TEXT("show Navigation"));
+							}
+						}
 						FScreenshotRequest::RequestScreenshot(true);
 						UE_LOG(LogTemp, Log, TEXT("[Battle] AutoShot: 已请求截图。"));
 					}), 2.5f, false);

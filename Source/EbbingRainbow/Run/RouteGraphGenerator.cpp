@@ -4,6 +4,16 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogRouteGen, Log, All);
 
+namespace
+{
+	/** 战斗节点细分为体素/自然两种场景 (种子化分流) */
+	ERouteNodeType PickBattleType(FRandomStream& Rng, const FRouteGenSettings& Settings)
+	{
+		return (Rng.FRand() < Settings.NatureBattleChance)
+			? ERouteNodeType::BattleNature : ERouteNodeType::Battle;
+	}
+}
+
 bool FRouteGraphGenerator::Generate(int32 Seed, const FRouteGenSettings& Settings, FRouteGraph& OutGraph, FString* OutReport)
 {
 	if (Settings.NumLayers < 3 || Settings.NumSlots < 2
@@ -107,7 +117,7 @@ bool FRouteGraphGenerator::BuildGraph(FRandomStream& Rng, int32 Seed, const FRou
 	}
 
 	// 终点层：唯一 Boss 节点，固定为战斗
-	LayerIds[NumLayers - 1].Add(AddNode(NumLayers - 1, Settings.NumSlots / 2, ERouteNodeType::Battle));
+	LayerIds[NumLayers - 1].Add(AddNode(NumLayers - 1, Settings.NumSlots / 2, PickBattleType(Rng, Settings)));
 
 	// 相邻层连边
 	for (int32 Layer = 0; Layer < NumLayers - 1; ++Layer)
@@ -120,13 +130,13 @@ bool FRouteGraphGenerator::BuildGraph(FRandomStream& Rng, int32 Seed, const FRou
 	{
 		for (const int32 Id : LayerIds[Layer])
 		{
-			OutGraph.Nodes[Id].Type = (Rng.FRand() < Settings.BattleChance) ? ERouteNodeType::Battle : ERouteNodeType::Safe;
+			OutGraph.Nodes[Id].Type = (Rng.FRand() < Settings.BattleChance) ? PickBattleType(Rng, Settings) : ERouteNodeType::Safe;
 		}
 	}
 
 	OutGraph.StartNodeId = LayerIds[0][0];
 	OutGraph.EndNodeId = LayerIds[NumLayers - 1][0];
-	OutGraph.Nodes[OutGraph.EndNodeId].Type = ERouteNodeType::Battle;
+	OutGraph.Nodes[OutGraph.EndNodeId].Type = PickBattleType(Rng, Settings);
 
 	// 约束修正：保证任意路径上的战斗数达标
 	EnforceMinBattles(OutGraph, Settings);
@@ -263,6 +273,9 @@ int32 FRouteGraphGenerator::ComputeMinBattlesPerPath(const FRouteGraph& Graph)
 
 void FRouteGraphGenerator::EnforceMinBattles(FRouteGraph& Graph, const FRouteGenSettings& Settings)
 {
+	// 种子化分流: EnforceMinBattles 没有传入 Rng, 从图种子派生一条确定性流
+	FRandomStream TypeRng(Graph.Seed * 31 + 7);
+
 	// 最多翻转"中间层节点总数"次，足够把最差路径补到目标值。
 	const int32 MaxFlips = FMath::Max(1, Graph.Nodes.Num());
 	for (int32 Flip = 0; Flip < MaxFlips; ++Flip)
@@ -283,7 +296,7 @@ void FRouteGraphGenerator::EnforceMinBattles(FRouteGraph& Graph, const FRouteGen
 			FRouteNode& Node = Graph.Nodes[Id];
 			if (Id != Graph.StartNodeId && !IsRouteNodeCombat(Node.Type))
 			{
-				Node.Type = ERouteNodeType::Battle;
+				Node.Type = PickBattleType(TypeRng, Settings);
 				bFlipped = true;
 				break;
 			}

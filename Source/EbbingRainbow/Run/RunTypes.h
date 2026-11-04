@@ -20,6 +20,8 @@ enum class ERouteNodeType : uint8
 {
 	Safe   UMETA(DisplayName = "安全节点"),
 	Battle UMETA(DisplayName = "战斗节点"),
+	/** 自然漂浮岛战斗 (Nature 生成器) */
+	BattleNature UMETA(DisplayName = "自然战斗"),
 
 	/** 哨兵：不是合法类型，仅用于表长度/遍历。新增类型请加在这一行之前。 */
 	Count  UMETA(Hidden)
@@ -177,6 +179,10 @@ struct EBBINGRAINBOW_API FRouteGenSettings
 	/** 中间层节点初始为战斗的概率（随后会被"每路径至少 N 战"修正）。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Route")
 	float BattleChance = 0.55f;
+
+	/** 战斗节点是自然岛场景的概率 (其余为体素场景)。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Route")
+	float NatureBattleChance = 0.4f;
 
 	/** 生成失败（校验不过）时最多重试几次；每次重试使用派生种子，仍然完全确定。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Route")
