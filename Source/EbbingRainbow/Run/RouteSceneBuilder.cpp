@@ -162,10 +162,11 @@ void ARouteSceneBuilder::BuildScene(URunSubsystem* Run)
 	}
 
 	// ---- 类型色辉光材质 (类型表 -> 同色 MID) ----
-	UMaterialInstanceDynamic* MIDSafe  = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::Safe).Color, 0.9f);
-	UMaterialInstanceDynamic* MIDVox   = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::Battle).Color, 1.1f);
-	UMaterialInstanceDynamic* MIDNat   = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::BattleNature).Color, 1.1f);
-	UMaterialInstanceDynamic* MIDCur   = MakeGlowMID(FLinearColor(1.0f, 0.95f, 0.75f), 1.5f);
+	// 信标用类型色: 强度压到不 clip 的程度, 保持色相可读 (野=绿 / 战=橙红 / 安=青)
+	UMaterialInstanceDynamic* MIDSafe  = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::Safe).Color, 0.75f);
+	UMaterialInstanceDynamic* MIDVox   = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::Battle).Color, 0.85f);
+	UMaterialInstanceDynamic* MIDNat   = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::BattleNature).Color, 0.9f);
+	UMaterialInstanceDynamic* MIDCur   = MakeGlowMID(FLinearColor(1.0f, 0.92f, 0.68f), 1.35f);
 	UMaterialInstanceDynamic* MIDBeam  = MakeGlowMID(FLinearColor(0.35f, 0.55f, 0.95f), 0.40f);
 	UMaterialInstanceDynamic* MIDStar  = MakeGlowMID(FLinearColor(0.75f, 0.85f, 1.0f), 0.7f);
 	UMaterialInstanceDynamic* MIDDark  = MakeGlowMID(FLinearColor(0.05f, 0.065f, 0.11f), 0.06f);

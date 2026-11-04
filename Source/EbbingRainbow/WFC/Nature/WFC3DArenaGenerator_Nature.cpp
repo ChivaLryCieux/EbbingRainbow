@@ -286,9 +286,9 @@ bool AWFC3DArenaGenerator_Nature::SampleHeight(
 	const float H00 = F.H[Idx],            H10 = F.H[Idx + 1];
 	const float H01 = F.H[Idx + N],        H11 = F.H[Idx + N + 1];
 	OutH = FMath::Lerp(FMath::Lerp(H00, H10, FX), FMath::Lerp(H01, H11, FX), FY);
-	const float DX = (F.H[Idx + 1] - F.H[Idx - 1]) / (2.0f * Step);
-	const float DY = (F.H[Idx + N] - F.H[Idx - N]) / (2.0f * Step);
-	OutSlopeDeg = FMath::RadiansToDegrees(FMath::Atan(FMath::Sqrt(DX * DX + DY * DY)));
+	const float SDX = (F.H[Idx + 1] - F.H[Idx - 1]) / (2.0f * Step);
+	const float SDY = (F.H[Idx + N] - F.H[Idx - N]) / (2.0f * Step);
+	OutSlopeDeg = FMath::RadiansToDegrees(FMath::Atan(FMath::Sqrt(SDX * SDX + SDY * SDY)));
 	return true;
 }
 
@@ -317,9 +317,9 @@ void AWFC3DArenaGenerator_Nature::BuildTerrainMesh(const FNatField& F)
 			// 法线: 中心差分 (边缘单向)
 			const int32 Im = FMath::Max(I - 1, 0), Ip = FMath::Min(I + 1, N - 1);
 			const int32 Jm = FMath::Max(J - 1, 0), Jp = FMath::Min(J + 1, N - 1);
-			const float DX = (F.H[J * N + Ip] - F.H[J * N + Im]) / ((Ip - Im) * Step);
-			const float DY = (F.H[Jp * N + I] - F.H[Jm * N + I]) / ((Jp - Jm) * Step);
-			Norms[Idx] = FVector(-DX, -DY, 1.0f).GetSafeNormal();
+			const float SDX = (F.H[J * N + Ip] - F.H[J * N + Im]) / ((Ip - Im) * Step);
+			const float SDY = (F.H[Jp * N + I] - F.H[Jm * N + I]) / ((Jp - Jm) * Step);
+			Norms[Idx] = FVector(-SDX, -SDY, 1.0f).GetSafeNormal();
 		}
 	}
 	for (int32 J = 0; J < N - 1; ++J)

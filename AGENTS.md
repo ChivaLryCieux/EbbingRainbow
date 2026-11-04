@@ -44,7 +44,29 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
 
 控制台调试命令：`ER.ArchLayout -1|0..6`（-1=种子自动选原型）、
 `ER.ArchDump 1`（ASCII 平面图进日志）、`ER.AutoShot 1`（竞技场就绪后
-自动切俯瞰相机截图）、`RouteDump`、`ER.AutoWin/AutoPlay`、`Paint.Style`。
+自动切俯瞰相机截图；`-AutoShotTop` 正俯机位）、`RouteDump`、
+`RouteSelect N`（模拟节点点击，走与鼠标同一条路径）、
+`ER.AutoWin/AutoPlay`、`Paint.Style`。
+
+命令行参数：`-ArenaSeed=N`（固定竞技场种子）、
+`-ArenaGenerator=-1|0|2`（-1=默认 WFC，2=自然岛）、`-AutoShotTop`、
+`-RouteShot`（航线图 3D 场景搭好后自动截图）、`-ShowNav`（截图时显示导航）、
+`-ArenaForceReady`（跳过 nav 校验仅截图）、`-NatureNavBox/-NatureCube`
+（自然岛 nav 诊断）。
+
+## 场景架构（当前）
+
+- `Lvl_Route`：`ARouteSceneBuilder` 在 `RouteGameMode::StartPlay` 生成，
+  把 Slate 虚拟画布节点坐标反投影到相机前 90 m 平面：每节点一座漂浮
+  平台（亮顶板+通道1无光剪影收分底），边沿 Slate 同一条三次贝塞尔铺
+  辉光梁，星点场+远景剪影方碑（lighting channel 隔离主光），三点光
+  +虚空雾。Slate 叠加层半透明保留全部交互逻辑。
+- `Lvl_Arena`：默认体素生成器 `WFC3DArenaGenerator_Voxel`（Perlin 双频
+  起伏+中块平台+破碎漂浮外壳，混凝土/大理石/玻璃三色+辉光渐变）；
+  `WFC3DArenaGenerator_Nature`（Gaea 高度图随机截取+Perlin 岛形，
+  PMC 地形+HISM nav 代理层，`GeneratorChoice=2` 自然岛）；
+  `WFC3DArenaGenerator_Atrium`（语法+socket 铺瓦，旧版保留不用）。
+- 航线节点 `Battle`→体素场，`BattleNature`→自然岛，遭遇种子来自节点。
 
 ## 代码约定与已知坑
 
