@@ -3,9 +3,13 @@
 #include "Run/RouteGameMode.h"
 
 #include "Kismet/GameplayStatics.h"
+#include "Misc/CommandLine.h"
+#include "TimerManager.h"
+#include "UnrealClient.h"
 #include "Run/RouteCameraPawn.h"
 #include "Run/RouteHUD.h"
 #include "Run/RoutePlayerController.h"
+#include "Run/RouteSceneBuilder.h"
 #include "Run/RunSubsystem.h"
 #include "Run/RouteGraphGenerator.h"
 
@@ -62,5 +66,29 @@ void ARouteGameMode::StartPlay()
 	if (Run && Run->HasActiveRun())
 	{
 		UE_LOG(LogTemp, Log, TEXT("[Route] %s"), *FRouteGraphGenerator::MakeReport(Run->GetGraph()));
+	}
+
+	// 3D 航线场景: Slate 叠加层继续负责交互, 本层出视觉
+	if (Run && Run->HasActiveRun())
+	{
+		FActorSpawnParameters P;
+		P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		P.ObjectFlags |= RF_Transient;
+		if (ARouteSceneBuilder* Builder = GetWorld()->SpawnActor<ARouteSceneBuilder>(
+			ARouteSceneBuilder::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, P))
+		{
+			Builder->BuildScene(Run);
+		}
+	}
+
+	// -RouteShot: 场景搭好后延迟截图 (离线检查航线图构图)
+	if (FParse::Param(FCommandLine::Get(), TEXT("RouteShot")))
+	{
+		FTimerHandle ShotTimer;
+		GetWorldTimerManager().SetTimer(ShotTimer, FTimerDelegate::CreateWeakLambda(this, []()
+		{
+			FScreenshotRequest::RequestScreenshot(true);
+			UE_LOG(LogTemp, Log, TEXT("[Route3D] RouteShot requested"));
+		}), 2.5f, false);
 	}
 }

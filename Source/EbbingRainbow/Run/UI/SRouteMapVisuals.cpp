@@ -77,25 +77,15 @@ int32 SRouteBackdrop::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedG
 		return LayerId;
 	}
 
-	// 竖向渐变：用若干条色带模拟，避免依赖渐变纹理。
-	const FLinearColor TopColor(0.020f, 0.035f, 0.070f, 1.0f);
-	const FLinearColor BottomColor(0.004f, 0.008f, 0.020f, 1.0f);
-	const int32 BandCount = 48;
-	for (int32 Band = 0; Band < BandCount; ++Band)
-	{
-		const float Alpha = static_cast<float>(Band) / static_cast<float>(BandCount - 1);
-		const FLinearColor Color = FMath::Lerp(TopColor, BottomColor, Alpha);
-		const float BandY = Size.Y * static_cast<float>(Band) / static_cast<float>(BandCount);
-		const float BandHeight = Size.Y / static_cast<float>(BandCount) + 1.0f;
-
-		FSlateDrawElement::MakeBox(
-			OutDrawElements,
-			LayerId,
-			AllottedGeometry.ToPaintGeometry(FVector2D(Size.X, BandHeight), FSlateLayoutTransform(FVector2D(0.0, BandY))),
-			WhiteBrush,
-			ESlateDrawEffect::None,
-			Color);
-	}
+	// 单一半透明底色: 让 3D 航线场景透出来 (竖向色带会在像素网格上出莫尔条纹,
+	// 渐变已由 3D 雾提供)
+	FSlateDrawElement::MakeBox(
+		OutDrawElements,
+		LayerId,
+		AllottedGeometry.ToPaintGeometry(),
+		WhiteBrush,
+		ESlateDrawEffect::None,
+		FLinearColor(0.010f, 0.018f, 0.040f, 0.32f));
 
 	// 星点：位置由种子决定，同一局同一张图。
 	for (const FStar& Star : Stars)
