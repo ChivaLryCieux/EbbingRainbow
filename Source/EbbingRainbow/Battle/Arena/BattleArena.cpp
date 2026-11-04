@@ -5,6 +5,7 @@
 #include "WFC3DStyleTable.h"
 #include "Arch/WFC3DArenaGenerator_Atrium.h"
 #include "Voxel/WFC3DArenaGenerator_Voxel.h"
+#include "Nature/WFC3DArenaGenerator_Nature.h"
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
 #include "NavMesh/RecastNavMesh.h"
@@ -23,12 +24,20 @@ DEFINE_LOG_CATEGORY(LogBattleArena);
 // 也可用命令行 -ArenaGenerator=N 覆盖。
 static TAutoConsoleVariable<int32> CVarArenaGenerator(
 	TEXT("ER.ArenaGenerator"), 0,
-	TEXT("竞技场生成器: 0=Voxel(默认) 1=Legacy Atrium。"), ECVF_Cheat);
+	TEXT("竞技场生成器: 0=Voxel(默认) 1=Legacy Atrium 2=Nature。"), ECVF_Cheat);
 
-static TSubclassOf<AWFC3DArenaGeneratorBase> ResolveArenaGeneratorClass()
+static TSubclassOf<AWFC3DArenaGeneratorBase> ResolveArenaGeneratorClass(int32 Override = -1)
 {
 	int32 Choice = CVarArenaGenerator.GetValueOnGameThread();
 	FParse::Value(FCommandLine::Get(), TEXT("ArenaGenerator="), Choice);
+	if (Override >= 0)
+	{
+		Choice = Override;
+	}
+	if (Choice == 2)
+	{
+		return TSubclassOf<AWFC3DArenaGeneratorBase>(AWFC3DArenaGenerator_Nature::StaticClass());
+	}
 	return (Choice == 1)
 		? TSubclassOf<AWFC3DArenaGeneratorBase>(AWFC3DArenaGenerator_Atrium::StaticClass())
 		: TSubclassOf<AWFC3DArenaGeneratorBase>(AWFC3DArenaGenerator_Voxel::StaticClass());
@@ -100,9 +109,10 @@ AWFC3DArenaHost* ABattleArena::EnsureHost()
 	{
 		// 每次生成都按当前 CVar/命令行重选生成器, 便于不切地图直接对比。
 		// Voxel(0) 时绕过 StyleTable 直接用类; Legacy(1) 时 StyleTable 照旧生效。
-		const TSubclassOf<AWFC3DArenaGeneratorBase> GenClass = ResolveArenaGeneratorClass();
+		const TSubclassOf<AWFC3DArenaGeneratorBase> GenClass = ResolveArenaGeneratorClass(GeneratorChoice);
 		ArenaHost->FallbackGeneratorClass = GenClass;
-		ArenaHost->StyleTable = (GenClass == AWFC3DArenaGenerator_Voxel::StaticClass())
+		ArenaHost->StyleTable = (GenClass == AWFC3DArenaGenerator_Voxel::StaticClass()
+			|| GenClass == AWFC3DArenaGenerator_Nature::StaticClass())
 			? nullptr : StyleTable;
 	}
 
@@ -224,6 +234,29 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	{
 		UE_LOG(LogBattleArena, Error, TEXT("No NavData. Add a NavMeshBoundsVolume covering the arena (and set Runtime Generation = Dynamic)."));
 		return false;
+	}
+
+	// [诊断] -ArenaForceReady: 跳过全部 nav 校验直接成功, 用于无验证截图
+	if (FParse::Param(FCommandLine::Get(), TEXT("ArenaForceReady")))
+	{
+		for (int32 P = 0; P < 4; ++P)
+		{
+			PlayerSpawnPoints.Add(FVector(1000.0f + P * 200.0f, 800.0f, 50.0f));
+			EnemySpawnPoints.Add(FVector(6600.0f - P * 200.0f, 6800.0f, 50.0f));
+		}
+		return true;
+	}
+
+	// [诊断] 随机 nav 点位置: 看 nav 建在什么表面上
+	{
+		FNavLocation Dbg;
+		for (int32 D = 0; D < 5; ++D)
+		{
+			if (NavSys->GetRandomPoint(Dbg))
+			{
+				UE_LOG(LogBattleArena, Log, TEXT("Dbg nav point[%d]: %s"), D, *Dbg.Location.ToString());
+			}
+		}
 	}
 
 	// 地面层可达性起点: 生成器上报 GroundNavProbe 优先, 否则回退大厅中轴固定点
@@ -353,13 +386,51 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	const float SearchRadius = Bounds.GetSize().Size2D();
 	const float CellDedupe = FMath::Max(50.0f, static_cast<float>(UsedCellWorldSize.X));
 
-	// 多个锚点中选可达面积最大的一块,避开孤立小口袋
+	// [诊断] 从岛心探针直接泛洪: 与随机锚点对照, 判断平台本体是否连通
+	{
+		FNavLocation CenterNav;
+		if (NavSys->ProjectPointToNavigation(GroundProbe, CenterNav, FVector(400.0f)))
+		{
+			TSet<FIntPoint> CCells;
+			float CMinX = TNumericLimits<float>::Max(), CMaxX = -CMinX;
+			for (int32 i = 0; i < ReachabilitySamples; ++i)
+			{
+				FNavLocation P;
+				if (NavSys->GetRandomReachablePointInRadius(CenterNav.Location, SearchRadius, P))
+				{
+					CCells.Add(FIntPoint(FMath::FloorToInt(P.Location.X / 50.0f),
+						FMath::FloorToInt(P.Location.Y / 50.0f)));
+					CMinX = FMath::Min(CMinX, (float)P.Location.X);
+					CMaxX = FMath::Max(CMaxX, (float)P.Location.X);
+				}
+			}
+			UE_LOG(LogBattleArena, Log,
+				TEXT("Dbg center flood: anchor=%s cells=%d xspan=%.0f"),
+				*CenterNav.Location.ToString(), CCells.Num(), CMaxX - CMinX);
+		}
+		else
+		{
+			UE_LOG(LogBattleArena, Log, TEXT("Dbg center flood: probe %s NOT on nav"),
+				*GroundProbe.ToString());
+		}
+	}
+
+	// 多个锚点中选可达面积最大的一块,避开孤立小口袋;
+	// 前 8 个随机锚点之外, 第 9 个锚点固定为生成器上报的地面探针
+	// (随机锚点容易落到方碑顶/岩块顶等小孤岛, 地面探针直达主走区)
 	TArray<FVector> BestPoints;
 	int32 BestCells = 0;
-	for (int32 AnchorTry = 0; AnchorTry < 8; ++AnchorTry)
+	for (int32 AnchorTry = 0; AnchorTry < 9; ++AnchorTry)
 	{
 		FNavLocation Anchor;
-		if (!NavSys->GetRandomPoint(Anchor) || !Bounds.IsInsideOrOn(Anchor.Location))
+		if (AnchorTry == 8)
+		{
+			if (!NavSys->ProjectPointToNavigation(GroundProbe, Anchor, FVector(400.0f)))
+			{
+				continue;
+			}
+		}
+		else if (!NavSys->GetRandomPoint(Anchor) || !Bounds.IsInsideOrOn(Anchor.Location))
 		{
 			continue;
 		}

@@ -42,6 +42,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena|WFC")
 	EWFCBuildingStyle Style = EWFCBuildingStyle::Style0;
 
+	/** 生成器覆盖: -1=按 ER.ArenaGenerator/CVar; 0=Voxel 1=Atrium 2=Nature。
+	 *  航线图节点类型 (Battle/BattleNature) 由 BattleGameMode 写入。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena")
+	int32 GeneratorChoice = -1;
+
 	/** 可选的风格表；为空时回退到 SciFi01 生成器 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arena|WFC")
 	TObjectPtr<UWFC3DStyleTable> StyleTable = nullptr;

@@ -21,7 +21,8 @@ public class EbbingRainbow : ModuleRules
 			"NavigationSystem",
 			"SlateCore",
 			// ShaderCore.h (AddShaderSourceDirectoryMapping) lives in RenderCore in UE5.8
-			"RenderCore"
+			"RenderCore",
+			"ProceduralMeshComponent"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
@@ -33,6 +34,7 @@ public class EbbingRainbow : ModuleRules
 			"EbbingRainbow/WFC/Arch",
 			"EbbingRainbow/WFC/Styles",
 			"EbbingRainbow/WFC/Voxel",
+			"EbbingRainbow/WFC/Nature",
 			"EbbingRainbow/Battle",
 			"EbbingRainbow/Battle/Core",
 			"EbbingRainbow/Battle/Arena",
