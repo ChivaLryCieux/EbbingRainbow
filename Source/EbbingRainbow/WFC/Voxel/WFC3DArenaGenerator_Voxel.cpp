@@ -97,7 +97,7 @@ float AWFC3DArenaGenerator_Voxel::PriorWeight(
 	if (Motif == 0)
 	{
 		// Bowl: 中心低外圈高 (圆形剧场)
-		E = (R < 0.35f) ? 0 : (R < 0.6f) ? 1 : (R < 0.85f) ? 2 : 3;
+		E = (R < 0.45f) ? 0 : (R < 0.68f) ? 1 : (R < 0.88f) ? 2 : 3;
 	}
 	else
 	{
@@ -113,9 +113,15 @@ float AWFC3DArenaGenerator_Voxel::PriorWeight(
 bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 	FRandomStream& Rng, int32 Motif, float Cx, float Cy, uint8* OutL)
 {
+	// 在 10x10 宏格 (2x2 子格, 末行/末列 1 宽) 上坍缩: 平台至少 800cm 厚,
+	// 楼梯低格背后必有同层入口格, 细环结构性不可达的问题从根上消失。
+	constexpr int32 MW = 10;
+	constexpr int32 MH = 10;
+	auto MIdx = [](int32 X, int32 Y) { return X + Y * MW; };
+
 	const int32 MaxL = (Motif == 1) ? Rng.RandRange(2, 3) : 3;
 
-	uint8 Dom[GridW * GridH];
+	uint8 Dom[MW * MH];
 	FMemory::Memset(Dom, DomAll, sizeof(Dom));
 
 	auto PopCount = [](uint8 M) { return FMath::CountBits(static_cast<uint32>(M)); };
@@ -126,23 +132,23 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 		TArray<int32> Queue;
 		Queue.Add(StartIdx);
 		TBitArray<> InQ;
-		InQ.Init(false, GridW * GridH);
+		InQ.Init(false, MW * MH);
 		InQ[StartIdx] = true;
 		while (Queue.Num() > 0)
 		{
 			const int32 A = Queue.Pop();
 			InQ[A] = false;
-			const int32 AX = A % GridW;
-			const int32 AY = A / GridW;
+			const int32 AX = A % MW;
+			const int32 AY = A / MW;
 			for (int32 S = 0; S < 4; ++S)
 			{
 				const int32 BX = AX + DX[S];
 				const int32 BY = AY + DY[S];
-				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
+				if (BX < 0 || BY < 0 || BX >= MW || BY >= MH)
 				{
 					continue;
 				}
-				const int32 B = CellIndex(BX, BY);
+				const int32 B = MIdx(BX, BY);
 				uint8 NewDom = 0;
 				for (int32 Lb = 0; Lb < 5; ++Lb)
 				{
@@ -177,12 +183,12 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 		return true;
 	};
 
-	for (int32 Settled = 0; Settled < GridW * GridH; ++Settled)
+	for (int32 Settled = 0; Settled < MW * MH; ++Settled)
 	{
 		// 最小熵未定格 + 小随机扰动
 		int32 Best = INDEX_NONE;
 		float BestScore = FLT_MAX;
-		for (int32 I = 0; I < GridW * GridH; ++I)
+		for (int32 I = 0; I < MW * MH; ++I)
 		{
 			const int32 C = PopCount(Dom[I]);
 			if (C <= 1)
@@ -201,8 +207,8 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 			break;
 		}
 
-		const int32 X = Best % GridW;
-		const int32 Y = Best / GridW;
+		const int32 X = Best % MW;
+		const int32 Y = Best / MW;
 
 		// 已坍缩同标签邻居数 -> 权重 x3/个, 促成大平台
 		int32 SameN[5] = { 0, 0, 0, 0, 0 };
@@ -210,11 +216,11 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 		{
 			const int32 NX = X + DX[S];
 			const int32 NY = Y + DY[S];
-			if (NX < 0 || NY < 0 || NX >= GridW || NY >= GridH)
+			if (NX < 0 || NY < 0 || NX >= MW || NY >= MH)
 			{
 				continue;
 			}
-			const uint8 ND = Dom[CellIndex(NX, NY)];
+			const uint8 ND = Dom[MIdx(NX, NY)];
 			if (PopCount(ND) == 1)
 			{
 				const int32 NL = FMath::FloorLog2(ND);
@@ -222,12 +228,15 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 			}
 		}
 
+		// 先验取宏格的代表子格坐标 (末列/末行只有 1 宽)
+		const int32 RX = FMath::Min(X * 2, GridW - 1);
+		const int32 RY = FMath::Min(Y * 2, GridH - 1);
 		float Weights[5];
 		float Total = 0.0f;
 		for (int32 Lb = 0; Lb < 5; ++Lb)
 		{
 			Weights[Lb] = ((Dom[Best] & (1 << Lb)) == 0) ? 0.0f
-				: PriorWeight(Motif, MaxL, Cx, Cy, X, Y, Lb)
+				: PriorWeight(Motif, MaxL, Cx, Cy, RX, RY, Lb)
 					* FMath::Pow(3.0f, SameN[Lb]);
 			Total += Weights[Lb];
 		}
@@ -254,19 +263,100 @@ bool AWFC3DArenaGenerator_Voxel::CollapseHeightField(
 		}
 	}
 
-	for (int32 I = 0; I < GridW * GridH; ++I)
+	// 宏格展开回 19x19: 末行/末列宏格只覆盖 1 个子格
+	for (int32 Y = 0; Y < GridH; ++Y)
 	{
-		const int32 Lb = FMath::FloorLog2(Dom[I]);
-		OutL[I] = (Lb == 0) ? LVoid : static_cast<uint8>(Lb - 1);
+		for (int32 X = 0; X < GridW; ++X)
+		{
+			const int32 Lb = FMath::FloorLog2(Dom[MIdx(X / 2, Y / 2)]);
+			OutL[CellIndex(X, Y)] = (Lb == 0) ? LVoid : static_cast<uint8>(Lb - 1);
+		}
+	}
+	return true;
+}
+
+bool AWFC3DArenaGenerator_Voxel::BuildBowlField(
+	FRandomStream& Rng, float Cx, float Cy, uint8* OutL)
+{
+	// 确定性同心台地: 环形分层 + 低频噪声弯折带边界 + 外圈随机缺口。
+	// Bowl 走 WFC 先验时环带被逐格坍缩切成 20+ 碎片区域, 楼梯连通性
+	// 结构性凑不齐; 公式化生成反而更像"圆形剧场", 台地也更干净。
+	constexpr int32 MW = 10;
+	constexpr int32 MH = 10;
+	auto MIdx = [](int32 X, int32 Y) { return X + Y * MW; };
+	const float SaltV = Rng.RandRange(0, 999) + 0.71f;
+
+	uint8 M[MW * MH];
+	for (int32 MY = 0; MY < MH; ++MY)
+	{
+		for (int32 MX = 0; MX < MW; ++MX)
+		{
+			// 代表子格坐标 (末行/末列宏格宽 1)
+			const float RX = FMath::Min(MX * 2, GridW - 1) + 0.5f;
+			const float RY = FMath::Min(MY * 2, GridH - 1) + 0.5f;
+			const float R = FMath::Sqrt(
+				FMath::Square(RX - Cx) + FMath::Square(RY - Cy)) / 9.0f;
+
+			// 不抖动: 逐宏格 ±1 会埋进大量异层孤岛/碎片区域, 楼梯邻接
+			// 结构性凑不齐。同心台地本身就够 (宏格量化边缘已呈阶梯状),
+			// 蜿蜒感交给外圈缺口与焦点偏移。
+			int32 E = (R < 0.45f) ? 0 : (R < 0.68f) ? 1 : (R < 0.88f) ? 2 : 3;
+			M[MIdx(MX, MY)] = static_cast<uint8>(FMath::Clamp(E, 0, 3));
+
+			// 虚空缺口只啃最外圈 (R>0.88): 内部台地保持实心环带,
+			// 每个高度层 1~2 个连通区域, 楼梯邻接才有冗余边可用;
+			// 边缘残破的"漂浮碎壳"轮廓由外圈缺口承担。
+			const float Bite = ValueNoise3(MX * 0.7f + 40.0f, MY * 0.7f, SaltV);
+			const float V = (VoxHash(MX, MY, 97, 0) & 0xFFFF) / 65535.0f;
+			const float VoidP = (R > 0.92f) ? 0.5f : 0.0f;
+			if (V < VoidP || (R > 0.88f && Bite < 0.30f))
+			{
+				M[MIdx(MX, MY)] = LVoid;
+			}
+		}
+	}
+
+	// |ΔL|<=1 松弛 (边界弯折可能拉出 2 级落差)
+	for (int32 Guard = 0; Guard < 8; ++Guard)
+	{
+		bool bAny = false;
+		for (int32 MY = 0; MY < MH; ++MY)
+		{
+			for (int32 MX = 0; MX < MW; ++MX)
+			{
+				const int32 A = MIdx(MX, MY);
+				if (M[A] == LVoid) { continue; }
+				for (int32 S = 1; S <= 2; ++S)
+				{
+					const int32 BX = MX + DX[S];
+					const int32 BY = MY + DY[S];
+					if (BX >= MW || BY >= MH) { continue; }
+					const int32 B = MIdx(BX, BY);
+					if (M[B] == LVoid) { continue; }
+					if (M[A] > M[B] + 1) { M[A] = M[B] + 1; bAny = true; }
+					else if (M[B] > M[A] + 1) { M[B] = M[A] + 1; bAny = true; }
+				}
+			}
+		}
+		if (!bAny) { break; }
+	}
+
+	for (int32 Y = 0; Y < GridH; ++Y)
+	{
+		for (int32 X = 0; X < GridW; ++X)
+		{
+			OutL[CellIndex(X, Y)] = M[MIdx(X / 2, Y / 2)];
+		}
 	}
 	return true;
 }
 
 void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 {
-	// <3 格的同高连通块并入相邻较低的块
+	// <14 格的同高连通块并入接壤最多的邻层 (平票取最低);
+	// 只向下并会留下被高层包围的孤岛, 区域数一多楼梯邻接必断。
 	bool bChanged = true;
-	for (int32 Guard = 0; Guard < 8 && bChanged; ++Guard)
+	for (int32 Guard = 0; Guard < 12 && bChanged; ++Guard)
 	{
 		bChanged = false;
 		int32 Region[GridW * GridH];
@@ -309,14 +399,14 @@ void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 
 		for (int32 I = 0; I < GridW * GridH; ++I)
 		{
-			if (L[I] == LVoid || RegionSize[Region[I]] >= 3)
+			if (L[I] == LVoid || RegionSize[Region[I]] >= 14)
 			{
 				continue;
 			}
-			// 找相邻最低的非 Void 层并入
+			// 并入接壤边数最多的非 Void 层 (平票取最低层)
 			const int32 AX = I % GridW;
 			const int32 AY = I / GridW;
-			int32 BestL = -1;
+			int32 Touch[4] = { 0, 0, 0, 0 };
 			for (int32 S = 0; S < 4; ++S)
 			{
 				const int32 BX = AX + DX[S];
@@ -326,12 +416,22 @@ void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 					continue;
 				}
 				const uint8 NL = L[CellIndex(BX, BY)];
-				if (NL != LVoid && NL < L[I] && (BestL < 0 || NL < BestL))
+				if (NL != LVoid)
 				{
-					BestL = NL;
+					++Touch[NL];
 				}
 			}
-			if (BestL >= 0)
+			int32 BestL = -1;
+			int32 BestT = 0;
+			for (int32 T = 0; T <= 3; ++T)
+			{
+				if (Touch[T] > BestT)
+				{
+					BestT = Touch[T];
+					BestL = T;
+				}
+			}
+			if (BestL >= 0 && BestL != L[I])
 			{
 				L[I] = static_cast<uint8>(BestL);
 				bChanged = true;
@@ -375,11 +475,96 @@ void AWFC3DArenaGenerator_Voxel::FixupSmallRegions(uint8* L)
 			break;
 		}
 	}
+
+	// 删除孤岛区域: 全部邻居都是 Void 或 |ΔL|>1 的同高块永远放不了
+	// 楼梯, 留着必然连通失败 (外圈漂浮碎壳靠 Void 缺口表现, 不靠孤岛)。
+	for (int32 Guard = 0; Guard < 8; ++Guard)
+	{
+		int32 Region[GridW * GridH];
+		FMemory::Memset(Region, 0xFF, sizeof(Region));
+		TArray<int32> RegionSize;
+		for (int32 I = 0; I < GridW * GridH; ++I)
+		{
+			if (L[I] == LVoid || Region[I] != -1)
+			{
+				continue;
+			}
+			const int32 Rid = RegionSize.Num();
+			RegionSize.Add(0);
+			TArray<int32> Stack;
+			Stack.Add(I);
+			Region[I] = Rid;
+			while (Stack.Num() > 0)
+			{
+				const int32 A = Stack.Pop();
+				++RegionSize[Rid];
+				const int32 AX = A % GridW;
+				const int32 AY = A / GridW;
+				for (int32 S = 0; S < 4; ++S)
+				{
+					const int32 BX = AX + DX[S];
+					const int32 BY = AY + DY[S];
+					if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
+					{
+						continue;
+					}
+					const int32 B = CellIndex(BX, BY);
+					if (Region[B] == -1 && L[B] == L[A])
+					{
+						Region[B] = Rid;
+						Stack.Add(B);
+					}
+				}
+			}
+		}
+		TArray<bool> bIsland;
+		bIsland.Init(true, RegionSize.Num());
+		for (int32 I = 0; I < GridW * GridH; ++I)
+		{
+			if (L[I] == LVoid) { continue; }
+			const int32 AX = I % GridW;
+			const int32 AY = I / GridW;
+			for (int32 S = 0; S < 4; ++S)
+			{
+				const int32 BX = AX + DX[S];
+				const int32 BY = AY + DY[S];
+				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
+				{
+					continue;
+				}
+				const int32 B = CellIndex(BX, BY);
+				if (L[B] == LVoid || Region[B] == Region[I])
+				{
+					continue;
+				}
+				const int32 D = FMath::Abs(
+					static_cast<int32>(L[B]) - static_cast<int32>(L[I]));
+				if (D <= 1 && Region[I] < bIsland.Num())
+				{
+					bIsland[Region[I]] = false;
+				}
+			}
+		}
+		bool bAny = false;
+		for (int32 I = 0; I < GridW * GridH; ++I)
+		{
+			if (Region[I] >= 0 && Region[I] < bIsland.Num() && bIsland[Region[I]])
+			{
+				L[I] = LVoid;
+				bAny = true;
+			}
+		}
+		if (!bAny)
+		{
+			break;
+		}
+	}
 }
 
 bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 {
 	const int32 N = GridW * GridH;
+	Plan.Stairs.Reset();
 	Plan.RegionOf.Init(-1, N);
 	if (Plan.RegionOf.Num() != N)
 	{
@@ -423,7 +608,6 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[VoxelDbg] regions=%d"), RegionSize.Num());
 
 	// 区域间 ΔL=1 的邻接: (Ra,Rb) -> 共享边列表 (低侧格, 方向)
 	struct FAdj
@@ -484,7 +668,17 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[VoxelDbg] adj=%d"), Adjs.Num());
+
+	// 丢弃过小区域参与的邻接: <4 格的落点在 nav 上烘不出可靠可站面
+	// (实测 1~2 格孤岛落点探针必 UNREACHABLE)。小区域此后必然不可达,
+	// 由连通修复环把它并进邻层, 比放一个注定走不通的楼梯干净。
+	for (int32 I = Adjs.Num() - 1; I >= 0; --I)
+	{
+		if (FMath::Min(RegionSize[Adjs[I].Ra], RegionSize[Adjs[I].Rb]) < 4)
+		{
+			Adjs.RemoveAt(I);
+		}
+	}
 
 	// Kruskal: 先保证全连通 (生成树), 再额外加 ~30% 环路
 	TArray<int32> Edges;
@@ -528,10 +722,11 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		Chosen.Add(Leftover[I]);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[VoxelDbg] chosen=%d leftover=%d"), Chosen.Num(), Leftover.Num());
 
-	// 每个邻接在共享边中随机选一条; 每低侧格最多一部楼梯, 入口格不能 Void/更高
-	TSet<int64> UsedLow;
+	// 每个邻接在共享边中随机选一条; 楼梯角色格(入口/低/高)互斥, 入口必须同层
+	Plan.RoleCells.Reset();
+	Plan.LowEntry.Reset();
+	Plan.LowHigh.Reset();
 	for (int32 E : Chosen)
 	{
 		TArray<FVoxStair> Cands = Adjs[E].Edges;
@@ -540,53 +735,138 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 			Cands.Swap(I, Rng.RandRange(0, I));
 		}
 		bool bPlaced = false;
+		int32 SkipNoApp = 0, SkipRole = 0;
 		for (const FVoxStair& St : Cands)
 		{
-			const int64 LowKey = (static_cast<int64>(St.LowX) << 32) | St.LowY;
-			if (UsedLow.Contains(LowKey))
-			{
-				continue;
-			}
-			// 入口 = 低侧格反方向的邻居
+			const int32 LowIdx = CellIndex(St.LowX, St.LowY);
+			const int32 HighIdx = CellIndex(St.LowX + DX[St.Dir],
+				St.LowY + DY[St.Dir]);
+			const uint8 LowL = Plan.L[LowIdx];
+			// 实测: 侧向登梯 nav 烘不出 (台阶侧边 25cm 唇沿不被当成可跨步),
+			// 只认正对入口 (低格反方向同层格)。同层侧邻居仍打角色格,
+			// 防止掩体把梯脚围死。
 			const int32 EX = St.LowX - DX[St.Dir];
 			const int32 EY = St.LowY - DY[St.Dir];
 			if (EX < 0 || EY < 0 || EX >= GridW || EY >= GridH)
 			{
+				++SkipNoApp;
 				continue;
 			}
-			const uint8 EL = Plan.L[CellIndex(EX, EY)];
-			if (EL == LVoid || EL > Plan.L[CellIndex(St.LowX, St.LowY)])
+			const int32 EntryIdx = CellIndex(EX, EY);
+			if (Plan.L[EntryIdx] != LowL || Plan.RoleCells.Contains(EntryIdx))
 			{
+				++SkipNoApp;
 				continue;
 			}
-			UsedLow.Add(LowKey);
+			// 一格一角
+			if (Plan.RoleCells.Contains(LowIdx) || Plan.RoleCells.Contains(HighIdx))
+			{
+				++SkipRole;
+				continue;
+			}
+			Plan.RoleCells.Add(LowIdx);
+			Plan.RoleCells.Add(HighIdx);
+			Plan.RoleCells.Add(EntryIdx);
+			for (int32 S2 = 0; S2 < 4; ++S2)
+			{
+				if (S2 == St.Dir) { continue; }
+				const int32 NX = St.LowX + DX[S2];
+				const int32 NY = St.LowY + DY[S2];
+				if (NX < 0 || NY < 0 || NX >= GridW || NY >= GridH)
+				{
+					continue;
+				}
+				const int32 NI = CellIndex(NX, NY);
+				if (Plan.L[NI] == LowL)
+				{
+					Plan.RoleCells.Add(NI);
+				}
+			}
+			Plan.LowEntry.Add(LowIdx, EntryIdx);
+			Plan.LowHigh.Add(LowIdx, HighIdx);
 			Plan.Stairs.Add(St);
 			bPlaced = true;
 			break;
 		}
-		// 找不到合法边就跳过: BFS 校验会兜住连通性
-		(void)bPlaced;
+		// 修复兜底: 全候选失败时, 找能把正对入口格整平为 LowL 的边放
+		// 楼梯。入口格必须非角色格, 且整平后与自身其他非 Void 邻居
+		// |ΔL|<=1; 入口已在网格外 (低格贴图边) 则该邻接确实无救。
+		if (!bPlaced)
+		{
+			for (const FVoxStair& St : Cands)
+			{
+				const int32 LowIdx = CellIndex(St.LowX, St.LowY);
+				const int32 EX = St.LowX - DX[St.Dir];
+				const int32 EY = St.LowY - DY[St.Dir];
+				if (EX < 0 || EY < 0 || EX >= GridW || EY >= GridH)
+				{
+					continue;
+				}
+				const int32 EntryIdx = CellIndex(EX, EY);
+				const int32 HighIdx = CellIndex(St.LowX + DX[St.Dir],
+					St.LowY + DY[St.Dir]);
+				if (Plan.RoleCells.Contains(LowIdx) || Plan.RoleCells.Contains(EntryIdx)
+					|| Plan.RoleCells.Contains(HighIdx))
+				{
+					continue;
+				}
+				const uint8 LowL = Plan.L[LowIdx];
+				bool bFlatOk = true;
+				for (int32 S2 = 0; S2 < 4 && bFlatOk; ++S2)
+				{
+					const int32 NX = EX + DX[S2];
+					const int32 NY = EY + DY[S2];
+					if (NX < 0 || NY < 0 || NX >= GridW || NY >= GridH)
+					{
+						continue;
+					}
+					const int32 NI = CellIndex(NX, NY);
+					if (NI == LowIdx)
+					{
+						continue;
+					}
+					const uint8 NL = Plan.L[NI];
+					if (NL != LVoid
+						&& FMath::Abs(static_cast<int32>(NL) - static_cast<int32>(LowL)) > 1)
+					{
+						bFlatOk = false;
+					}
+				}
+				if (!bFlatOk)
+				{
+					continue;
+				}
+				Plan.L[EntryIdx] = LowL;
+				Plan.RoleCells.Add(LowIdx);
+				Plan.RoleCells.Add(EntryIdx);
+				Plan.RoleCells.Add(HighIdx);
+				Plan.LowEntry.Add(LowIdx, EntryIdx);
+				Plan.LowHigh.Add(LowIdx, HighIdx);
+				Plan.Stairs.Add(St);
+				bPlaced = true;
+				break;
+			}
+		}
+		// 找不到合法边也修不了才跳过: BFS 校验兜住连通性
+		if (!bPlaced)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[VoxDiag] adj r%d<->r%d SKIPPED cands=%d noapp=%d role=%d"),
+				Adjs[E].Ra, Adjs[E].Rb, Cands.Num(), SkipNoApp, SkipRole);
+		}
 	}
 	return Plan.Stairs.Num() > 0;
 }
 
-bool AWFC3DArenaGenerator_Voxel::CheckConnectivity(const FVoxPlan& Plan) const
+bool AWFC3DArenaGenerator_Voxel::CheckConnectivity(
+	const FVoxPlan& Plan, int32* OutReached) const
 {
 	const int32 N = GridW * GridH;
 	TArray<uint8> Visited;
 	Visited.Init(0, N);
 
-	// 楼梯边查找表
-	TSet<int64> StairEdge;
-	for (const FVoxStair& St : Plan.Stairs)
-	{
-		const int32 Lo = CellIndex(St.LowX, St.LowY);
-		const int32 Hi = CellIndex(St.LowX + DX[St.Dir], St.LowY + DY[St.Dir]);
-		const int64 K1 = (static_cast<int64>(Lo) << 32) | Hi;
-		const int64 K2 = (static_cast<int64>(Hi) << 32) | Lo;
-		StairEdge.Add(K1);
-		StairEdge.Add(K2);
-	}
+	// 楼梯低格只与入口/高格相连 (侧向登梯 nav 烘不出, 实测);
+	// 其他格与低格之间仅允许 "入口->低格"
 
 	int32 Start = INDEX_NONE;
 	int32 NonVoid = 0;
@@ -626,8 +906,25 @@ bool AWFC3DArenaGenerator_Voxel::CheckConnectivity(const FVoxPlan& Plan) const
 			{
 				continue;
 			}
-			const int64 Key = (static_cast<int64>(A) << 32) | B;
-			if (Plan.L[A] != Plan.L[B] && !StairEdge.Contains(Key))
+			const int32* ALow = Plan.LowEntry.Find(A);
+			const int32* BLow = Plan.LowEntry.Find(B);
+			if (ALow)
+			{
+				// A 是低格: 只允许去入口或高格
+				if (B != *ALow && B != Plan.LowHigh[A])
+				{
+					continue;
+				}
+			}
+			else if (BLow)
+			{
+				// B 是低格: 只有它的入口(或高格)能进
+				if (A != *BLow && A != Plan.LowHigh[B])
+				{
+					continue;
+				}
+			}
+			else if (Plan.L[A] != Plan.L[B])
 			{
 				continue;
 			}
@@ -635,7 +932,152 @@ bool AWFC3DArenaGenerator_Voxel::CheckConnectivity(const FVoxPlan& Plan) const
 			Stack.Add(B);
 		}
 	}
+	if (OutReached) { *OutReached = Count; }
 	return Count == NonVoid;
+}
+
+bool AWFC3DArenaGenerator_Voxel::MergeSmallestUnreached(FVoxPlan& Plan) const
+{
+	const int32 N = GridW * GridH;
+	TArray<uint8> Visited;
+	Visited.Init(0, N);
+	int32 Start = INDEX_NONE;
+	for (int32 I = 0; I < N; ++I)
+	{
+		if (Plan.L[I] != LVoid) { Start = I; break; }
+	}
+	if (Start == INDEX_NONE)
+	{
+		return false;
+	}
+	TArray<int32> Stack;
+	Stack.Add(Start);
+	Visited[Start] = 1;
+	while (Stack.Num() > 0)
+	{
+		const int32 A = Stack.Pop();
+		const int32 AX = A % GridW;
+		const int32 AY = A / GridW;
+		for (int32 S = 0; S < 4; ++S)
+		{
+			const int32 BX = AX + DX[S];
+			const int32 BY = AY + DY[S];
+			if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
+			{
+				continue;
+			}
+			const int32 B = CellIndex(BX, BY);
+			if (Visited[B] || Plan.L[B] == LVoid)
+			{
+				continue;
+			}
+			const int32* ALow = Plan.LowEntry.Find(A);
+			const int32* BLow = Plan.LowEntry.Find(B);
+			if (ALow)
+			{
+				if (B != *ALow && B != Plan.LowHigh[A]) { continue; }
+			}
+			else if (BLow)
+			{
+				if (A != *BLow && A != Plan.LowHigh[B]) { continue; }
+			}
+			else if (Plan.L[A] != Plan.L[B])
+			{
+				continue;
+			}
+			Visited[B] = 1;
+			Stack.Add(B);
+		}
+	}
+
+	// 不可达格分成连通小组 (按 BFS 规则分组, 不按区域号——
+	// 挂在楼梯低格非入口侧的同层格和主区同号但不可达)。
+	// 取最小一组: 有异层邻居则并入接壤最多的层; 全是同层/虚空邻居
+	// (被楼梯拓扑困死) 则整组变 Void——反正本来就到不了。
+	TArray<int32> Unreached;
+	for (int32 I = 0; I < N; ++I)
+	{
+		if (Plan.L[I] != LVoid && !Visited[I])
+		{
+			Unreached.Add(I);
+		}
+	}
+	if (Unreached.Num() == 0)
+	{
+		return false;
+	}
+	TSet<int32> InComp;
+	TArray<int32> BestComp;
+	for (const int32 SeedI : Unreached)
+	{
+		if (InComp.Contains(SeedI))
+		{
+			continue;
+		}
+		TArray<int32> Comp;
+		TArray<int32> S;
+		S.Add(SeedI);
+		InComp.Add(SeedI);
+		while (S.Num() > 0)
+		{
+			const int32 A = S.Pop();
+			Comp.Add(A);
+			const int32 AX = A % GridW;
+			const int32 AY = A / GridW;
+			for (int32 D = 0; D < 4; ++D)
+			{
+				const int32 BX = AX + DX[D];
+				const int32 BY = AY + DY[D];
+				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
+				{
+					continue;
+				}
+				const int32 B = CellIndex(BX, BY);
+				if (!InComp.Contains(B) && Plan.L[B] != LVoid && !Visited[B])
+				{
+					InComp.Add(B);
+					S.Add(B);
+				}
+			}
+		}
+		if (BestComp.Num() == 0 || Comp.Num() < BestComp.Num())
+		{
+			BestComp = Comp;
+		}
+	}
+	TSet<int32> CompSet(BestComp);
+	int32 Touch[4] = { 0, 0, 0, 0 };
+	for (const int32 I : BestComp)
+	{
+		const int32 AX = I % GridW;
+		const int32 AY = I / GridW;
+		for (int32 D = 0; D < 4; ++D)
+		{
+			const int32 BX = AX + DX[D];
+			const int32 BY = AY + DY[D];
+			if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
+			{
+				continue;
+			}
+			const int32 B = CellIndex(BX, BY);
+			if (Plan.L[B] != LVoid && !CompSet.Contains(B))
+			{
+				++Touch[Plan.L[B]];
+			}
+		}
+	}
+	const uint8 OwnL = Plan.L[BestComp[0]];
+	int32 BestL = -1, BestT = 0;
+	for (int32 T = 0; T <= 3; ++T)
+	{
+		if (T != OwnL && Touch[T] > BestT) { BestT = Touch[T]; BestL = T; }
+	}
+	const uint8 NewL = (BestL >= 0) ? static_cast<uint8>(BestL) : LVoid;
+	for (const int32 I : BestComp)
+	{
+		Plan.L[I] = NewL;
+	}
+	return true;
 }
 
 bool AWFC3DArenaGenerator_Voxel::BuildPlan(
@@ -645,25 +1087,65 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 	const float Cx = 9.0f + Rng.RandRange(-2, 2);
 	const float Cy = 9.0f + Rng.RandRange(-2, 2);
 
-	if (!CollapseHeightField(Rng, OutPlan.Motif, Cx, Cy, OutPlan.L))
+	const bool bFieldOk = (OutPlan.Motif == 0)
+		? BuildBowlField(Rng, Cx, Cy, OutPlan.L)
+		: CollapseHeightField(Rng, OutPlan.Motif, Cx, Cy, OutPlan.L);
+	if (!bFieldOk)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[VoxDiag] motif=%d fail: collapse"), OutPlan.Motif);
 		return false;
 	}
 	FixupSmallRegions(OutPlan.L);
 
-	// L=0 至少 25%
+	// 最大同层连通区域 >= 非 Void 格数 20% (保证大块平地, 两种母题都能过)
 	int32 NonVoid = 0;
-	int32 L0 = 0;
+	int32 Region[GridW * GridH];
+	FMemory::Memset(Region, 0xFF, sizeof(Region));
+	int32 BestRegion = 0;
 	for (int32 I = 0; I < GridW * GridH; ++I)
 	{
-		if (OutPlan.L[I] != LVoid)
+		if (OutPlan.L[I] == LVoid)
 		{
-			++NonVoid;
-			if (OutPlan.L[I] == 0) { ++L0; }
+			continue;
 		}
+		++NonVoid;
+		if (Region[I] != -1)
+		{
+			continue;
+		}
+		int32 Size = 0;
+		TArray<int32> Stack;
+		Stack.Add(I);
+		Region[I] = 1;
+		while (Stack.Num() > 0)
+		{
+			const int32 A = Stack.Pop();
+			++Size;
+			const int32 AX = A % GridW;
+			const int32 AY = A / GridW;
+			for (int32 S = 0; S < 4; ++S)
+			{
+				const int32 BX = AX + DX[S];
+				const int32 BY = AY + DY[S];
+				if (BX < 0 || BY < 0 || BX >= GridW || BY >= GridH)
+				{
+					continue;
+				}
+				const int32 B = CellIndex(BX, BY);
+				if (Region[B] == -1 && OutPlan.L[B] == OutPlan.L[A])
+				{
+					Region[B] = 1;
+					Stack.Add(B);
+				}
+			}
+		}
+		BestRegion = FMath::Max(BestRegion, Size);
 	}
-	if (NonVoid == 0 || L0 * 4 < NonVoid)
+	if (NonVoid == 0 || BestRegion * 5 < NonVoid)
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[VoxDiag] motif=%d fail: region nonvoid=%d best=%d"),
+			OutPlan.Motif, NonVoid, BestRegion);
 		return false;
 	}
 
@@ -684,14 +1166,66 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 	}
 	if (West < 8 || East < 8)
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[VoxDiag] motif=%d fail: spawn west=%d east=%d"),
+			OutPlan.Motif, West, East);
 		return false;
 	}
 
-	if (!PlaceStairs(Rng, OutPlan) || !CheckConnectivity(OutPlan))
+	// 连通修复环: 摆楼梯 -> BFS -> 把不可达的最小区域并入接壤最多的
+	// 邻层 -> 重摆。每轮区域数 -1, 最多 4 轮必然收敛; 比直接换母题
+	// 便宜, 也保住 Bowl 的出场率。
+	int32 Reached = 0;
+	for (int32 Rep = 0; Rep < 4; ++Rep)
 	{
+		if (!PlaceStairs(Rng, OutPlan))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[VoxDiag] motif=%d fail: stairs"), OutPlan.Motif);
+			return false;
+		}
+		if (CheckConnectivity(OutPlan, &Reached))
+		{
+			return true;
+		}
+		if (Rep == 3)
+		{
+			break;
+		}
+		if (!MergeSmallestUnreached(OutPlan))
+		{
+			break;
+		}
+		FixupSmallRegions(OutPlan.L);
+	}
+
+	{
+		int32 NumRegions = 0;
+		for (int32 I = 0; I < GridW * GridH; ++I)
+		{
+			NumRegions = FMath::Max(NumRegions, OutPlan.RegionOf[I] + 1);
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[VoxDiag] motif=%d fail: conn stairs=%d regions=%d reached=%d"),
+			OutPlan.Motif, OutPlan.Stairs.Num(), NumRegions, Reached);
+		static int32 Dumped = 0;
+		if (Dumped < 2 && OutPlan.Motif == 0)
+		{
+			++Dumped;
+			for (int32 DY_ = 0; DY_ < GridH; ++DY_)
+			{
+				FString Row;
+				for (int32 DX_ = 0; DX_ < GridW; ++DX_)
+				{
+					const int32 I = CellIndex(DX_, DY_);
+					if (OutPlan.L[I] == LVoid) { Row += TEXT("~"); }
+					else if (OutPlan.LowEntry.Contains(I)) { Row += TEXT("l"); }
+					else { Row += FString::Printf(TEXT("%d"), OutPlan.L[I]); }
+				}
+				UE_LOG(LogTemp, Warning, TEXT("[VoxDiag] %s"), *Row);
+			}
+		}
 		return false;
 	}
-	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -762,7 +1296,8 @@ float AWFC3DArenaGenerator_Voxel::ValueNoise3(float X, float Y, float Z) const
 	return FMath::Lerp(FMath::Lerp(C00, C10, V), FMath::Lerp(C01, C11, V), W);
 }
 
-void AWFC3DArenaGenerator_Voxel::BuildCollision(const FVoxPlan& Plan, FRandomStream& Rng)
+void AWFC3DArenaGenerator_Voxel::BuildCollision(
+	const FVoxPlan& Plan, FRandomStream& Rng, int32 ProbeCell)
 {
 	if (!CollisionHISM)
 	{
@@ -794,6 +1329,7 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(const FVoxPlan& Plan, FRandomStr
 		StairCells.Add((static_cast<int64>(St.LowX) << 32) | St.LowY);
 		StairCells.Add((static_cast<int64>(St.LowX + DX[St.Dir]) << 32) | (St.LowY + DY[St.Dir]));
 	}
+	(void)StairCells;
 
 	// 平台实心柱: -100 .. L*200
 	for (int32 Y = 0; Y < GridH; ++Y)
@@ -828,37 +1364,25 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(const FVoxPlan& Plan, FRandomStr
 			const float Top = LowTop + (I + 1) * 25.0f;
 			const FVector C(LX + DxF * Along, LY + DyF * Along, (Top - 100.0f) * 0.5f);
 			const FVector Size = (St.Dir == 1 || St.Dir == 3)
-				? FVector(50.0f, 300.0f, Top + 100.0f)
-				: FVector(300.0f, 50.0f, Top + 100.0f);
+				? FVector(50.0f, 400.0f, Top + 100.0f)
+				: FVector(400.0f, 50.0f, Top + 100.0f);
 			AddCol(C, Size);
 		}
 	}
 
-	// 掩体: 每 ~12 个非楼梯格 1 个, 避开楼梯格/入口/落点
+	// 掩体: 每 ~12 个非楼梯格 1 个, 避开楼梯角色格 + 地面探针格
 	TArray<int32> CoverCand;
-	TSet<int64> Forbidden = StairCells;
-	for (const FVoxStair& St : Plan.Stairs)
-	{
-		const int32 EX = St.LowX - DX[St.Dir];
-		const int32 EY = St.LowY - DY[St.Dir];
-		if (EX >= 0 && EY >= 0 && EX < GridW && EY < GridH)
-		{
-			Forbidden.Add((static_cast<int64>(EX) << 32) | EY);
-		}
-	}
 	for (int32 Y = 0; Y < GridH; ++Y)
 	{
 		for (int32 X = 0; X < GridW; ++X)
 		{
-			if (Plan.L[CellIndex(X, Y)] == LVoid)
+			const int32 Idx = CellIndex(X, Y);
+			if (Plan.L[Idx] == LVoid || Plan.RoleCells.Contains(Idx)
+				|| Idx == ProbeCell)
 			{
 				continue;
 			}
-			if (Forbidden.Contains((static_cast<int64>(X) << 32) | Y))
-			{
-				continue;
-			}
-			CoverCand.Add(CellIndex(X, Y));
+			CoverCand.Add(Idx);
 		}
 	}
 	const int32 WantCover = CoverCand.Num() / 12;
@@ -1088,8 +1612,8 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 				LX + DX[St.Dir] * Along, LY + DY[St.Dir] * Along,
 				(LowTop - 100.0f + TopZ) * 0.5f);
 			const FVector Size = (St.Dir == 1 || St.Dir == 3)
-				? FVector(50.0f, 300.0f, TopZ - LowTop + 100.0f)
-				: FVector(300.0f, 50.0f, TopZ - LowTop + 100.0f);
+				? FVector(50.0f, 400.0f, TopZ - LowTop + 100.0f)
+				: FVector(400.0f, 50.0f, TopZ - LowTop + 100.0f);
 			AddBox(EVoxMat::Marble, C, Size);
 		}
 	}
@@ -1121,11 +1645,28 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		default: break;
 		}
 	};
-	// 可玩包围盒: XY 0..7600 留 800 边距, z 不低于 -600
-	auto OutsidePlayable = [](const FVector& P)
+	// 可玩包围盒: XY 0..7600 留 800 边距, z 不低于 -600;
+	// 落进去的块沿径向推出方形外 800+ 处 (保持数量)
+	auto PushOutside = [&Center](FVector& P)
 	{
-		return P.X < -800.0f || P.X > 8400.0f || P.Y < -800.0f || P.Y > 8400.0f
-			|| P.Z < -600.0f;
+		if (P.Z <= -600.0f)
+		{
+			return;
+		}
+		const float DX_ = P.X - Center.X;
+		const float DY_ = P.Y - Center.Y;
+		const float M = FMath::Max(FMath::Abs(DX_), FMath::Abs(DY_));
+		if (M <= 1.0f)
+		{
+			return;
+		}
+		// 方形半边 4600 (3800..8400), 目标 max-norm 5500 (>800 边距)
+		if (FMath::Abs(P.X - Center.X) < 4600.0f && FMath::Abs(P.Y - Center.Y) < 4600.0f)
+		{
+			const float T = 5500.0f / M;
+			P.X = Center.X + DX_ * T;
+			P.Y = Center.Y + DY_ * T;
+		}
 	};
 
 	// Fibonacci 采样 + 3D 噪声碎裂
@@ -1137,11 +1678,12 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		const float Rad = FMath::Sqrt(FMath::Max(0.0f, 1.0f - Z * Z));
 		const float Theta = Golden * I;
 		const FVector Dir(Rad * FMath::Cos(Theta), Rad * FMath::Sin(Theta), Z);
-		const FVector P = Center + Dir * R;
-		if (P.Z > 0.35f * R || !OutsidePlayable(P))
+		FVector P = Center + Dir * R;
+		if (P.Z > 0.35f * R)
 		{
 			continue;
 		}
+		PushOutside(P);
 		// 噪声阈值保留 ~35%
 		if (ValueNoise3(Dir.X * 2.3f + 7.0f, Dir.Y * 2.3f + 3.0f, Dir.Z * 2.3f + 11.0f) < 0.45f)
 		{
@@ -1161,11 +1703,9 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 			const FVector Off = T1 * Rng.FRandRange(-Mother, Mother) * 0.4f
 				+ T2 * Rng.FRandRange(-Mother, Mother) * 0.4f
 				+ Dir * Rng.FRandRange(-Mother * 0.3f, Mother * 0.3f);
-			const FVector KP = P + Off;
-			if (OutsidePlayable(KP))
-			{
-				PushBox(MatPick(Rng.FRand()), KP, FMath::Max(Sz, 50.0f));
-			}
+			FVector KP = P + Off;
+			PushOutside(KP);
+			PushBox(MatPick(Rng.FRand()), KP, FMath::Max(Sz, 50.0f));
 		}
 	}
 
@@ -1175,15 +1715,12 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 	{
 		const float Ang = Rng.FRandRange(0.0f, 2.0f * PI);
 		const float Dist = R * Rng.FRandRange(1.2f, 1.5f);
-		const FVector P(Center.X + FMath::Cos(Ang) * Dist,
+		FVector P(Center.X + FMath::Cos(Ang) * Dist,
 			Center.Y + FMath::Sin(Ang) * Dist,
 			Rng.FRandRange(-2000.0f, -500.0f));
+		PushOutside(P);
 		const float W = Rng.FRandRange(400.0f, 800.0f);
 		const float H = Rng.FRandRange(3000.0f, 5000.0f);
-		if (!OutsidePlayable(FVector(P.X, P.Y, 0.0f)))
-		{
-			continue;
-		}
 		const FTransform T(FRotator::ZeroRotator,
 			FVector(P.X, P.Y, P.Z + H * 0.5f), FVector(W / 100.0f, W / 100.0f, H / 100.0f));
 		if (Rng.FRand() < 0.8f)
@@ -1202,13 +1739,10 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 	{
 		const float Ang = Rng.FRandRange(0.0f, 2.0f * PI);
 		const float Dist = Rng.FRandRange(4200.0f, R * 0.9f);
-		const FVector P(Center.X + FMath::Cos(Ang) * Dist,
+		FVector P(Center.X + FMath::Cos(Ang) * Dist,
 			Center.Y + FMath::Sin(Ang) * Dist,
 			Rng.FRandRange(-3000.0f, 2000.0f));
-		if (!OutsidePlayable(P))
-		{
-			continue;
-		}
+		PushOutside(P);
 		PushBox(MatPick(Rng.FRand()), P, Rng.FRandRange(25.0f, 100.0f));
 	}
 }
@@ -1308,17 +1842,41 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 			(St.LowY + 0.5f + DY[St.Dir] * 0.5f) * CellSize,
 			LowTop + 100.0f);
 	}
+	// 地面探针: L=0 非角色格, 4 邻居也全是 L=0 非角色格, 离楼梯最远;
+	// 找不到则放宽为仅自身条件
+	int32 ProbeCell = INDEX_NONE;
+	auto PickProbe = [&](bool bRequireFlatNeighbors) -> int32
 	{
-		// 地面探针: L=0 且离楼梯最远的格
 		int32 BestI = INDEX_NONE;
 		float BestD = -1.0f;
 		for (int32 Y = 0; Y < GridH; ++Y)
 		{
 			for (int32 X = 0; X < GridW; ++X)
 			{
-				if (Plan.L[CellIndex(X, Y)] != 0)
+				const int32 I = CellIndex(X, Y);
+				if (Plan.L[I] != 0 || Plan.RoleCells.Contains(I))
 				{
 					continue;
+				}
+				if (bRequireFlatNeighbors)
+				{
+					bool bOk = true;
+					for (int32 S = 0; S < 4 && bOk; ++S)
+					{
+						const int32 NX = X + DX[S];
+						const int32 NY = Y + DY[S];
+						const int32 NI = (NX >= 0 && NY >= 0 && NX < GridW && NY < GridH)
+							? CellIndex(NX, NY) : INDEX_NONE;
+						if (NI == INDEX_NONE || Plan.L[NI] != 0
+							|| Plan.RoleCells.Contains(NI))
+						{
+							bOk = false;
+						}
+					}
+					if (!bOk)
+					{
+						continue;
+					}
 				}
 				float MinD = FLT_MAX;
 				for (const FVoxStair& St : Plan.Stairs)
@@ -1329,20 +1887,26 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 				if (MinD > BestD)
 				{
 					BestD = MinD;
-					BestI = CellIndex(X, Y);
+					BestI = I;
 				}
 			}
 		}
-		if (BestI != INDEX_NONE)
-		{
-			LastResult.GroundNavProbe = FVector(
-				(BestI % GridW) * CellSize + 200.0f,
-				(BestI / GridW) * CellSize + 200.0f, 20.0f);
-		}
+		return BestI;
+	};
+	ProbeCell = PickProbe(true);
+	if (ProbeCell == INDEX_NONE)
+	{
+		ProbeCell = PickProbe(false);
+	}
+	if (ProbeCell != INDEX_NONE)
+	{
+		LastResult.GroundNavProbe = FVector(
+			(ProbeCell % GridW) * CellSize + 200.0f,
+			(ProbeCell / GridW) * CellSize + 200.0f, 20.0f);
 	}
 
 	// ---- 碰撞 + 可见实例 ----
-	BuildCollision(Plan, Rng);
+	BuildCollision(Plan, Rng, ProbeCell);
 	BuildVisual(Plan, Rng);
 
 	TArray<FTransform> ShConcrete, ShMarble, ShGlow, ShGlass;

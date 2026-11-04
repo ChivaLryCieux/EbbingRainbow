@@ -53,6 +53,9 @@ private:
 		uint8 L[19 * 19];            // 高度层, 255 = Void
 		TArray<FVoxStair> Stairs;
 		TArray<int32> RegionOf;      // 每格区域号 (Void = -1)
+		TSet<int32> RoleCells;       // 楼梯角色格(入口/低/高), 一格一角
+		TMap<int32, int32> LowEntry; // 低格 -> 入口格
+		TMap<int32, int32> LowHigh;  // 低格 -> 高格
 		int32 Motif = 0;             // 0=Bowl 1=Ziggurat
 		float ShellR = 0.0f;
 	};
@@ -61,14 +64,16 @@ private:
 	bool BuildPlan(int32 Seed, FRandomStream& Rng, FVoxPlan& OutPlan);
 	bool CollapseHeightField(FRandomStream& Rng, int32 Motif,
 		float Cx, float Cy, uint8* OutL);
+	bool BuildBowlField(FRandomStream& Rng, float Cx, float Cy, uint8* OutL);
 	float PriorWeight(int32 Motif, int32 MaxL, float Cx, float Cy,
 		int32 X, int32 Y, int32 Label) const;
 	void FixupSmallRegions(uint8* L);
+	bool MergeSmallestUnreached(FVoxPlan& Plan) const;
 	bool PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan);
-	bool CheckConnectivity(const FVoxPlan& Plan) const;
+	bool CheckConnectivity(const FVoxPlan& Plan, int32* OutReached = nullptr) const;
 
 	// ---- 实例化 ----
-	void BuildCollision(const FVoxPlan& Plan, FRandomStream& Rng);
+	void BuildCollision(const FVoxPlan& Plan, FRandomStream& Rng, int32 ProbeCell);
 	void BuildVisual(const FVoxPlan& Plan, FRandomStream& Rng);
 	UInstancedStaticMeshComponent* GetMatComponent(EVoxMat Slot);
 	void AddBox(EVoxMat Slot, const FVector& Center, const FVector& Size);
