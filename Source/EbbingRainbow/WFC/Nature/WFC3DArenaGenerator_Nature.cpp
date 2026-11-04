@@ -507,7 +507,7 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 	TArray<UInstancedStaticMeshComponent*> Grass;
 	for (const TCHAR* P : GrassPaths) { Grass.Add(GetOrCreateComp(LoadMesh(P), false)); }
 
-	const int32 GrassTries = 9000;
+	const int32 GrassTries = 16000;
 	for (int32 K = 0; K < GrassTries; ++K)
 	{
 		const float X = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
@@ -518,10 +518,10 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 		if (R > F.MaxRadius * 0.98f) { continue; }
 		// 团簇: Perlin 阈值 -> 草甸成丛而非均匀噪点
 		const float Clump = P2(X / 1400.0f, Y / 1400.0f);
-		if (Clump < -0.05f) { continue; }
+		if (Clump < -0.12f) { continue; }
 		const int32 Mi = Rng.RandRange(0, Grass.Num() - 1);
-		AddInstance(Grass[Mi], FVector(X + CenterX, Y + CenterY, 0),
-			FRotator(0, Rng.FRand() * 360.0f, 0), Rng.FRandRange(0.7f, 1.4f), &F);
+		AddInstance(Grass[Mi], FVector(X + CenterX, Y + CenterY, -25.0f),
+			FRotator(0, Rng.FRand() * 360.0f, 0), Rng.FRandRange(1.1f, 2.3f), &F);
 	}
 
 	// 灌木 + 花: 点缀, 平台内为主
@@ -539,7 +539,7 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 	TArray<UInstancedStaticMeshComponent*> Deco;
 	for (const TCHAR* P : BushPaths)   { Deco.Add(GetOrCreateComp(LoadMesh(P), false)); }
 	for (const TCHAR* P : FlowerPaths) { Deco.Add(GetOrCreateComp(LoadMesh(P), false)); }
-	for (int32 K = 0; K < 400; ++K)
+	for (int32 K = 0; K < 700; ++K)
 	{
 		const float X = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
 		const float Y = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
@@ -548,8 +548,8 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 		const float R = FMath::Sqrt(X * X + Y * Y);
 		if (R < PlateauR * 0.35f) { continue; }      // 广场中心留空
 		const int32 Mi = Rng.RandRange(0, Deco.Num() - 1);
-		AddInstance(Deco[Mi], FVector(X + CenterX, Y + CenterY, 0),
-			FRotator(0, Rng.FRand() * 360.0f, 0), Rng.FRandRange(0.8f, 1.6f), &F);
+		AddInstance(Deco[Mi], FVector(X + CenterX, Y + CenterY, -15.0f),
+			FRotator(0, Rng.FRand() * 360.0f, 0), Rng.FRandRange(1.0f, 2.2f), &F);
 	}
 
 	// 树: 只种在缓坡带/岛缘 (不挡可玩区), 少量剪影
@@ -562,7 +562,7 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 	TArray<UInstancedStaticMeshComponent*> Trees;
 	for (const TCHAR* P : TreePaths) { Trees.Add(GetOrCreateComp(LoadMesh(P), false)); }
 	TArray<FVector> Placed;
-	for (int32 K = 0; K < 500 && Placed.Num() < 16; ++K)
+	for (int32 K = 0; K < 800 && Placed.Num() < 24; ++K)
 	{
 		const float X = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
 		const float Y = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
@@ -578,8 +578,8 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 		if (!bFar) { continue; }
 		Placed.Add(FVector(X, Y, 0));
 		const int32 Mi = Rng.RandRange(0, Trees.Num() - 1);
-		AddInstance(Trees[Mi], FVector(X + CenterX, Y + CenterY, 0),
-			FRotator(0, Rng.FRand() * 360.0f, 0), Rng.FRandRange(0.9f, 1.8f), &F);
+		AddInstance(Trees[Mi], FVector(X + CenterX, Y + CenterY, -20.0f),
+			FRotator(0, Rng.FRand() * 360.0f, 0), Rng.FRandRange(1.1f, 2.1f), &F);
 	}
 }
 
