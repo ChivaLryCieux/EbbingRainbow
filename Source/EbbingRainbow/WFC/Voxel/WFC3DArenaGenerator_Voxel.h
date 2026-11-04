@@ -84,6 +84,9 @@ private:
 	UMaterialInterface* LoadMat(const TCHAR* Path);
 	float ValueNoise3(float X, float Y, float Z) const;
 
+	/** 生成灯光/雾氛围 (单一主光 + 低强度补光 + 下方雾池) */
+	void SpawnLighting(FRandomStream& Rng);
+
 	static constexpr int32 GridW = 19;
 	static constexpr int32 GridH = 19;
 	static constexpr float CellSize = 400.0f;
@@ -115,4 +118,8 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> CollisionHISM = nullptr;
+
+	/** 本次生成产生的氛围演员 (灯光/雾), ClearGenerated 时销毁 */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AActor>> AtmoActors;
 };

@@ -7,6 +7,13 @@
 #include "Engine/CollisionProfile.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Components/ExponentialHeightFogComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Engine/DirectionalLight.h"
+#include "Engine/ExponentialHeightFog.h"
+#include "Engine/SkyLight.h"
+#include "EngineUtils.h"
 #include "HAL/PlatformTime.h"
 
 namespace
@@ -54,6 +61,14 @@ void AWFC3DArenaGenerator_Voxel::ClearGenerated()
 		CollisionHISM->ClearInstances();
 	}
 	DynMats.Reset();
+	for (AActor* A : AtmoActors)
+	{
+		if (A)
+		{
+			A->Destroy();
+		}
+	}
+	AtmoActors.Reset();
 }
 
 UMaterialInterface* AWFC3DArenaGenerator_Voxel::LoadMat(const TCHAR* Path)
@@ -1770,8 +1785,8 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 		UE_LOG(LogTemp, Error, TEXT("[Voxel] No engine cube mesh."));
 		return false;
 	}
-	MatConcrete = LoadMat(TEXT("/Game/Voxel/Materials/M_Voxel_Concrete.M_Voxel_Concrete"));
-	MatMarble = LoadMat(TEXT("/Game/Voxel/Materials/M_Voxel_Marble.M_Voxel_Marble"));
+	MatConcrete = LoadMat(TEXT("/Game/Materials/Architecture/MI_Concrete_1.MI_Concrete_1"));
+	MatMarble = LoadMat(TEXT("/Game/Materials/Architecture/MI_Marble_1.MI_Marble_1"));
 	MatGlowBase = LoadMat(TEXT("/Game/Voxel/Materials/M_Voxel_Glow.M_Voxel_Glow"));
 	MatGlassBase = LoadMat(TEXT("/Game/Voxel/Materials/M_Voxel_Glass.M_Voxel_Glass"));
 
@@ -1908,6 +1923,7 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 	// ---- 碰撞 + 可见实例 ----
 	BuildCollision(Plan, Rng, ProbeCell);
 	BuildVisual(Plan, Rng);
+	SpawnLighting(Rng);
 
 	TArray<FTransform> ShConcrete, ShMarble, ShGlow, ShGlass;
 	BuildShell(Plan, Rng, ShConcrete, ShMarble, ShGlow, ShGlass);
@@ -1953,4 +1969,134 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 		Plan.Stairs.Num(), Plan.ShellR,
 		Counts[0], Counts[1], Counts[2], Counts[3], DurationMs);
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+// 氛围: 单一主光 + 微弱冷补光 + 下方雾池 (参考"漂浮沙盘"目标)
+// ---------------------------------------------------------------------------
+
+void AWFC3DArenaGenerator_Voxel::SpawnLighting(FRandomStream& Rng)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	const FVector Origin = GetActorLocation();
+
+	// ---- 调谐关卡自带氛围演员 (Lvl_Arena 放好了 SkyLight/SkyAtmosphere/
+	//      SkyDome_Soft/ExponentialHeightFog, 它们的粉紫参数覆盖一切) ----
+	bool bFoundLevelFog = false;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* A = *It;
+		if (A == this || A->GetOwner() == this)
+		{
+			continue;
+		}
+		if (AExponentialHeightFog* F = Cast<AExponentialHeightFog>(A))
+		{
+			bFoundLevelFog = true;
+			if (UExponentialHeightFogComponent* FC = F->GetComponent())
+			{
+				FC->SetFogDensity(0.008f);
+				FC->SetFogHeightFalloff(0.45f);
+				FC->SetFogInscatteringColor(
+					FLinearColor::FromSRGBColor(FColor(10, 13, 22)));
+				FC->SetDirectionalInscatteringColor(FLinearColor(0.001f, 0.002f, 0.004f));
+				FC->SetDirectionalInscatteringExponent(14.0f);
+				FC->SetStartDistance(1200.0f);
+				FC->SetVolumetricFog(true);
+				FC->SetVolumetricFogScatteringDistribution(0.55f);
+				FC->SetVolumetricFogAlbedo(FColor(18, 26, 48));
+				FC->SetVolumetricFogEmissive(FLinearColor(0.002f, 0.003f, 0.006f));
+			}
+		}
+		else if (ASkyLight* S = Cast<ASkyLight>(A))
+		{
+			if (USkyLightComponent* SC = S->GetLightComponent())
+			{
+				SC->SetIntensity(0.3f);
+				SC->SetLightColor(
+					FLinearColor::FromSRGBColor(FColor(70, 82, 110)));
+				SC->bLowerHemisphereIsBlack = true;
+			}
+		}
+		else if (A->GetClass()->GetName().Contains(TEXT("SkyAtmosphere")))
+		{
+			A->SetActorHiddenInGame(true);
+		}
+	}
+
+	FActorSpawnParameters P;
+	P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	P.ObjectFlags |= RF_Transient;
+	P.Owner = this;
+
+	// 主光: 暖白, 高位斜射, 方向随种子变化
+	const float YawDeg = 20.0f + Rng.FRand() * 320.0f;
+	const float PitchDeg = -(48.0f + Rng.FRand() * 14.0f);
+	ADirectionalLight* Key = World->SpawnActor<ADirectionalLight>(
+		ADirectionalLight::StaticClass(), Origin, FRotator(PitchDeg, YawDeg, 0.0f), P);
+	if (Key)
+	{
+		UDirectionalLightComponent* LC = Key->GetComponent();
+		LC->SetMobility(EComponentMobility::Movable);
+		LC->SetIntensity(7.5f);
+		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(255, 244, 229))); // 微暖白
+		LC->SetCastShadows(true);
+		LC->LightSourceAngle = 0.8f;
+		LC->ForwardShadingPriority = 1; // 消 forward-shading 多主光警告
+		Key->SetActorRotation(FRotator(PitchDeg, YawDeg, 0.0f));
+		AtmoActors.Add(Key);
+	}
+
+	// 补光: 无影冷色低位, 只抬阴影不死黑 (替代 skylight, 避免捕获时序问题)
+	ADirectionalLight* Fill = World->SpawnActor<ADirectionalLight>(
+		ADirectionalLight::StaticClass(), Origin,
+		FRotator(-25.0f, YawDeg + 160.0f, 0.0f), P);
+	if (Fill)
+	{
+		UDirectionalLightComponent* LC = Fill->GetComponent();
+		LC->SetMobility(EComponentMobility::Movable);
+		LC->SetIntensity(0.9f);
+		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(120, 140, 175))); // 冷蓝灰
+		LC->SetCastShadows(false);
+		LC->bAffectTranslucentLighting = true;
+		AtmoActors.Add(Fill);
+	}
+
+	// 反弹光: 从下往上打, 亮出立面/底面 -> "漂在云海之上"的反光感
+	ADirectionalLight* Bounce = World->SpawnActor<ADirectionalLight>(
+		ADirectionalLight::StaticClass(), Origin,
+		FRotator(65.0f, YawDeg + 180.0f, 0.0f), P);
+	if (Bounce)
+	{
+		UDirectionalLightComponent* LC = Bounce->GetComponent();
+		LC->SetMobility(EComponentMobility::Movable);
+		LC->SetIntensity(1.4f);
+		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(90, 105, 140)));
+		LC->SetCastShadows(false);
+		AtmoActors.Add(Bounce);
+	}
+
+	// 雾池: 关卡已放雾则只调谐; 否则自己补一个 (其它地图兜底)
+	AExponentialHeightFog* Fog = bFoundLevelFog ? nullptr : World->SpawnActor<AExponentialHeightFog>(
+		AExponentialHeightFog::StaticClass(), Origin + FVector(0, 0, -1400.0f),
+		FRotator::ZeroRotator, P);
+	if (Fog)
+	{
+		UExponentialHeightFogComponent* FC = Fog->GetComponent();
+		FC->SetFogDensity(0.008f);
+		FC->SetFogHeightFalloff(0.45f);
+		FC->SetFogInscatteringColor(FLinearColor::FromSRGBColor(FColor(10, 13, 22))); // 近黑蓝 -> 虚空
+		FC->SetDirectionalInscatteringColor(FLinearColor(0.001f, 0.002f, 0.004f));
+		FC->SetDirectionalInscatteringExponent(14.0f);
+		FC->SetStartDistance(1200.0f);
+		FC->SetVolumetricFog(true);
+		FC->SetVolumetricFogScatteringDistribution(0.55f);
+		FC->SetVolumetricFogAlbedo(FColor(18, 26, 48)); // 深蓝紫 -> 饱和雾色即虚空色
+		FC->SetVolumetricFogEmissive(FLinearColor(0.002f, 0.003f, 0.006f));
+		AtmoActors.Add(Fog);
+	}
 }
