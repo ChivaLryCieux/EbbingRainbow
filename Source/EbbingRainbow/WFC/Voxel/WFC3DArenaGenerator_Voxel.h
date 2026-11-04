@@ -48,6 +48,18 @@ private:
 		int32 Dir = 0; // 0=+Y 1=+X 2=-Y 3=-X, 指向高侧格
 	};
 
+	struct FVoxBlock
+	{
+		int32 X = 0;
+		int32 Y = 0;
+		int32 W = 1;
+		int32 H = 1;
+		uint8 Lev = 0;
+		float TopOff = 0.0f;
+		float Bottom = -100.0f;
+		EVoxMat Mat = EVoxMat::Concrete;
+	};
+
 	struct FVoxPlan
 	{
 		uint8 L[19 * 19];            // 高度层, 255 = Void
@@ -56,6 +68,8 @@ private:
 		TSet<int32> RoleCells;       // 楼梯角色格(入口/低/高), 一格一角
 		TMap<int32, int32> LowEntry; // 低格 -> 入口格
 		TMap<int32, int32> LowHigh;  // 低格 -> 高格
+		TArray<FVoxBlock> Blocks;    // 共享块切分 (碰撞+可见共用)
+		int16 BlockOf[19 * 19];      // 每格所属块, -1 = Void
 		int32 Motif = 0;             // 0=Bowl 1=Ziggurat
 		float ShellR = 0.0f;
 	};
@@ -73,6 +87,7 @@ private:
 	bool CheckConnectivity(const FVoxPlan& Plan, int32* OutReached = nullptr) const;
 
 	// ---- 实例化 ----
+	void PartitionBlocks(FVoxPlan& Plan, int32 Seed, int32 ProbeCell) const;
 	void BuildCollision(const FVoxPlan& Plan, FRandomStream& Rng, int32 ProbeCell);
 	void BuildVisual(const FVoxPlan& Plan, FRandomStream& Rng);
 	UInstancedStaticMeshComponent* GetMatComponent(EVoxMat Slot);

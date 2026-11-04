@@ -1311,6 +1311,109 @@ float AWFC3DArenaGenerator_Voxel::ValueNoise3(float X, float Y, float Z) const
 	return FMath::Lerp(FMath::Lerp(C00, C10, V), FMath::Lerp(C01, C11, V), W);
 }
 
+void AWFC3DArenaGenerator_Voxel::PartitionBlocks(
+	FVoxPlan& Plan, int32 Seed, int32 ProbeCell) const
+{
+	// 中块切分: 1x1 / 2x1 / 1x2 / 2x2 拼合, 平台不再是大板+碎粒而是
+	// 中等块拼缝; 独立随机流 (Seed+7919) 不影响地形/楼梯序列。
+	FRandomStream BR(Seed + 7919);
+	Plan.Blocks.Reset();
+	FMemory::Memset(Plan.BlockOf, 0xFF, sizeof(Plan.BlockOf));
+
+	auto Fits = [&](int32 X, int32 Y, int32 W, int32 H, uint8 Lev) -> bool
+	{
+		if (X + W > GridW || Y + H > GridH)
+		{
+			return false;
+		}
+		for (int32 DY_ = 0; DY_ < H; ++DY_)
+		{
+			for (int32 DX_ = 0; DX_ < W; ++DX_)
+			{
+				const int32 I = VoxCell(X + DX_, Y + DY_);
+				if (Plan.BlockOf[I] != -1 || Plan.L[I] != Lev)
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	};
+
+	for (int32 Y = 0; Y < GridH; ++Y)
+	{
+		for (int32 X = 0; X < GridW; ++X)
+		{
+			const int32 Idx = VoxCell(X, Y);
+			const uint8 Lev = Plan.L[Idx];
+			if (Lev == LVoid || Plan.BlockOf[Idx] != -1)
+			{
+				continue;
+			}
+			const float R = BR.FRand();
+			int32 W = 1;
+			int32 H = 1;
+			const bool bAlt = BR.FRand() < 0.5f;
+			if (R < 0.45f)
+			{
+				// 2x2 -> 2x1/1x2 -> 1x1
+				if (Fits(X, Y, 2, 2, Lev)) { W = 2; H = 2; }
+				else if (!bAlt && Fits(X, Y, 2, 1, Lev)) { W = 2; H = 1; }
+				else if (Fits(X, Y, 1, 2, Lev)) { W = 1; H = 2; }
+				else if (bAlt && Fits(X, Y, 2, 1, Lev)) { W = 2; H = 1; }
+			}
+			else if (R < 0.80f)
+			{
+				const int32 AW = bAlt ? 2 : 1;
+				const int32 AH = bAlt ? 1 : 2;
+				const int32 BW = bAlt ? 1 : 2;
+				const int32 BH = bAlt ? 2 : 1;
+				if (Fits(X, Y, AW, AH, Lev)) { W = AW; H = AH; }
+				else if (Fits(X, Y, BW, BH, Lev)) { W = BW; H = BH; }
+			}
+
+			FVoxBlock Bl;
+			Bl.X = X;
+			Bl.Y = Y;
+			Bl.W = W;
+			Bl.H = H;
+			Bl.Lev = Lev;
+			const float Cx = X + W * 0.5f;
+			const float Cy = Y + H * 0.5f;
+			const float N = ValueNoise3(Cx * 0.35f + 17.0f, Cy * 0.35f + 5.0f,
+				(Seed % 97) * 0.13f);
+			bool bRole = (ProbeCell == Idx);
+			for (int32 DY_ = 0; DY_ < H && !bRole; ++DY_)
+			{
+				for (int32 DX_ = 0; DX_ < W && !bRole; ++DX_)
+				{
+					const int32 I = VoxCell(X + DX_, Y + DY_);
+					if (Plan.RoleCells.Contains(I) || I == ProbeCell)
+					{
+						bRole = true;
+					}
+				}
+			}
+			Bl.TopOff = (!bRole && N > 0.58f) ? 25.0f : 0.0f;
+			static const float BottomSteps[4] = { 0.0f, 200.0f, 400.0f, 600.0f };
+			Bl.Bottom = -100.0f - BottomSteps[BR.RandRange(0, 3)];
+			const float M = ValueNoise3(Cx * 0.22f + 3.0f, Cy * 0.22f + 41.0f, 7.0f);
+			Bl.Mat = (M > ((Lev == 0) ? 0.66f : 0.56f))
+				? EVoxMat::Marble : EVoxMat::Concrete;
+
+			const int32 BIdx = Plan.Blocks.Add(Bl);
+			for (int32 DY_ = 0; DY_ < H; ++DY_)
+			{
+				for (int32 DX_ = 0; DX_ < W; ++DX_)
+				{
+					Plan.BlockOf[VoxCell(X + DX_, Y + DY_)] =
+						static_cast<int16>(BIdx);
+				}
+			}
+		}
+	}
+}
+
 void AWFC3DArenaGenerator_Voxel::BuildCollision(
 	const FVoxPlan& Plan, FRandomStream& Rng, int32 ProbeCell)
 {
@@ -1356,7 +1459,9 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(
 			{
 				continue;
 			}
-			const float Top = L * LayerH;
+			// 顶面含共享块起伏 TopOff (25 < step 35, nav 连续)
+			const float Top = L * LayerH
+				+ Plan.Blocks[Plan.BlockOf[VoxCell(X, Y)]].TopOff;
 			AddCol(FVector(X * CellSize + 200.0f, Y * CellSize + 200.0f,
 				(Top - 100.0f) * 0.5f),
 				FVector(400.0f, 400.0f, Top + 100.0f));
@@ -1409,118 +1514,64 @@ void AWFC3DArenaGenerator_Voxel::BuildCollision(
 	{
 		const int32 X = CoverCand[I] % GridW;
 		const int32 Y = CoverCand[I] / GridW;
-		const float Top = Plan.L[VoxCell(X, Y)] * LayerH;
-		const float W = Rng.FRandRange(100.0f, 200.0f);
+		// 半格对齐掩体: 400x200 贴格半边, 底面含块起伏
+		const float Top = Plan.L[VoxCell(X, Y)] * LayerH
+			+ Plan.Blocks[Plan.BlockOf[VoxCell(X, Y)]].TopOff;
 		const float H = (Rng.FRand() < 0.5f) ? 100.0f : 150.0f;
-		const FVector C(
-			X * CellSize + 200.0f + Rng.FRandRange(-50.0f, 50.0f),
-			Y * CellSize + 200.0f + Rng.FRandRange(-50.0f, 50.0f),
+		const bool bXLong = Rng.FRand() < 0.5f;
+		const float Half = (Rng.FRand() < 0.5f) ? -100.0f : 100.0f;
+		const FVector C(X * CellSize + 200.0f + (bXLong ? 0.0f : Half),
+			Y * CellSize + 200.0f + (bXLong ? Half : 0.0f),
 			Top + H * 0.5f);
-		AddCol(C, FVector(W, W, H));
+		const FVector Size = bXLong ? FVector(400.0f, 200.0f, H)
+			: FVector(200.0f, 400.0f, H);
+		AddCol(C, Size);
 		// 掩体可见部分用大理石 (不可见碰撞已挡导航)
-		AddBox(EVoxMat::Marble, C, FVector(W, W, H));
+		AddBox(EVoxMat::Marble, C, Size);
 	}
 }
 
 void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream& Rng)
 {
-	// ---- 1) 同高矩形合并: 顶板 + 柱身 ----
-	for (int32 Lev = 0; Lev <= 3; ++Lev)
+	// ---- 1) 共享块切分: 每块一个盒, XY 缩 6cm 出拼缝, z Bottom..顶 ----
+	for (const FVoxBlock& Bl : Plan.Blocks)
 	{
-		uint8 Used[GridW * GridH];
-		FMemory::Memset(Used, 0, sizeof(Used));
-		for (int32 Y = 0; Y < GridH; ++Y)
-		{
-			for (int32 X = 0; X < GridW; ++X)
-			{
-				const int32 Idx = VoxCell(X, Y);
-				if (Used[Idx] || Plan.L[Idx] != Lev)
-				{
-					continue;
-				}
-				// 贪心最大矩形
-				int32 RW = 0;
-				while (X + RW < GridW && !Used[VoxCell(X + RW, Y)]
-					&& Plan.L[VoxCell(X + RW, Y)] == Lev)
-				{
-					++RW;
-				}
-				int32 RH = 1;
-				for (;;)
-				{
-					if (Y + RH >= GridH)
-					{
-						break;
-					}
-					bool bRow = true;
-					for (int32 K = 0; K < RW; ++K)
-					{
-						const int32 J = VoxCell(X + K, Y + RH);
-						if (Used[J] || Plan.L[J] != Lev)
-						{
-							bRow = false;
-							break;
-						}
-					}
-					if (!bRow) { break; }
-					++RH;
-				}
-				for (int32 K = 0; K < RW; ++K)
-				{
-					for (int32 J = 0; J < RH; ++J)
-					{
-						Used[VoxCell(X + K, Y + J)] = 1;
-					}
-				}
-
-				const float Top = Lev * LayerH;
-				const FVector Center(
-					(X + RW * 0.5f) * CellSize, (Y + RH * 0.5f) * CellSize, Top - 50.0f);
-				// L=0 偏混凝土 70%, 高层偏大理石 70%
-				// 大面楼板以素混凝土为主降噪, 大理石只做少量点缀
-				const EVoxMat SlabMat = (Lev == 0)
-					? ((Rng.FRand() < 0.8f) ? EVoxMat::Concrete : EVoxMat::Marble)
-					: ((Rng.FRand() < 0.6f) ? EVoxMat::Concrete : EVoxMat::Marble);
-				AddBox(SlabMat, Center, FVector(RW * CellSize, RH * CellSize, 100.0f));
-				if (Lev > 0)
-				{
-					AddBox(EVoxMat::Concrete,
-						FVector(Center.X, Center.Y, Lev * 100.0f - 100.0f),
-						FVector(RW * CellSize, RH * CellSize, Lev * LayerH));
-				}
-			}
-		}
+		const float Top = Bl.Lev * LayerH + Bl.TopOff;
+		const FVector Center((Bl.X + Bl.W * 0.5f) * CellSize,
+			(Bl.Y + Bl.H * 0.5f) * CellSize,
+			(Bl.Bottom + Top) * 0.5f);
+		AddBox(Bl.Mat, Center,
+			FVector(Bl.W * CellSize - 6.0f, Bl.H * CellSize - 6.0f,
+				Top - Bl.Bottom));
 	}
 
-	// ---- 2) 崖面挤出小块 ----
+	// ---- 2) 崖面中板: 每面 30% 概率一块 200/400 宽板, 凸出 50-100 ----
 	auto FaceBlock = [&](int32 X, int32 Y, int32 S, float LoZ, float HiZ)
 	{
-		const int32 N = Rng.RandRange(0, 3);
-		for (int32 I = 0; I < N; ++I)
+		if (Rng.FRand() >= 0.3f || HiZ - LoZ < 60.0f)
 		{
-			const float Sz = (Rng.FRand() < 0.5f) ? 50.0f : 100.0f;
-			const float Out = Rng.FRandRange(10.0f, 40.0f);
-			const float Along = Rng.FRandRange(Sz * 0.5f, CellSize - Sz * 0.5f);
-			const float Z = Rng.FRandRange(LoZ + Sz * 0.5f, HiZ - Sz * 0.5f);
-			if (Z <= LoZ + Sz * 0.5f || Z >= HiZ - Sz * 0.5f)
-			{
-				continue;
-			}
-			// 面心 = 格边中点沿 dir 移出
-			const float FX = X * CellSize + 200.0f + VDX[S] * (200.0f + Out);
-			const float FY = Y * CellSize + 200.0f + VDY[S] * (200.0f + Out);
-			FVector Pos(FX, FY, Z);
-			// 沿面切向偏移
-			const int32 T = (S + 1) % 4;
-			Pos.X += VDX[T] * (Along - 200.0f);
-			Pos.Y += VDY[T] * (Along - 200.0f);
-			const float R = Rng.FRand();
-			const EVoxMat M = (R < 0.05f) ? EVoxMat::Glow : (R < 0.08f) ? EVoxMat::Glass : EVoxMat::Concrete;
-			const FVector Size = (S == 1 || S == 3)
-				? FVector(Out + Sz * 0.5f, Sz, Sz)
-				: FVector(Sz, Out + Sz * 0.5f, Sz);
-			AddBox(M, Pos, Size);
+			return;
 		}
+		const float Along = (Rng.FRand() < 0.5f) ? 200.0f : 400.0f;
+		const float Thick = Rng.FRandRange(50.0f, 100.0f);
+		const float Top = HiZ - Rng.FRandRange(0.0f, 50.0f);
+		const float Height = FMath::Min(Top - LoZ,
+			Rng.FRandRange(0.5f, 1.0f) * (HiZ - LoZ));
+		const FVector Pos(
+			X * CellSize + 200.0f + VDX[S] * (200.0f + Thick * 0.5f - 10.0f),
+			Y * CellSize + 200.0f + VDY[S] * (200.0f + Thick * 0.5f - 10.0f),
+			Top - Height * 0.5f);
+		const float TOff = (Along < 400.0f)
+			? ((Rng.FRand() < 0.5f) ? -100.0f : 100.0f) : 0.0f;
+		FVector P2 = Pos;
+		const int32 T = (S + 1) % 4;
+		P2.X += VDX[T] * TOff;
+		P2.Y += VDY[T] * TOff;
+		const EVoxMat M = (Rng.FRand() < 0.85f) ? EVoxMat::Concrete : EVoxMat::Marble;
+		const FVector Size = (S == 1 || S == 3)
+			? FVector(Thick, Along, Height)
+			: FVector(Along, Thick, Height);
+		AddBox(M, P2, Size);
 	};
 
 	for (int32 Y = 0; Y < GridH; ++Y)
@@ -1532,7 +1583,8 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 			{
 				continue;
 			}
-			const float Top = L * LayerH;
+			const float Top = L * LayerH
+				+ Plan.Blocks[Plan.BlockOf[VoxCell(X, Y)]].TopOff;
 			for (int32 S = 0; S < 4; ++S)
 			{
 				const int32 NX = X + VDX[S];
@@ -1593,12 +1645,13 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 			}
 			const float R = FMath::Sqrt(FMath::Square(X - 9.0f) + FMath::Square(Y - 9.0f)) / 9.0f;
 			const float Total = 200.0f + FMath::Clamp(1.0f - R, 0.0f, 1.0f) * 800.0f;
-			float Z = -100.0f;
+			// 从共享块 Bottom 起挂, 最小块 100 (400->200->100)
+			float Z = Plan.Blocks[Plan.BlockOf[VoxCell(X, Y)]].Bottom;
 			float Sz = 400.0f;
 			float OX = X * CellSize + 200.0f;
 			float OY = Y * CellSize + 200.0f;
 			float Acc = 0.0f;
-			while (Acc < Total && Sz >= 40.0f)
+			while (Acc < Total && Sz >= 100.0f)
 			{
 				const float H = Sz * Rng.FRandRange(0.5f, 1.0f);
 				AddBox(EVoxMat::Concrete,
@@ -1647,15 +1700,13 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 	{
 		if (Fr < 0.75f) { return EVoxMat::Concrete; }
 		if (Fr < 0.92f) { return EVoxMat::Marble; }
-		return (Fr < 0.96f) ? EVoxMat::Glow : EVoxMat::Glass;
+		return EVoxMat::Glass;
 	};
-	// 子块只出混凝土/大理石/辉光: 高空漂浮的玻璃块读感不对,
-	// 发光子块反而像浮空灯笼, 保留
 	auto MatPickKid = [&](float Fr) -> EVoxMat
 	{
-		if (Fr < 0.78f) { return EVoxMat::Concrete; }
-		if (Fr < 0.94f) { return EVoxMat::Marble; }
-		return EVoxMat::Glow;
+		if (Fr < 0.80f) { return EVoxMat::Concrete; }
+		if (Fr < 0.95f) { return EVoxMat::Marble; }
+		return EVoxMat::Glass;
 	};
 	auto PushBox = [&](EVoxMat M, const FVector& C, float Sz, const FRotator& Rot)
 	{
@@ -1693,55 +1744,57 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		}
 	};
 
-	// Fibonacci 采样 + 3D 噪声碎裂
-	const int32 Samples = 600;
-	const float Golden = PI * (3.0f - FMath::Sqrt(5.0f));
-	for (int32 I = 0; I < Samples; ++I)
+	// 外壳带: 3D 抖动网格 (G=1000) 均匀布点 -> 密度有界不再稀疏
+	const float G = 1000.0f;
+	const float Extent = R * 1.3f;
+	const int32 ShellStart = OutConcrete.Num() + OutMarble.Num() + OutGlass.Num();
+	for (float OX = -Extent; OX < Extent; OX += G)
 	{
-		const float Z = 1.0f - 2.0f * (I + 0.5f) / Samples;
-		const float Rad = FMath::Sqrt(FMath::Max(0.0f, 1.0f - Z * Z));
-		const float Theta = Golden * I;
-		const FVector Dir(Rad * FMath::Cos(Theta), Rad * FMath::Sin(Theta), Z);
-		FVector P = Center + Dir * (R * 1.18f);
-		if (P.Z > 0.15f * R)
+		for (float OY = -Extent; OY < Extent; OY += G)
 		{
-			continue;
-		}
-		PushOutside(P);
-		// 低频噪声 -> 成簇破洞而不是均匀盐粒
-		if (ValueNoise3(Dir.X * 1.4f + 7.0f, Dir.Y * 1.4f + 3.0f, Dir.Z * 1.4f + 11.0f) < 0.42f)
-		{
-			continue;
-		}
-		// 双峰尺寸: 多数中块 + 少量巨块; 发光/玻璃只做小块点缀
-		const float RF = Rng.FRand();
-		float Mother = (RF < 0.75f) ? Rng.FRandRange(300.0f, 800.0f)
-			: (RF < 0.95f) ? Rng.FRandRange(800.0f, 1500.0f)
-			: Rng.FRandRange(1500.0f, 2200.0f);
-		const EVoxMat M = MatPick(Rng.FRand());
-		if ((M == EVoxMat::Glow || M == EVoxMat::Glass) && Mother > 600.0f)
-		{
-			Mother = Rng.FRandRange(200.0f, 600.0f);
-		}
-		const FRotator MotherRot(Rng.FRandRange(-9.0f, 9.0f),
-			Rng.FRandRange(0.0f, 360.0f), Rng.FRandRange(-9.0f, 9.0f));
-		PushBox(M, P, Mother, MotherRot);
-		// 子块簇: 3-12 个, 边长逐级减半, 沿切向偏移
-		const int32 Kids = Rng.RandRange(3, 12);
-		const FVector T1 = FVector::CrossProduct(Dir, FVector::UpVector).GetSafeNormal();
-		const FVector T2 = FVector::CrossProduct(Dir, T1).GetSafeNormal();
-		float Sz = Mother;
-		for (int32 K = 0; K < Kids; ++K)
-		{
-			Sz *= 0.5f;
-			const FVector Off = T1 * Rng.FRandRange(-Mother, Mother) * 0.4f
-				+ T2 * Rng.FRandRange(-Mother, Mother) * 0.4f
-				+ Dir * Rng.FRandRange(-Mother * 0.3f, Mother * 0.3f);
-			FVector KP = P + Off;
-			PushOutside(KP);
-			const FRotator KRot(Rng.FRandRange(-20.0f, 20.0f),
-				Rng.FRandRange(0.0f, 360.0f), Rng.FRandRange(-20.0f, 20.0f));
-			PushBox(MatPickKid(Rng.FRand()), KP, FMath::Max(Sz, 50.0f), KRot);
+			for (float OZ = -0.75f * R; OZ < 0.15f * R; OZ += G)
+			{
+				FVector P(Center.X + OX + G * 0.5f + Rng.FRandRange(-0.4f * G, 0.4f * G),
+					Center.Y + OY + G * 0.5f + Rng.FRandRange(-0.4f * G, 0.4f * G),
+					Center.Z + OZ + G * 0.5f + Rng.FRandRange(-0.4f * G, 0.4f * G));
+				const float Dist = (P - Center).Size();
+				const float SkipR = Rng.FRand();
+				if (Dist < 0.92f * R || Dist > 1.25f * R || SkipR < 0.12f)
+				{
+					continue;
+				}
+				PushOutside(P);
+				const float RF = Rng.FRand();
+				float Mother = (RF < 0.70f) ? Rng.FRandRange(300.0f, 900.0f)
+					: (RF < 0.95f) ? Rng.FRandRange(900.0f, 1500.0f)
+					: Rng.FRandRange(1500.0f, 2200.0f);
+				const EVoxMat M = MatPick(Rng.FRand());
+				if (M == EVoxMat::Glass && Mother > 600.0f)
+				{
+					Mother = Rng.FRandRange(200.0f, 600.0f);
+				}
+				const FRotator MotherRot(Rng.FRandRange(-9.0f, 9.0f),
+					Rng.FRandRange(0.0f, 360.0f), Rng.FRandRange(-9.0f, 9.0f));
+				PushBox(M, P, Mother, MotherRot);
+				// 子块: 1-3 个, 母块 0.4-0.6 倍 (>=150), 切向/径向偏移
+				const int32 Kids = Rng.RandRange(1, 3);
+				const FVector Dir = (P - Center).GetSafeNormal();
+				const FVector T1 = FVector::CrossProduct(Dir, FVector::UpVector).GetSafeNormal();
+				const FVector T2 = FVector::CrossProduct(Dir, T1).GetSafeNormal();
+				for (int32 K = 0; K < Kids; ++K)
+				{
+					const float Sz = FMath::Max(150.0f,
+						Mother * Rng.FRandRange(0.4f, 0.6f));
+					FVector KP = P
+						+ T1 * Rng.FRandRange(-0.5f * Mother, 0.5f * Mother)
+						+ T2 * Rng.FRandRange(-0.5f * Mother, 0.5f * Mother)
+						+ Dir * Rng.FRandRange(-0.3f * Mother, 0.3f * Mother);
+					PushOutside(KP);
+					const FRotator KRot(Rng.FRandRange(-20.0f, 20.0f),
+						Rng.FRandRange(0.0f, 360.0f), Rng.FRandRange(-20.0f, 20.0f));
+					PushBox(MatPickKid(Rng.FRand()), KP, Sz, KRot);
+				}
+			}
 		}
 	}
 
@@ -1769,19 +1822,29 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		}
 	}
 
-	// 漂浮碎屑: 偏向内侧/下方, 越远越稀
-	const int32 Debris = Rng.RandRange(130, 200);
-	for (int32 I = 0; I < Debris; ++I)
+	// 内侧碎屑: 抖动网格 (步长 900) 覆盖环带 [4800, 0.92R], 均匀 50%
+	const float DG = 900.0f;
+	const float DExtent = R * 0.92f;
+	for (float OX = -DExtent; OX < DExtent; OX += DG)
 	{
-		const float Ang = Rng.FRandRange(0.0f, 2.0f * PI);
-		const float Dist = 4000.0f + (R * 1.05f - 4000.0f) * FMath::Square(Rng.FRand());
-		FVector P(Center.X + FMath::Cos(Ang) * Dist,
-			Center.Y + FMath::Sin(Ang) * Dist,
-			Rng.FRandRange(-3400.0f, 1200.0f));
-		PushOutside(P);
-		PushBox(MatPick(Rng.FRand()), P, Rng.FRandRange(25.0f, 100.0f),
-			FRotator::ZeroRotator);
+		for (float OY = -DExtent; OY < DExtent; OY += DG)
+		{
+			FVector P(Center.X + OX + DG * 0.5f + Rng.FRandRange(-0.4f * DG, 0.4f * DG),
+				Center.Y + OY + DG * 0.5f + Rng.FRandRange(-0.4f * DG, 0.4f * DG),
+				Rng.FRandRange(-2500.0f, 600.0f));
+			const float HDist = FVector2D(P.X - Center.X, P.Y - Center.Y).Size();
+			const float KeepR = Rng.FRand();
+			if (HDist < 4800.0f || HDist > 0.92f * R || KeepR >= 0.5f)
+			{
+				continue;
+			}
+			PushOutside(P);
+			PushBox(MatPickKid(Rng.FRand()), P, Rng.FRandRange(100.0f, 300.0f),
+				FRotator::ZeroRotator);
+		}
 	}
+	UE_LOG(LogTemp, Log, TEXT("[Voxel] Shell instances: %d"),
+		OutConcrete.Num() + OutMarble.Num() + OutGlass.Num() - ShellStart);
 }
 
 bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
@@ -1942,7 +2005,8 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 			(ProbeCell / GridW) * CellSize + 200.0f, 20.0f);
 	}
 
-	// ---- 碰撞 + 可见实例 ----
+	// ---- 碰撞 + 可见实例 (共享块切分先行) ----
+	PartitionBlocks(Plan, Seed, ProbeCell);
 	BuildCollision(Plan, Rng, ProbeCell);
 	BuildVisual(Plan, Rng);
 	SpawnLighting(Rng);
