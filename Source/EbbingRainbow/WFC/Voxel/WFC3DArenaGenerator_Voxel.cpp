@@ -1477,9 +1477,10 @@ void AWFC3DArenaGenerator_Voxel::BuildVisual(const FVoxPlan& Plan, FRandomStream
 				const FVector Center(
 					(X + RW * 0.5f) * CellSize, (Y + RH * 0.5f) * CellSize, Top - 50.0f);
 				// L=0 偏混凝土 70%, 高层偏大理石 70%
+				// 大面楼板以素混凝土为主降噪, 大理石只做少量点缀
 				const EVoxMat SlabMat = (Lev == 0)
-					? ((Rng.FRand() < 0.7f) ? EVoxMat::Concrete : EVoxMat::Marble)
-					: ((Rng.FRand() < 0.7f) ? EVoxMat::Marble : EVoxMat::Concrete);
+					? ((Rng.FRand() < 0.8f) ? EVoxMat::Concrete : EVoxMat::Marble)
+					: ((Rng.FRand() < 0.6f) ? EVoxMat::Concrete : EVoxMat::Marble);
 				AddBox(SlabMat, Center, FVector(RW * CellSize, RH * CellSize, 100.0f));
 				if (Lev > 0)
 				{
@@ -1648,6 +1649,14 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		if (Fr < 0.92f) { return EVoxMat::Marble; }
 		return (Fr < 0.96f) ? EVoxMat::Glow : EVoxMat::Glass;
 	};
+	// 子块只出混凝土/大理石/辉光: 高空漂浮的玻璃块读感不对,
+	// 发光子块反而像浮空灯笼, 保留
+	auto MatPickKid = [&](float Fr) -> EVoxMat
+	{
+		if (Fr < 0.78f) { return EVoxMat::Concrete; }
+		if (Fr < 0.94f) { return EVoxMat::Marble; }
+		return EVoxMat::Glow;
+	};
 	auto PushBox = [&](EVoxMat M, const FVector& C, float Sz, const FRotator& Rot)
 	{
 		const FTransform T(Rot, C, FVector(Sz / 100.0f));
@@ -1704,12 +1713,16 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		{
 			continue;
 		}
-		// 双峰尺寸: 多数中块 + 少量巨块
+		// 双峰尺寸: 多数中块 + 少量巨块; 发光/玻璃只做小块点缀
 		const float RF = Rng.FRand();
-		const float Mother = (RF < 0.75f) ? Rng.FRandRange(300.0f, 800.0f)
+		float Mother = (RF < 0.75f) ? Rng.FRandRange(300.0f, 800.0f)
 			: (RF < 0.95f) ? Rng.FRandRange(800.0f, 1500.0f)
 			: Rng.FRandRange(1500.0f, 2200.0f);
 		const EVoxMat M = MatPick(Rng.FRand());
+		if ((M == EVoxMat::Glow || M == EVoxMat::Glass) && Mother > 600.0f)
+		{
+			Mother = Rng.FRandRange(200.0f, 600.0f);
+		}
 		const FRotator MotherRot(Rng.FRandRange(-9.0f, 9.0f),
 			Rng.FRandRange(0.0f, 360.0f), Rng.FRandRange(-9.0f, 9.0f));
 		PushBox(M, P, Mother, MotherRot);
@@ -1728,7 +1741,7 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 			PushOutside(KP);
 			const FRotator KRot(Rng.FRandRange(-20.0f, 20.0f),
 				Rng.FRandRange(0.0f, 360.0f), Rng.FRandRange(-20.0f, 20.0f));
-			PushBox(MatPick(Rng.FRand()), KP, FMath::Max(Sz, 50.0f), KRot);
+			PushBox(MatPickKid(Rng.FRand()), KP, FMath::Max(Sz, 50.0f), KRot);
 		}
 	}
 
