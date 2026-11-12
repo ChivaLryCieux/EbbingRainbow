@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Core/BattleGameMode.h"
+#include "Battle/Core/UBattleDebugSubsystem.h"
 #include "Core/ERDebug.h"
 #include "Core/ERLog.h"
 #include "Battle/Arena/BattleArena.h"
@@ -19,17 +20,6 @@
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
-#include "TimerManager.h"
-#include "UnrealClient.h"
-#include "Camera/CameraActor.h"
-
-/** 调试：>0 时战斗开始 4 秒后自动判胜，便于验证"战斗→航线图"回环。 */
-static TAutoConsoleVariable<int32> CVarAutoWin(
-	TEXT("ER.AutoWin"), 0, TEXT("调试：>0 时战斗开始 4 秒后自动判定胜利。"), ECVF_Cheat);
-
-/** 调试：>0 时竞技场就绪后自动拉远镜头截一张图，便于离线检查生成结果。 */
-static TAutoConsoleVariable<int32> CVarAutoShot(
-	TEXT("ER.AutoShot"), 0, TEXT("调试：>0 时竞技场就绪后自动截图到 Saved/Screenshots。"), ECVF_Cheat);
 
 ABattleGameMode::ABattleGameMode()
 {
@@ -211,49 +201,10 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 
 	bSetupComplete = true;
 
-	// 调试: ER.AutoShot > 0 (或命令行 -AutoShot) 时把镜头拉到全场中心并截一张图
-	if (CVarAutoShot.GetValueOnGameThread() > 0
-		|| ER::Debug::IsAutoShot())
+	// 调试自动化 (AutoShot/AutoWin) 全部在 UBattleDebugSubsystem 里
+	if (UBattleDebugSubsystem* Dbg = GetWorld()->GetSubsystem<UBattleDebugSubsystem>())
 	{
-		const FVector Center = Arena->GetActorLocation() + FVector(3800.0f, 3800.0f, 0.0f);
-		GetWorldTimerManager().SetTimer(AutoShotTimerHandle, FTimerDelegate::CreateWeakLambda(
-			this, [this, Center]()
-			{
-				// 临时俯瞰相机: 比战术镜头看得全, 便于离线检查整场构图
-				// -AutoShotTop 用正俯机位评估平面构图/破碎外壳剪影
-				const bool bTop = ER::Debug::IsAutoShotTop();
-				FActorSpawnParameters Params;
-				Params.SpawnCollisionHandlingOverride =
-					ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-				ACameraActor* ShotCam = GetWorld()->SpawnActor<ACameraActor>(
-					ACameraActor::StaticClass(),
-					Center + FVector(0.0f, 0.0f, bTop ? 10000.0f : 5600.0f),
-					bTop ? FRotator(-90.0f, 0.0f, 0.0f)
-						 : FRotator(-58.0f, -32.0f, 0.0f),
-					Params);
-				if (ShotCam)
-				{
-					if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
-					{
-						PC->SetViewTargetWithBlend(ShotCam, 0.0f);
-					}
-					ShotCamera = ShotCam;
-				}
-
-				GetWorldTimerManager().SetTimer(AutoShotTimerHandle, FTimerDelegate::CreateWeakLambda(
-					this, [this]()
-					{
-						if (ER::Debug::IsShowNav())
-						{
-							if (APlayerController* PC2 = GetWorld()->GetFirstPlayerController())
-							{
-								PC2->ConsoleCommand(TEXT("show Navigation"));
-							}
-						}
-						FScreenshotRequest::RequestScreenshot(true);
-						UE_LOG(LogERBattle, Log, TEXT("[Battle] AutoShot: 已请求截图。"));
-					}), 2.5f, false);
-			}), 1.5f, false);
+		Dbg->OnArenaReady(this);
 	}
 
 	// 创建并启动战斗管理器 (战斗随机种子 = f(Run 种子, 遭遇种子), 完全可复现)
@@ -263,38 +214,6 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 
 	// 无论是否来自航线图都要接结果: 结算面板对两种来源都要弹
 	BattleManager->OnBattleFinished.AddDynamic(this, &ABattleGameMode::HandleBattleFinished);
-
-	if (bRunBattle)
-	{
-		// 调试用：ER.AutoWin > 0 时战斗开始若干秒后自动判胜，便于验证"战斗→航线图"回环。
-		const int32 AutoWin = CVarAutoWin.GetValueOnGameThread();
-		if (AutoWin > 0)
-		{
-			GetWorldTimerManager().SetTimer(AutoWinTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this, AutoWin]()
-			{
-				UE_LOG(LogERBattle, Log, TEXT("[Battle] ER.AutoWin 触发，自动判胜。"));
-				// 走和作弊按钮完全相同的路径: 管理器判胜负 -> GameMode 结算 -> 结算面板
-				if (BattleManager)
-				{
-					BattleManager->DebugKillAllEnemies();
-				}
-				else
-				{
-					HandleBattleFinished(true);
-				}
-
-				// ER.AutoWin 2 = 连"点结算面板返回"也自动做一遍, 用于无头验证完整回环
-				if (AutoWin > 1)
-				{
-					GetWorldTimerManager().SetTimer(AutoReturnTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
-					{
-						UE_LOG(LogERBattle, Log, TEXT("[Battle] ER.AutoWin=2: 自动点击结算返回。"));
-						ReturnFromBattle();
-					}), 2.5f, false);
-				}
-			}), 4.0f, false);
-		}
-	}
 
 	OnBattleSetupComplete.Broadcast();
 }

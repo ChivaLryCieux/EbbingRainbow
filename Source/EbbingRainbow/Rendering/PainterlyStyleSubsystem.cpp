@@ -257,6 +257,7 @@ bool UPainterlyStyleSubsystem::SetScalarParameter(const FName& ParameterName, fl
 // ---------------------------------------------------------------------------
 //  Debug helpers: Paint.Shot [Name] -> writes Saved/Screenshots/<Name>.png
 // ---------------------------------------------------------------------------
+#if !UE_BUILD_SHIPPING
 static void PaintShotCommand(const TArray<FString>& Args)
 {
 	const FString Name = Args.Num() > 0 ? Args[0] : FString(TEXT("PaintShot"));
@@ -300,3 +301,4 @@ static FAutoConsoleCommand GPaintParamCommand(
 	TEXT("Paint.Param"),
 	TEXT("Paint.Param <P_Name> <Value> : set any painterly scalar parameter live, e.g. Paint.Param P_BrushRadius 12."),
 	FConsoleCommandWithArgsDelegate::CreateStatic(&PaintParamCommand));
+#endif // !UE_BUILD_SHIPPING

@@ -147,11 +147,4 @@ private:
 	int32 PendingGeneratorChoice = -1;
 	/** 战斗单位 -> 队伍下标的映射（阵亡成员不生成，所以不能按下标硬对） */
 	TArray<int32> PlayerPartyIndices;
-	FTimerHandle AutoWinTimerHandle;
-	FTimerHandle AutoReturnTimerHandle;
-	FTimerHandle AutoShotTimerHandle;
-
-	/** 调试截图用的临时俯瞰相机 */
-	UPROPERTY()
-	TObjectPtr<class ACameraActor> ShotCamera = nullptr;
 };

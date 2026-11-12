@@ -14,6 +14,7 @@
  * 调试: ER.StatusSelfTest 1 —— 对首个存活单位施加 2 回合状态并连续结算 3 次回合结束,
  * 一帧内确定性验证 "施加 → 时长递减 → 到期移除" 全周期 (日志 [Status])。
  */
+#if !UE_BUILD_SHIPPING
 static FAutoConsoleCommandWithWorld GStatusSelfTestCmd(
 	TEXT("ER.StatusSelfTest"),
 	TEXT("调试: 状态生命周期自检 (施加 2 回合状态 + 3 次回合结束结算, 验证递减/到期)。"),
@@ -47,6 +48,7 @@ static FAutoConsoleCommandWithWorld GStatusSelfTestCmd(
 			}
 		}
 	}));
+#endif // !UE_BUILD_SHIPPING
 
 UBattleSkillComponent::UBattleSkillComponent()
 {
