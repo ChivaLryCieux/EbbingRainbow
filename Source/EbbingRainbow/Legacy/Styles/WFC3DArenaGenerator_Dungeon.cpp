@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Legacy/Styles/WFC3DArenaGenerator_Dungeon.h"
+#include "Core/ERLog.h"
 #include "WFC/WFC3DModuleLibrary.h"
 #include "Engine/StaticMesh.h"
 
@@ -28,7 +29,7 @@ bool AWFC3DArenaGenerator_Dungeon::BuildModules(
 
 	if (!CubeMesh)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC Dungeon] Failed to load SM_Cube."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC Dungeon] Failed to load SM_Cube."));
 		return false;
 	}
 

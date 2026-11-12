@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Legacy/Atrium/WFC3DArenaGenerator_Atrium.h"
+#include "Core/ERLog.h"
 #include "Core/ERDebug.h"
 #include "Legacy/Atrium/WFCArchGrammar.h"
 #include "Engine/StaticMesh.h"
@@ -69,7 +70,7 @@ UStaticMesh* AWFC3DArenaGenerator_Atrium::LoadTileMesh(const FName& TileId)
 	UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *Path);
 	if (!Mesh)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Arch] Missing kit mesh %s"), *Path);
+		UE_LOG(LogERWFC, Warning, TEXT("[Arch] Missing kit mesh %s"), *Path);
 	}
 	MeshCache.Add(TileId, Mesh);
 	return Mesh;
@@ -161,7 +162,7 @@ void AWFC3DArenaGenerator_Atrium::BuildCollision(const FArchPlan& Plan)
 	UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (!Cube)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Arch] No engine cube for collision boxes."));
+		UE_LOG(LogERWFC, Warning, TEXT("[Arch] No engine cube for collision boxes."));
 		return;
 	}
 
@@ -315,7 +316,7 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 
 	if (Request.Scale.X != GridW || Request.Scale.Y != GridH || Request.Scale.Z != 2)
 	{
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogERWFC, Warning,
 			TEXT("[Arch] Atrium expects Scale 19x19x2, got %dx%dx%d; using 19x19x2."),
 			Request.Scale.X, Request.Scale.Y, Request.Scale.Z);
 	}
@@ -326,7 +327,7 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 	FArchPlan Plan;
 	if (!FWFCArchGrammar::Build(Seed, Plan))
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Arch] Grammar failed for seed %d."), Seed);
+		UE_LOG(LogERWFC, Error, TEXT("[Arch] Grammar failed for seed %d."), Seed);
 		return false;
 	}
 
@@ -448,12 +449,12 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 				}
 			}
 		}
-		UE_LOG(LogTemp, Log,
+		UE_LOG(LogERWFC, Log,
 			TEXT("[ArchDump] 重合诊断: 实例=%d 同网格重合=%d 跨网格重合对种类=%d"),
 			Insts.Num(), SameMeshDup, CrossPairs.Num());
 		for (const TPair<FString, int32>& P : CrossPairs)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[ArchDump]   %s x%d"), *P.Key, P.Value);
+			UE_LOG(LogERWFC, Log, TEXT("[ArchDump]   %s x%d"), *P.Key, P.Value);
 		}
 
 		// 平面级: 只查东/南两个方向的共享边, 避免重复计数
@@ -493,7 +494,7 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 		}
 		for (const TPair<FString, int32>& P : EdgePairs)
 		{
-			UE_LOG(LogTemp, Log,
+			UE_LOG(LogERWFC, Log,
 				TEXT("[ArchDump] 双面共边: %s x%d (可能共面闪烁)"), *P.Key, P.Value);
 		}
 	}
@@ -522,7 +523,7 @@ bool AWFC3DArenaGenerator_Atrium::Generate(const FWFCGenerationRequest& Request)
 	LastResult.CellCount = GridW * GridH * 2;
 	LastResult.DurationMs = DurationMs;
 
-	UE_LOG(LogTemp, Log,
+	UE_LOG(LogERWFC, Log,
 		TEXT("[Arch] Atrium generated seed=%d rooms=%d cells=%d tiles=%d in %.2f ms."),
 		Seed, Plan.Rooms.Num(), InstanceCount, MeshCache.Num(), DurationMs);
 	return true;

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Legacy/Styles/WFC3DArenaGenerator_SpiralGarden.h"
+#include "Core/ERLog.h"
 #include "WFC/WFC3DModuleLibrary.h"
 #include "Engine/StaticMesh.h"
 
@@ -35,7 +36,7 @@ bool AWFC3DArenaGenerator_SpiralGarden::BuildModules(
 
 	if (!CubeMesh)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC SpiralGarden] No cube mesh found (WFC_Modules/Cube or LevelPrototyping/SM_Cube)."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC SpiralGarden] No cube mesh found (WFC_Modules/Cube or LevelPrototyping/SM_Cube)."));
 		return false;
 	}
 
@@ -198,7 +199,7 @@ bool AWFC3DArenaGenerator_SpiralGarden::BuildConstraints(
 		|| RailingModuleIndex == INDEX_NONE
 		|| StairModuleIndex == INDEX_NONE)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC SpiralGarden] Missing required ribbon modules (Floor/Railing/Stair/Air)."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC SpiralGarden] Missing required ribbon modules (Floor/Railing/Stair/Air)."));
 		return false;
 	}
 
@@ -568,7 +569,7 @@ bool AWFC3DArenaGenerator_SpiralGarden::BuildConstraints(
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[WFC SpiralGarden] Ribbon constraints: Void=%d, Railing=%d (widen %d), Stair=%d, Ramp=%d, Archway=%d, Planter=%d, TotalClamps=%d."),
+	UE_LOG(LogERWFC, Log, TEXT("[WFC SpiralGarden] Ribbon constraints: Void=%d, Railing=%d (widen %d), Stair=%d, Ramp=%d, Archway=%d, Planter=%d, TotalClamps=%d."),
 		ClampedVoid, ClampedRailing, ClampedWiden, ClampedStair, ClampedRamp, DecorArchwayCount, DecorPlanterCount, OutClamps.Num());
 
 	return true;

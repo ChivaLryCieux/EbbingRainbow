@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Legacy/Styles/WFC3DArenaGenerator_MegaAtrium.h"
+#include "Core/ERLog.h"
 #include "WFC/WFC3DModuleLibrary.h"
 #include "Engine/StaticMesh.h"
 
@@ -49,7 +50,7 @@ bool AWFC3DArenaGenerator_MegaAtrium::BuildModules(
 
 	if (!FloorFlat || !WallSolid || !StairsMesh)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC MegaAtrium] Missing required meshes in /Game/FBX_Export/."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC MegaAtrium] Missing required meshes in /Game/FBX_Export/."));
 		return false;
 	}
 
@@ -331,7 +332,7 @@ bool AWFC3DArenaGenerator_MegaAtrium::BuildConstraints(
 
 	if (FloorModuleIndex == INDEX_NONE || AirModuleIndex == INDEX_NONE)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WFC MegaAtrium] Missing Floor_Flat or Air module; generating without atrium constraints."));
+		UE_LOG(LogERWFC, Warning, TEXT("[WFC MegaAtrium] Missing Floor_Flat or Air module; generating without atrium constraints."));
 		return true;
 	}
 
@@ -433,7 +434,7 @@ bool AWFC3DArenaGenerator_MegaAtrium::BuildConstraints(
 				AddClamp(OutClamps, StairPos.X, StairPos.Y, FloorZ, StairModuleIndex);
 				AddClamp(OutClamps, StairPos.X, StairPos.Y, FloorZ + 1, WellholeModuleIndex);
 
-				UE_LOG(LogTemp, Log, TEXT("[WFC MegaAtrium] Floor %d -> %d: stair at (%d, %d, %d), wellhole at (%d, %d, %d)."),
+				UE_LOG(LogERWFC, Log, TEXT("[WFC MegaAtrium] Floor %d -> %d: stair at (%d, %d, %d), wellhole at (%d, %d, %d)."),
 					FloorZ, FloorZ + 1, StairPos.X, StairPos.Y, FloorZ, StairPos.X, StairPos.Y, FloorZ + 1);
 			}
 		}

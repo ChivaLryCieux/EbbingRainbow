@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Legacy/Styles/WFC3DArenaGenerator_ThreeStory.h"
+#include "Core/ERLog.h"
 #include "WFC/WFC3DModuleLibrary.h"
 #include "Engine/StaticMesh.h"
 
@@ -49,7 +50,7 @@ bool AWFC3DArenaGenerator_ThreeStory::BuildModules(
 
 	if (!FloorFlat || !WallSolid || !StairsMesh)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC ThreeStory] Missing required meshes in /Game/FBX_Export/."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC ThreeStory] Missing required meshes in /Game/FBX_Export/."));
 		return false;
 	}
 
@@ -351,7 +352,7 @@ bool AWFC3DArenaGenerator_ThreeStory::BuildConstraints(
 				AddClamp(OutClamps, PickX, PickY, FloorZ, StairModuleIndex);
 				AddClamp(OutClamps, PickX, PickY, FloorZ + 1, WellholeModuleIndex);
 
-				UE_LOG(LogTemp, Log, TEXT("[WFC ThreeStory] Floor %d -> %d: stair at (%d, %d, %d), wellhole at (%d, %d, %d)."),
+				UE_LOG(LogERWFC, Log, TEXT("[WFC ThreeStory] Floor %d -> %d: stair at (%d, %d, %d), wellhole at (%d, %d, %d)."),
 					FloorZ, FloorZ + 1, PickX, PickY, FloorZ, PickX, PickY, FloorZ + 1);
 			}
 		}

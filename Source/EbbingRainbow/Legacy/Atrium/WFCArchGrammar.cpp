@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Legacy/Atrium/WFCArchGrammar.h"
+#include "Core/ERLog.h"
 #include "Core/ERDebug.h"
 #include "Legacy/Atrium/WFCKitTileTable.h"
 #include "HAL/IConsoleManager.h"
@@ -1248,7 +1249,7 @@ bool FWFCArchGrammar::ResolveWallTile(
 		}
 
 		Plan.AisleWidth = 0;
-		UE_LOG(LogTemp, Log,
+		UE_LOG(LogERWFC, Log,
 			TEXT("[Arch] Built room graph seed=%d rooms=%d edges=%d corridors=%d degree=%d..%d doors=%d planOpen=%d."),
 			Seed, Rooms.Num(), EdgeCount, CorridorCount, MinDeg, MaxDeg, DoorCells, PlanOpen);
 		return true;
@@ -1975,7 +1976,7 @@ bool FWFCArchGrammar::ResolveWallTile(
 			}
 		}
 
-		UE_LOG(LogTemp, Log,
+		UE_LOG(LogERWFC, Log,
 			TEXT("[Arch] Blackshard seed=%d rooms=%d(%d cells) hall=%dx%d atrium=%dx%d doors=%d stairs=%d bridges=2."),
 			Seed, Plan.Rooms.Num(), RoomCells, ArmW, ArmW,
 			Ax1 - Ax0 + 1, Ay1 - Ay0 + 1, DoorCells, Plan.Stairs.Num());
@@ -1984,7 +1985,7 @@ bool FWFCArchGrammar::ResolveWallTile(
 		if (CVarArchDump.GetValueOnGameThread() > 0
 			|| ER::Debug::IsArchDump())
 		{
-			UE_LOG(LogTemp, Log, TEXT("[ArchDump] 平面图 (Y 从北到南, X 从西到东):"));
+			UE_LOG(LogERWFC, Log, TEXT("[ArchDump] 平面图 (Y 从北到南, X 从西到东):"));
 			for (int32 Y = H - 1; Y >= 0; --Y)
 			{
 				FString Row;
@@ -2011,11 +2012,11 @@ bool FWFCArchGrammar::ResolveWallTile(
 					}
 					Row.AppendChar(Ch);
 				}
-				UE_LOG(LogTemp, Log, TEXT("[ArchDump] %s"), *Row);
+				UE_LOG(LogERWFC, Log, TEXT("[ArchDump] %s"), *Row);
 			}
 			for (const FArchStair& S : Plan.Stairs)
 			{
-				UE_LOG(LogTemp, Log, TEXT("[ArchDump] stair (%d,%d) dir=%d"), S.X, S.Y, S.Dir);
+				UE_LOG(LogERWFC, Log, TEXT("[ArchDump] stair (%d,%d) dir=%d"), S.X, S.Y, S.Dir);
 			}
 		}
 		return true;
@@ -2216,7 +2217,7 @@ bool FWFCArchGrammar::Build(int32 Seed, FArchPlan& OutPlan)
 		{
 			if (!FindCleanDoorCell(OutPlan, Room, X, Y, Side))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[Arch] Room %d has no clean door cell."), Room.Id);
+				UE_LOG(LogERWFC, Warning, TEXT("[Arch] Room %d has no clean door cell."), Room.Id);
 			}
 		}
 		if (!SetOpening(OutPlan, X, Y, Side, Code))
@@ -2492,7 +2493,7 @@ bool FWFCArchGrammar::Build(int32 Seed, FArchPlan& OutPlan)
 		}
 	}
 
-	UE_LOG(LogTemp, Log,
+	UE_LOG(LogERWFC, Log,
 		TEXT("[Arch] Built plan seed=%d aisle=%d rooms=%d columns=%d bridges=%d stairs=%d."),
 		Seed, OutPlan.AisleWidth, OutPlan.Rooms.Num(), ColumnCount, BridgeCells, OutPlan.Stairs.Num());
 	return true;

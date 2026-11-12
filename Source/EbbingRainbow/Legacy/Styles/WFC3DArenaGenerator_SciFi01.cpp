@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Legacy/Styles/WFC3DArenaGenerator_SciFi01.h"
+#include "Core/ERLog.h"
 #include "WFC/WFC3DModuleLibrary.h"
 #include "Engine/StaticMesh.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -85,7 +86,7 @@ bool AWFC3DArenaGenerator_SciFi01::BuildModules(
 
 	if (!FloorMesh || !WallMesh || !CornerPostMesh || !StairMesh || !RailingMesh || !ColumnMesh)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC SciFi01] Missing required SciFiInterior01 meshes."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC SciFi01] Missing required SciFiInterior01 meshes."));
 		return false;
 	}
 
@@ -275,7 +276,7 @@ bool AWFC3DArenaGenerator_SciFi01::BuildModules(
 		Library->Modules.Add(Mod);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[WFC SciFi01] Modules: floor + 15 wall masks + stair/well/atrium/void; wall flip=%d."),
+	UE_LOG(LogERWFC, Log, TEXT("[WFC SciFi01] Modules: floor + 15 wall masks + stair/well/atrium/void; wall flip=%d."),
 		GWFCSciFi01FlipWalls ? 1 : 0);
 
 	return Library->CompileLibrary(OutModules, OutCompatibility);
@@ -288,7 +289,7 @@ bool AWFC3DArenaGenerator_SciFi01::BuildConstraints(
 {
 	if (GridSize.Z != 2)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC SciFi01] Two-story layout expects Scale.Z = 2, got %d."), GridSize.Z);
+		UE_LOG(LogERWFC, Error, TEXT("[WFC SciFi01] Two-story layout expects Scale.Z = 2, got %d."), GridSize.Z);
 		return false;
 	}
 
@@ -296,7 +297,7 @@ bool AWFC3DArenaGenerator_SciFi01::BuildConstraints(
 	const int32 H = GridSize.Y;
 	if (W < 12 || H < 10)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC SciFi01] Need at least 12x10 cells, got %dx%d."), W, H);
+		UE_LOG(LogERWFC, Error, TEXT("[WFC SciFi01] Need at least 12x10 cells, got %dx%d."), W, H);
 		return false;
 	}
 
@@ -419,7 +420,7 @@ bool AWFC3DArenaGenerator_SciFi01::BuildConstraints(
 	}
 	if (WalkableCount < 60)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WFC SciFi01] Seed %d produced only %d walkable cells; retrying."), Seed, WalkableCount);
+		UE_LOG(LogERWFC, Warning, TEXT("[WFC SciFi01] Seed %d produced only %d walkable cells; retrying."), Seed, WalkableCount);
 		return false;
 	}
 
@@ -650,7 +651,7 @@ bool AWFC3DArenaGenerator_SciFi01::BuildConstraints(
 
 	if (PlanStairCells.Num() != 3)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WFC SciFi01] Seed %d could not place 3 stairs (%d); retrying."),
+		UE_LOG(LogERWFC, Warning, TEXT("[WFC SciFi01] Seed %d could not place 3 stairs (%d); retrying."),
 			Seed, PlanStairCells.Num());
 		return false;
 	}
@@ -736,7 +737,7 @@ bool AWFC3DArenaGenerator_SciFi01::BuildConstraints(
 	}
 	if (!bModulesValid)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC SciFi01] Missing floor/wall-mask/well/atrium/void modules."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC SciFi01] Missing floor/wall-mask/well/atrium/void modules."));
 		return false;
 	}
 
@@ -788,7 +789,7 @@ bool AWFC3DArenaGenerator_SciFi01::BuildConstraints(
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[WFC SciFi01] Seed %d layout: %dx%d, walkable=%d, hallRoom=%d, stairs=%d at (%d,%d)/(%d,%d)/(%d,%d)."),
+	UE_LOG(LogERWFC, Log, TEXT("[WFC SciFi01] Seed %d layout: %dx%d, walkable=%d, hallRoom=%d, stairs=%d at (%d,%d)/(%d,%d)/(%d,%d)."),
 		Seed, W, H, WalkableCount, PlanHallRoomId, PlanStairCells.Num(),
 		PlanStairCells[0] % W, PlanStairCells[0] / W,
 		PlanStairCells[1] % W, PlanStairCells[1] / W,
@@ -1011,7 +1012,7 @@ void AWFC3DArenaGenerator_SciFi01::PostProcess(int32 Seed)
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[WFC SciFi01] PostProcess: random hall tree, gallery columns and railings."));
+	UE_LOG(LogERWFC, Log, TEXT("[WFC SciFi01] PostProcess: random hall tree, gallery columns and railings."));
 }
 
 FVector AWFC3DArenaGenerator_SciFi01::GetCellWorldSize() const
