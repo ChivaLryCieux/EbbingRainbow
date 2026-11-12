@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Run/RouteSceneBuilder.h"
+#include "Core/ERDebug.h"
+#include "Core/ERLog.h"
 
 #include "Camera/CameraComponent.h"
 #include "Components/DirectionalLightComponent.h"
@@ -17,6 +19,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/CommandLine.h"
 #include "Run/RouteCameraPawn.h"
 #include "Run/RunSubsystem.h"
 #include "Run/RunTypes.h"
@@ -243,7 +246,7 @@ void ARouteSceneBuilder::BuildScene(URunSubsystem* Run)
 	BuildStarsAndMonoliths(Graph.Seed, FVector(SceneDepth * 0.5f, 0, 0));
 	BuildLighting(Graph.Seed);
 
-	UE_LOG(LogTemp, Log, TEXT("[Route3D] scene built: nodes=%d edges drawn, stars ok"),
+	UE_LOG(LogERRun, Log, TEXT("[Route3D] scene built: nodes=%d edges drawn, stars ok"),
 		Graph.Nodes.Num());
 }
 
@@ -336,6 +339,12 @@ void ARouteSceneBuilder::BuildLighting(int32 RunSeed)
 {
 	UWorld* World = GetWorld();
 	if (!World) { return; }
+	// 默认不生成/不调氛围 (与竞技场一致): 关卡自摆光照归用户手调;
+	// -Atmo 显式开启程序氛围
+	if (!ER::Debug::IsAtmoEnabled())
+	{
+		return;
+	}
 	FRandomStream Rng(RunSeed ^ 0x11C4);
 
 	FActorSpawnParameters P;

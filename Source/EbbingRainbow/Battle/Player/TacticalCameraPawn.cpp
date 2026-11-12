@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Player/TacticalCameraPawn.h"
+#include "Core/ERLog.h"
 #include "Battle/Arena/BattleArena.h"
 #include "Battle/Units/BattleUnit.h"
 #include "Camera/CameraComponent.h"
@@ -178,7 +179,7 @@ void ATacticalCameraPawn::FocusOnUnit(ABattleUnit* Unit)
 
 	TargetLocation = ClampToBounds(Unit->GetActorLocation());
 
-	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 摄像机跟随 %s: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f 锚点=(%.0f, %.0f, %.0f)"),
+	UE_LOG(LogERBattle, Log, TEXT("[BattleFocus] 摄像机跟随 %s: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f 锚点=(%.0f, %.0f, %.0f)"),
 		*Unit->Stats.DisplayName, TargetLocation.X, TargetLocation.Y, TargetLocation.Z,
 		TargetArmLength, TargetPitch, OverviewAnchor.X, OverviewAnchor.Y, OverviewAnchor.Z);
 }
@@ -207,7 +208,7 @@ void ATacticalCameraPawn::ClearFocus()
 	}
 	ManualPitchOffset = 0.0f;
 
-	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 摄像机回到全景: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f"),
+	UE_LOG(LogERBattle, Log, TEXT("[BattleFocus] 摄像机回到全景: Target=(%.0f, %.0f, %.0f) Arm=%.0f Pitch=%.1f"),
 		TargetLocation.X, TargetLocation.Y, TargetLocation.Z, TargetArmLength, TargetPitch);
 }
 
@@ -215,7 +216,7 @@ void ATacticalCameraPawn::ExitFollowMode()
 {
 	if (CameraMode == ETacticalCameraMode::Focus)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 跟随态 -> 自由态"));
+		UE_LOG(LogERBattle, Log, TEXT("[BattleFocus] 跟随态 -> 自由态"));
 	}
 	CameraMode = ETacticalCameraMode::Free;
 	FollowTarget = nullptr;
@@ -323,7 +324,7 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 		if (!Followed || !Followed->IsAlive())
 		{
 			// 目标阵亡 / 被销毁: 就地停在最后一帧转自由态, 不要突然飞回全景锚点
-			UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 跟随目标已阵亡, 镜头就地转为自由态"));
+			UE_LOG(LogERBattle, Log, TEXT("[BattleFocus] 跟随目标已阵亡, 镜头就地转为自由态"));
 			ExitFollowMode();
 			OverviewAnchor = TargetLocation;
 			bHasOverviewAnchor = true;
@@ -339,7 +340,7 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 			{
 				FollowLogTimer = 0.0f;
 				const float LagCm = FVector::Dist2D(GetActorLocation(), Followed->GetActorLocation());
-				UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 跟随中 %s: 棋子=(%.0f, %.0f) 镜头=(%.0f, %.0f) 水平滞后=%.0fcm"),
+				UE_LOG(LogERBattle, Log, TEXT("[BattleFocus] 跟随中 %s: 棋子=(%.0f, %.0f) 镜头=(%.0f, %.0f) 水平滞后=%.0fcm"),
 					*Followed->Stats.DisplayName,
 					Followed->GetActorLocation().X, Followed->GetActorLocation().Y,
 					GetActorLocation().X, GetActorLocation().Y, LagCm);

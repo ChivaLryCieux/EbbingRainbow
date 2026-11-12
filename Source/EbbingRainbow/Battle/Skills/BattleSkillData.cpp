@@ -1,11 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Skills/BattleSkillData.h"
+#include "Core/ERLog.h"
 #include "Battle/Units/BattleUnit.h"
-#include "Battle/UI/BattleFloatingText.h"
-#include "Engine/World.h"
-#include "DrawDebugHelpers.h"
-#include "TimerManager.h"
 
 UBattleSkillData::UBattleSkillData()
 {
@@ -19,7 +16,10 @@ UBattleSkillData::UBattleSkillData()
 	Range = 250.0f;
 	HitCount = 1;
 	HitInterval = 0.15f;
+	DamageVariance = 0.10f;
+	Accuracy = 0.95f;
 	ThemeColor = GetDisciplineDefaultColor(Discipline);
+	Damage.DamageType = GetDisciplineDamageType();
 }
 
 EDamageType UBattleSkillData::GetDisciplineDamageType() const
@@ -38,10 +38,10 @@ FLinearColor UBattleSkillData::GetDisciplineDefaultColor(ESkillDiscipline InDisc
 {
 	switch (InDiscipline)
 	{
-	case ESkillDiscipline::Kinetic:  return FLinearColor(0.95f, 0.8f, 0.6f);  // 力学: 暖白/砂岩金
-	case ESkillDiscipline::Thermal:  return FLinearColor(1.0f, 0.25f, 0.1f);  // 热学: 赤红烈火
-	case ESkillDiscipline::Electric: return FLinearColor(0.2f, 0.8f, 1.0f);   // 电学: 电弧青蓝
-	case ESkillDiscipline::Chemical: return FLinearColor(0.35f, 0.95f, 0.25f);// 化学: 强酸亮绿
+	case ESkillDiscipline::Kinetic:  return FLinearColor(0.20f, 0.45f, 0.95f);// 力学: 深蓝 (图标 blue)
+	case ESkillDiscipline::Thermal:  return FLinearColor(0.92f, 0.16f, 0.08f);// 热学: 赤红 (图标 red)
+	case ESkillDiscipline::Electric: return FLinearColor(0.88f, 0.62f, 0.06f);// 电学: 鎏金 (图标 gold)
+	case ESkillDiscipline::Chemical: return FLinearColor(0.55f, 0.28f, 0.88f);// 化学: 毒紫 (图标 purple)
 	default: return FLinearColor::White;
 	}
 }
@@ -71,9 +71,9 @@ bool UBattleSkillData::CanActivate(const ABattleUnit* Caster, const FBattleSkill
 			return false;
 		}
 	}
-	else
+	else if (Target)
 	{
-		if (!Target || !Target->IsAlive())
+		if (!Target->IsAlive())
 		{
 			OutReason = TEXT("目标无效或已损毁");
 			return false;
@@ -90,9 +90,18 @@ bool UBattleSkillData::CanActivate(const ABattleUnit* Caster, const FBattleSkill
 			OutReason = TEXT("只能以友军或自身为目标");
 			return false;
 		}
+	}
+	else if (!AoE.IsArea())
+	{
+		OutReason = TEXT("目标无效或已损毁");
+		return false;
+	}
 
-		// 射程判定
-		const float Dist = FVector::Dist2D(Caster->GetActorLocation(), Target->GetActorLocation());
+	// 3D 射程判定 (多层战场: 上下层不能隔空互殴)
+	const FVector AimPoint = Target ? Target->GetActorLocation() : Context.TargetLocation;
+	if (TargetFilter != ESkillTargetFilter::SelfOnly)
+	{
+		const float Dist = FVector::Dist(Caster->GetActorLocation(), AimPoint);
 		if (Dist > Range)
 		{
 			OutReason = FString::Printf(TEXT("目标超出射程 (当前 %.0fcm, 最大 %.0fcm)"), Dist, Range);
@@ -103,108 +112,6 @@ bool UBattleSkillData::CanActivate(const ABattleUnit* Caster, const FBattleSkill
 	return true;
 }
 
-bool UBattleSkillData::Execute(const FBattleSkillExecutionContext& Context)
-{
-	ABattleUnit* Caster = Context.Caster;
-	ABattleUnit* Target = Context.Target;
-	if (!Caster)
-	{
-		return false;
-	}
-
-	UWorld* World = Caster->GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	// 1. 施法者面向目标
-	if (Target && Target != Caster)
-	{
-		const FVector ToTarget = Target->GetActorLocation() - Caster->GetActorLocation();
-		Caster->SetActorRotation(FRotator(0.0f, ToTarget.Rotation().Yaw, 0.0f));
-	}
-
-	// 2. 播放施法动作 (一次性动画, 播完自动交还 ABP 运动混合)
-	if (CastAnimation)
-	{
-		Caster->PlayOneShotAnimation(CastAnimation);
-	}
-
-	// 3. 视觉表现: 技能光束/打击射线
-	if (Target)
-	{
-		const FVector Muzzle = Caster->GetActorLocation() + FVector(0.0f, 0.0f, 30.0f);
-		const FVector HitLoc = Target->GetActorLocation() + FVector(0.0f, 0.0f, 30.0f);
-		const FColor FxColor = ThemeColor.ToFColor(true);
-
-		DrawDebugLine(World, Muzzle, HitLoc, FxColor, false, 1.2f, 0, DeliveryWeight == ESkillDeliveryWeight::Heavy ? 6.0f : 3.0f);
-		DrawDebugSphere(World, HitLoc, DeliveryWeight == ESkillDeliveryWeight::Heavy ? 50.0f : 30.0f, 12, FxColor, false, 1.0f);
-	}
-
-	// 4. 对施法者自身应用效果 (如护盾、增益)
-	if (SelfModifiers.HasAnyEffect())
-	{
-		ApplyModifierBundle(Caster, Caster, SelfModifiers);
-	}
-
-	// 5. 对目标应用效果 (区分轻型多次打击与重型单次爆发)
-	if (Target && TargetModifiers.HasAnyEffect())
-	{
-		const int32 ActualHits = FMath::Max(1, HitCount);
-
-		if (ActualHits == 1)
-		{
-			// 重型 (单次高伤爆发) 或单发技能
-			ApplyModifierBundle(Target, Caster, TargetModifiers);
-		}
-		else
-		{
-			// 轻型 (多次/低数值连击)
-			// 每段打击按时间间隔连续执行，模拟机枪连射/刺拳连击效果
-			for (int32 HitIdx = 0; HitIdx < ActualHits; ++HitIdx)
-			{
-				const float Delay = HitIdx * HitInterval;
-				if (Delay <= KINDA_SMALL_NUMBER)
-				{
-					ApplyModifierBundle(Target, Caster, TargetModifiers);
-				}
-				else
-				{
-					TWeakObjectPtr<ABattleUnit> WeakTarget = Target;
-					TWeakObjectPtr<ABattleUnit> WeakCaster = Caster;
-					FAttributeModifierBundle ModifiersCopy = TargetModifiers;
-					EDamageType DmgType = GetDisciplineDamageType();
-
-					FTimerHandle HitHandle;
-					World->GetTimerManager().SetTimer(HitHandle, [WeakTarget, WeakCaster, ModifiersCopy, DmgType]() {
-						if (WeakTarget.IsValid() && WeakTarget->IsAlive() && WeakCaster.IsValid())
-						{
-							WeakTarget->ApplyModifierBundle(ModifiersCopy, WeakCaster.Get(), DmgType);
-						}
-					}, Delay, false);
-				}
-			}
-		}
-	}
-
-	// 6. 允许蓝图扩展
-	K2_Execute(Context);
-
-	return true;
-}
-
-void UBattleSkillData::ApplyModifierBundle(ABattleUnit* Receiver, ABattleUnit* SourceUnit, const FAttributeModifierBundle& Bundle)
-{
-	if (!Receiver || !Receiver->IsAlive())
-	{
-		return;
-	}
-
-	const EDamageType DmgType = GetDisciplineDamageType();
-	Receiver->ApplyModifierBundle(Bundle, SourceUnit, DmgType);
-}
-
 #if WITH_EDITOR
 void UBattleSkillData::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
@@ -212,22 +119,31 @@ void UBattleSkillData::PostEditChangeProperty(FPropertyChangedEvent& PropertyCha
 
 	const FName PropName = PropertyChangedEvent.GetPropertyName();
 
-	// 自动同步派系默认颜色
+	// 自动同步派系默认颜色与伤害类型
 	if (PropName == GET_MEMBER_NAME_CHECKED(UBattleSkillData, Discipline))
 	{
 		ThemeColor = GetDisciplineDefaultColor(Discipline);
+		Damage.DamageType = GetDisciplineDamageType();
 	}
 
 	// 自动同步射程规格默认数值
 	if (PropName == GET_MEMBER_NAME_CHECKED(UBattleSkillData, RangeProfile))
 	{
-		if (RangeProfile == ESkillRangeProfile::Melee && Range > 400.0f)
+		if (RangeProfile == ESkillRangeProfile::Melee)
 		{
-			Range = 250.0f;
+			bRequiresLineOfSight = false;
+			if (Range > 400.0f)
+			{
+				Range = 250.0f;
+			}
 		}
-		else if (RangeProfile == ESkillRangeProfile::Ranged && Range < 500.0f)
+		else if (RangeProfile == ESkillRangeProfile::Ranged)
 		{
-			Range = 1200.0f;
+			bRequiresLineOfSight = true;
+			if (Range < 500.0f)
+			{
+				Range = 1200.0f;
+			}
 		}
 	}
 
@@ -241,6 +157,24 @@ void UBattleSkillData::PostEditChangeProperty(FPropertyChangedEvent& PropertyCha
 		else if (DeliveryWeight == ESkillDeliveryWeight::Light && HitCount == 1)
 		{
 			HitCount = 3;
+		}
+	}
+
+	// 瞬间效果只允许当前值: 派生属性请用状态
+	for (FAttributeModifier& Mod : TargetInstantEffects)
+	{
+		if (Mod.IsValidForDerived())
+		{
+			UE_LOG(LogERBattle, Warning, TEXT("[Skill] %s: 瞬间效果不能改派生属性 [%s], 已忽略语义, 请改用状态效果"),
+				*GetName(), GetBattleAttributeName(Mod.Attribute));
+		}
+	}
+	for (FAttributeModifier& Mod : SelfInstantEffects)
+	{
+		if (Mod.IsValidForDerived())
+		{
+			UE_LOG(LogERBattle, Warning, TEXT("[Skill] %s: 瞬间效果不能改派生属性 [%s], 已忽略语义, 请改用状态效果"),
+				*GetName(), GetBattleAttributeName(Mod.Attribute));
 		}
 	}
 }

@@ -1,11 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Arena/BattleArena.h"
-#include "WFC3DArenaHost.h"
-#include "WFC3DStyleTable.h"
-#include "Arch/WFC3DArenaGenerator_Atrium.h"
-#include "Voxel/WFC3DArenaGenerator_Voxel.h"
-#include "Nature/WFC3DArenaGenerator_Nature.h"
+#include "Core/ERDebug.h"
+#include "Core/ERLog.h"
+#include "WFC/WFC3DArenaHost.h"
+#include "WFC/WFC3DStyleTable.h"
+#include "Legacy/Atrium/WFC3DArenaGenerator_Atrium.h"
+#include "WFC/Voxel/WFC3DArenaGenerator_Voxel.h"
+#include "WFC/Nature/WFC3DArenaGenerator_Nature.h"
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
 #include "NavMesh/RecastNavMesh.h"
@@ -18,22 +20,38 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 
-DEFINE_LOG_CATEGORY(LogBattleArena);
 
-// 竞技场生成器选择: 0 = 多尺度体素 (默认), 1 = 旧版 Atrium (WFC 空间语法)。
-// 也可用命令行 -ArenaGenerator=N 覆盖。
+// 竞技场生成器选择: 0 = 多尺度体素 (默认), 1 = 旧版 Atrium (WFC 空间语法), 2 = 自然岛。
+// 优先级 (高→低): 命令行 -ArenaGenerator=N > Arena->GeneratorChoice (关卡/URL 显式) >
+//                地图场景档案 (一场景一关卡) > CVar ER.ArenaGenerator > 0。
 static TAutoConsoleVariable<int32> CVarArenaGenerator(
 	TEXT("ER.ArenaGenerator"), 0,
 	TEXT("竞技场生成器: 0=Voxel(默认) 1=Legacy Atrium 2=Nature。"), ECVF_Cheat);
 
-static TSubclassOf<AWFC3DArenaGeneratorBase> ResolveArenaGeneratorClass(int32 Override = -1)
+/**
+ * 地图场景档案 (一场景一关卡, 见 AGENTS.md 场景架构):
+ * 关卡文件本身声明自己养哪种地貌 —— Lvl_NatureArena = 自然岛, Lvl_ConcreteArena = 默认体素浮岛。
+ * 光照/雾等场景差异摆在关卡里手调, 这里只做"关卡 → 生成器"的静态映射。
+ */
+static int32 GetMapDefaultGeneratorChoice(const UWorld* World)
+{
+	const FString MapName = World ? World->GetMapName() : FString();
+	return MapName.Contains(TEXT("Nature")) ? 2 : -1;
+}
+
+static TSubclassOf<AWFC3DArenaGeneratorBase> ResolveArenaGeneratorClass(const UWorld* World, int32 Override = -1)
 {
 	int32 Choice = CVarArenaGenerator.GetValueOnGameThread();
-	FParse::Value(FCommandLine::Get(), TEXT("ArenaGenerator="), Choice);
+	if (GetMapDefaultGeneratorChoice(World) >= 0)
+	{
+		Choice = GetMapDefaultGeneratorChoice(World);
+	}
 	if (Override >= 0)
 	{
 		Choice = Override;
 	}
+	// 命令行是最后一词: 离线调试/截图强制指定场景时压过一切
+	if (int32 G = ER::Debug::GetArenaGeneratorOverride(); G >= 0) { Choice = G; };
 	if (Choice == 2)
 	{
 		return TSubclassOf<AWFC3DArenaGeneratorBase>(AWFC3DArenaGenerator_Nature::StaticClass());
@@ -109,7 +127,7 @@ AWFC3DArenaHost* ABattleArena::EnsureHost()
 	{
 		// 每次生成都按当前 CVar/命令行重选生成器, 便于不切地图直接对比。
 		// Voxel(0) 时绕过 StyleTable 直接用类; Legacy(1) 时 StyleTable 照旧生效。
-		const TSubclassOf<AWFC3DArenaGeneratorBase> GenClass = ResolveArenaGeneratorClass(GeneratorChoice);
+		const TSubclassOf<AWFC3DArenaGeneratorBase> GenClass = ResolveArenaGeneratorClass(GetWorld(), GeneratorChoice);
 		ArenaHost->FallbackGeneratorClass = GenClass;
 		ArenaHost->StyleTable = (GenClass == AWFC3DArenaGenerator_Voxel::StaticClass()
 			|| GenClass == AWFC3DArenaGenerator_Nature::StaticClass())
@@ -128,21 +146,21 @@ bool ABattleArena::GenerateArena()
 	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
 	if (!NavSys)
 	{
-		UE_LOG(LogBattleArena, Error, TEXT("No navigation system. Cannot validate arena."));
+		UE_LOG(LogERBattle, Error, TEXT("No navigation system. Cannot validate arena."));
 		OnArenaGenerated.Broadcast(false);
 		return false;
 	}
 
 	if (!EnsureHost())
 	{
-		UE_LOG(LogBattleArena, Error, TEXT("Failed to create WFC arena host."));
+		UE_LOG(LogERBattle, Error, TEXT("Failed to create WFC arena host."));
 		OnArenaGenerated.Broadcast(false);
 		return false;
 	}
 
 	int32 StartSeed = (BaseSeed != 0) ? BaseSeed : FMath::RandRange(1, MAX_int32 / 2);
 	// 命令行 -ArenaSeed=N 覆盖, 便于可复现的离线截图/诊断
-	FParse::Value(FCommandLine::Get(), TEXT("ArenaSeed="), StartSeed);
+	if (int32 S = ER::Debug::GetArenaSeed()) { StartSeed = S; };
 
 	for (int32 Attempt = 0; Attempt < MaxGenerationAttempts; ++Attempt)
 	{
@@ -151,7 +169,7 @@ bool ABattleArena::GenerateArena()
 		{
 			UsedSeed = Seed;
 			bArenaReady = true;
-			UE_LOG(LogBattleArena, Log, TEXT("Arena ready. Seed=%d, attempts=%d, player spawns=%d, enemy spawns=%d"),
+			UE_LOG(LogERBattle, Log, TEXT("Arena ready. Seed=%d, attempts=%d, player spawns=%d, enemy spawns=%d"),
 				Seed, Attempt + 1, PlayerSpawnPoints.Num(), EnemySpawnPoints.Num());
 
 			if (bDrawDebugSpawns)
@@ -168,10 +186,10 @@ bool ABattleArena::GenerateArena()
 			OnArenaGenerated.Broadcast(true);
 			return true;
 		}
-		UE_LOG(LogBattleArena, Log, TEXT("Arena attempt %d (seed %d) rejected."), Attempt + 1, Seed);
+		UE_LOG(LogERBattle, Log, TEXT("Arena attempt %d (seed %d) rejected."), Attempt + 1, Seed);
 	}
 
-	UE_LOG(LogBattleArena, Error, TEXT("Arena generation failed after %d attempts."), MaxGenerationAttempts);
+	UE_LOG(LogERBattle, Error, TEXT("Arena generation failed after %d attempts."), MaxGenerationAttempts);
 	OnArenaGenerated.Broadcast(false);
 	return false;
 }
@@ -185,7 +203,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 
 	if (!ArenaHost->Generate(Request))
 	{
-		UE_LOG(LogBattleArena, Warning, TEXT("WFC generation failed for seed %d (style %d)."),
+		UE_LOG(LogERBattle, Warning, TEXT("WFC generation failed for seed %d (style %d)."),
 			Seed, static_cast<int32>(Style));
 		return false;
 	}
@@ -232,12 +250,12 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	}
 	if (!NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate))
 	{
-		UE_LOG(LogBattleArena, Error, TEXT("No NavData. Add a NavMeshBoundsVolume covering the arena (and set Runtime Generation = Dynamic)."));
+		UE_LOG(LogERBattle, Error, TEXT("No NavData. Add a NavMeshBoundsVolume covering the arena (and set Runtime Generation = Dynamic)."));
 		return false;
 	}
 
 	// [诊断] -ArenaForceReady: 跳过全部 nav 校验直接成功, 用于无验证截图
-	if (FParse::Param(FCommandLine::Get(), TEXT("ArenaForceReady")))
+	if (ER::Debug::IsArenaForceReady())
 	{
 		for (int32 P = 0; P < 4; ++P)
 		{
@@ -254,7 +272,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 		{
 			if (NavSys->GetRandomPoint(Dbg))
 			{
-				UE_LOG(LogBattleArena, Log, TEXT("Dbg nav point[%d]: %s"), D, *Dbg.Location.ToString());
+				UE_LOG(LogERBattle, Log, TEXT("Dbg nav point[%d]: %s"), D, *Dbg.Location.ToString());
 			}
 		}
 	}
@@ -267,7 +285,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	// report a zero probe; cross layouts report the L1 walkway beside a stair.
 	if (ARecastNavMesh* Recast = Cast<ARecastNavMesh>(NavSys->GetDefaultNavDataInstance()))
 	{
-		UE_LOG(LogBattleArena, Log,
+		UE_LOG(LogERBattle, Log,
 			TEXT("Nav config: step=%.1f radius=%.1f height=%.1f cell=%.1f cellH=%.1f slope=%.1f"),
 			Recast->AgentMaxStepHeight, Recast->AgentRadius, Recast->AgentHeight,
 			Recast->CellSize, Recast->CellHeight, Recast->AgentMaxSlope);
@@ -279,7 +297,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 		FNavLocation UpperNav;
 		const bool bUpperNav = NavSys->ProjectPointToNavigation(
 			UpperProbe, UpperNav, FVector(200.0f, 200.0f, 200.0f));
-		UE_LOG(LogBattleArena, Log, TEXT("Upper mezzanine nav: %s at %s"),
+		UE_LOG(LogERBattle, Log, TEXT("Upper mezzanine nav: %s at %s"),
 			bUpperNav ? TEXT("ok") : TEXT("MISSING"), *UpperNav.Location.ToString());
 
 		// 楼梯中段是否有 navmesh (没有就说明台阶碰撞没被烘焙进去)
@@ -288,7 +306,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 			FNavLocation StairNav;
 			const bool bStairNav = NavSys->ProjectPointToNavigation(
 				GenResult.StairMidProbe, StairNav, FVector(120.0f, 120.0f, 160.0f));
-			UE_LOG(LogBattleArena, Log, TEXT("Stair mid nav: %s at %s (probe %s)"),
+			UE_LOG(LogERBattle, Log, TEXT("Stair mid nav: %s at %s (probe %s)"),
 				bStairNav ? TEXT("ok") : TEXT("MISSING"),
 				*StairNav.Location.ToString(), *GenResult.StairMidProbe.ToString());
 		}
@@ -297,14 +315,14 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 		if (UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(
 			this, GroundProbe, UpperProbe))
 		{
-			UE_LOG(LogBattleArena, Log,
+			UE_LOG(LogERBattle, Log,
 				TEXT("Mezzanine path: valid=%s partial=%s length=%.0f points=%d"),
 				Path->IsValid() ? TEXT("yes") : TEXT("no"),
 				Path->IsPartial() ? TEXT("yes") : TEXT("no"),
 				Path->GetPathLength(), Path->PathPoints.Num());
 			for (int32 PointIndex = 0; PointIndex < Path->PathPoints.Num(); ++PointIndex)
 			{
-				UE_LOG(LogBattleArena, Log, TEXT("  path[%d] = %s"),
+				UE_LOG(LogERBattle, Log, TEXT("  path[%d] = %s"),
 					PointIndex, *Path->PathPoints[PointIndex].ToString());
 			}
 		}
@@ -323,7 +341,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 				if (bOk) { ++Ok; }
 				else
 				{
-					UE_LOG(LogBattleArena, Log, TEXT("  landing[%d] at %s: UNREACHABLE (%s)"),
+					UE_LOG(LogERBattle, Log, TEXT("  landing[%d] at %s: UNREACHABLE (%s)"),
 						LIdx, *LandingProbes[LIdx].ToString(), Tag);
 				}
 			}
@@ -332,7 +350,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 		if (LandingProbes.Num() > 0)
 		{
 			int32 Ok = ProbeOnce(TEXT("initial"));
-			UE_LOG(LogBattleArena, Log, TEXT("Landings reachable: %d/%d"),
+			UE_LOG(LogERBattle, Log, TEXT("Landings reachable: %d/%d"),
 				Ok, LandingProbes.Num());
 			if (Ok < LandingProbes.Num())
 			{
@@ -368,7 +386,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 						const bool bDone = (Ok == LandingProbes.Num()) || (*Tries) >= 300;
 						if (bDone || (*Tries % 30) == 0)
 						{
-							UE_LOG(LogBattleArena, Log,
+							UE_LOG(LogERBattle, Log,
 								TEXT("Landings reachable (deferred, try %d): %d/%d%s"),
 								*Tries, Ok, LandingProbes.Num(), bDone ? TEXT(" FINAL") : TEXT(""));
 						}
@@ -379,7 +397,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	}
 	else
 	{
-		UE_LOG(LogBattleArena, Log, TEXT("No upper level in this layout (room graph)."));
+		UE_LOG(LogERBattle, Log, TEXT("No upper level in this layout (room graph)."));
 	}
 
 	const FBox Bounds = GetArenaBounds();
@@ -404,13 +422,13 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 					CMaxX = FMath::Max(CMaxX, (float)P.Location.X);
 				}
 			}
-			UE_LOG(LogBattleArena, Log,
+			UE_LOG(LogERBattle, Log,
 				TEXT("Dbg center flood: anchor=%s cells=%d xspan=%.0f"),
 				*CenterNav.Location.ToString(), CCells.Num(), CMaxX - CMinX);
 		}
 		else
 		{
-			UE_LOG(LogBattleArena, Log, TEXT("Dbg center flood: probe %s NOT on nav"),
+			UE_LOG(LogERBattle, Log, TEXT("Dbg center flood: probe %s NOT on nav"),
 				*GroundProbe.ToString());
 		}
 	}
@@ -459,7 +477,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 
 	if (BestCells < MinReachableCells)
 	{
-		UE_LOG(LogBattleArena, Log, TEXT("Seed %d: reachable area too small (%d cells < %d)."), Seed, BestCells, MinReachableCells);
+		UE_LOG(LogERBattle, Log, TEXT("Seed %d: reachable area too small (%d cells < %d)."), Seed, BestCells, MinReachableCells);
 		return false;
 	}
 
@@ -473,7 +491,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	const float Span = MaxX - MinX;
 	if (Span < Bounds.GetSize().X * MinReachableSpanFraction)
 	{
-		UE_LOG(LogBattleArena, Log, TEXT("Seed %d: reachable X span too small (%.0f)."), Seed, Span);
+		UE_LOG(LogERBattle, Log, TEXT("Seed %d: reachable X span too small (%.0f)."), Seed, Span);
 		return false;
 	}
 
@@ -517,7 +535,7 @@ bool ABattleArena::TryBuildAndValidate(UNavigationSystemV1* NavSys, int32 Seed)
 	const bool bEnemyOk = PickSpawns([&](const FVector& P) { return P.X >= EnemyMinX; }, NewEnemy);
 	if (!bPlayerOk || !bEnemyOk)
 	{
-		UE_LOG(LogBattleArena, Log, TEXT("Seed %d: not enough spawn points (player=%d, enemy=%d)."), Seed, NewPlayer.Num(), NewEnemy.Num());
+		UE_LOG(LogERBattle, Log, TEXT("Seed %d: not enough spawn points (player=%d, enemy=%d)."), Seed, NewPlayer.Num(), NewEnemy.Num());
 		return false;
 	}
 

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "WFC3DArenaGeneratorBase.h"
+#include "WFC/WFC3DArenaGeneratorBase.h"
 #include "WFC3DArenaGenerator_Voxel.generated.h"
 
 class UStaticMesh;

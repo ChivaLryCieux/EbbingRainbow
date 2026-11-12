@@ -158,6 +158,34 @@ void URunSubsystem::CompleteBattle(bool bWon)
 	}
 }
 
+bool URunSubsystem::GrantSkillToParty(int32 PartyIndex, FName SkillId)
+{
+	if (!Party.IsValidIndex(PartyIndex) || SkillId.IsNone())
+	{
+		return false;
+	}
+	Party[PartyIndex].Stats.SkillIds.AddUnique(SkillId);
+	return true;
+}
+
+bool URunSubsystem::RemoveSkillFromParty(int32 PartyIndex, FName SkillId)
+{
+	if (!Party.IsValidIndex(PartyIndex))
+	{
+		return false;
+	}
+	return Party[PartyIndex].Stats.SkillIds.Remove(SkillId) > 0;
+}
+
+TArray<FName> URunSubsystem::GetPartySkillIds(int32 PartyIndex) const
+{
+	if (!Party.IsValidIndex(PartyIndex))
+	{
+		return {};
+	}
+	return Party[PartyIndex].Stats.SkillIds;
+}
+
 void URunSubsystem::WriteBackParty(const TArray<ABattleUnit*>& Units, const TArray<int32>& PartyIndices)
 {
 	for (int32 Index = 0; Index < Units.Num() && Index < PartyIndices.Num(); ++Index)

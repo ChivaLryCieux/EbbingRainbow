@@ -4,8 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
-#include "WFCGenerationTypes.h"
-#include "WFC3DArenaGeneratorBase.h"
+#include "WFC/WFCGenerationTypes.h"
+#include "WFC/WFC3DArenaGeneratorBase.h"
 #include "WFC3DStyleTable.generated.h"
 
 /** 一条风格映射：Style -> 具体生成器类 + 默认规模 */

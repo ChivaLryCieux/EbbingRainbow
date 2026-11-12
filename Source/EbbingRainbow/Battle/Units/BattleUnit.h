@@ -6,12 +6,14 @@
 #include "GameFramework/Character.h"
 #include "Battle/Core/BattleTypes.h"
 #include "Battle/Skills/BattleSkillTypes.h"
+#include "Battle/Skills/BattleSkillComponent.h"
 #include "BattleUnit.generated.h"
 
 class UTextRenderComponent;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UAnimSequence;
+class UAnimMontage;
 class UPhysicsAsset;
 class ABattleUnit;
 
@@ -21,13 +23,17 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnUnitDamaged, ABattleUnit*, Unit,
 
 /**
  * 回合制战斗单位 (Manny 骨骼版)。
- * 持有 完整度 / AP / 先攻; 支持基于 NavMesh 的自由移动, 移动消耗 AP = 路径长度 / CmPerAP。
- * 具备技能施放、受击掉血、死亡布娃娃处理。
+ * 持有 完整度/护盾/AP/先攻; 支持基于 NavMesh 的自由移动, 移动消耗 AP = 路径长度 / CmPerAP。
+ *
+ * 技能系统 2.0 (Docs/SkillSystem-2.0.md):
+ *  - 技能实例/状态堆叠/派生属性全部委托给 UBattleSkillComponent
+ *  - 结算走 UBattleResolver 管线 (命中/暴击/地形/反应表/事件)
+ *  - 战斗随机数种子化 (FBattleRandomStream, 经 BattleManager)
  *
  * 表现层:
  *  - 脚底队伍光环底盘 (无资产依赖, 直接 MID 调色) 表达敌我/选中/悬停/当前回合
  *  - 攻击/受击/死亡均为一次性动画, 播完自动交还 ABP 运动混合
- *  - 技能伤害在攻击动画的命中时刻才结算 (延迟命中), 而不是按下即掉血
+ *  - 技能伤害在动画命中时刻才结算 (延迟命中), 而不是按下即掉血
  *  - 阵亡: 先倒地动作, 再无缝切入 Chaos 布娃娃并沿受击方向击飞
  */
 UCLASS()
@@ -40,17 +46,17 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	/** 初始化数值与阵营 */
+	/** 初始化数值与阵营 (按 Stats.SkillIds 装备技能) */
 	void InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam);
 
-	// ---------- 核心数值 (8大属性与运行时状态) ----------
+	// ---------- 核心数值 (基础模板 + 运行时当前值) ----------
 	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
 	FBattleUnitStats Stats;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
 	EBattleTeam Team = EBattleTeam::Player;
 
-	/** 当前完整度 (生命值，Float) */
+	/** 当前完整度 (生命值, Float) */
 	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
 	float Integrity = 0.0f;
 
@@ -62,15 +68,18 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
 	int32 AP = 0;
 
-	/** 兼容旧代码的整数 HP 视图 */
-	UPROPERTY(BlueprintReadOnly, Category = "Battle|Stats")
-	int32 HP = 0;
+	/** 技能组件: 技能实例 + 状态堆叠 + 派生属性 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Battle|Skills")
+	TObjectPtr<UBattleSkillComponent> SkillComp;
+
+	UFUNCTION(BlueprintPure, Category = "Battle|Skills")
+	UBattleSkillComponent* GetSkillComponent() const { return SkillComp; }
 
 	/** 基础转化率系数: 1 点先攻值兑换的移动厘米数 (默认 25cm/点先攻) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Movement")
 	float CmPerInitiativeUnit = 25.0f;
 
-	/** 1 点 AP 可移动的距离 (cm): 由先攻值与转化系数决定 */
+	/** 1 点 AP 可移动的距离 (cm): 由有效先攻值决定 (状态可改先攻) */
 	UFUNCTION(BlueprintPure, Category = "Battle|Movement")
 	float GetCmPerAP() const;
 
@@ -95,9 +104,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	void AddBarrier(float Amount);
 
-	/** 应用复合属性修饰包 (一次性影响多种属性，带浮动文字反馈) */
-	UFUNCTION(BlueprintCallable, Category = "Battle|Attributes")
-	void ApplyModifierBundle(const FAttributeModifierBundle& Bundle, ABattleUnit* InInstigator = nullptr, EDamageType DamageType = EDamageType::Kinetic);
+	/** 破坏护盾 (不足部分忽略, 不穿透到完整度) */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void DrainBarrier(float Amount);
+
+	/**
+	 * 结算后伤害落地 (抗性/命中判定已在 Resolver 完成):
+	 * 护盾吸收 → 扣完整度 → 飘字/受击反馈 → 死亡判定。
+	 * @return 总吸收量 (护盾 + 完整度)
+	 */
+	float ApplyDamageAmount(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType,
+		bool bCrit, float* OutBarrierAbsorbed = nullptr, float* OutIntegrityDamage = nullptr);
+
+	/** 治疗完整度 (钳制到有效上限) */
+	void ApplyHeal(float Amount, ABattleUnit* Source);
 
 	// ---------- 移动 ----------
 
@@ -132,31 +152,25 @@ public:
 
 	// ---------- 技能与战斗 ----------
 
-	/** 已装备的技能数据资产 (若存在则优先执行) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Skills")
-	TArray<TObjectPtr<class UBattleSkillData>> EquippedSkills;
+	/** 技能实例列表 (UI/AI 统一索引) */
+	const TArray<FBattleSkillSpec>& GetSkillSpecs() const { return SkillComp ? SkillComp->GetSkillSpecs() : EmptySkillSpecs; }
 
-	/** 动态装备技能资产 (自动同步至 UI 技能栏) */
-	UFUNCTION(BlueprintCallable, Category = "Battle|Skills")
-	void EquipSkillData(UBattleSkillData* InSkillData);
-
-	/** 检查是否可对目标使用技能 */
+	/** 检查是否可对目标使用技能 (含冷却/视线/3D 射程) */
 	bool CanUseSkill(int32 SkillIndex, const ABattleUnit* Target, FString& OutReason) const;
 
-	/** 施放技能 */
+	/** 施放技能 (扣 AP → 动画 → 命中时刻经 UBattleResolver 结算) */
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	bool ExecuteSkill(int32 SkillIndex, ABattleUnit* Target);
 
-	/** 
-	 * 受击并扣除护盾与完整度
-	 * 结算流程: 1.闪避判定 -> 2.对应抗性减免 -> 3.护盾吸收 -> 4.扣除完整度 -> 5.死亡判定
+	/**
+	 * 兼容入口: 直接伤害 (无命中判定, 仍过抗性/护盾)。
+	 * 优先使用 UBattleResolver::ApplyDirectDamage。
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	float TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType = EDamageType::Kinetic);
 
 	/**
-	 * 调试处决: 跳过闪避 / 抗性 / 护盾, 直接把完整度清零并走完整套死亡表现
-	 * (倒地动画 -> 布娃娃 -> OnUnitDied 广播), 保证与正常战死走同一条结算路径。
+	 * 调试处决: 跳过闪避 / 抗性 / 护盾, 直接把完整度清零并走完整套死亡表现。
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Battle")
 	void DebugKill();
@@ -167,7 +181,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Movement")
 	float MoveSpeed = 650.0f;
 
-	/** 攻击动作命中时刻占动画时长的比例 (0~1)。0.45 ≈ 出拳刚打到人的瞬间 */
+	/** 动作命中时刻占动画时长的比例 (0~1)。0.45 ≈ 出拳刚打到人的瞬间 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Animation", meta = (ClampMin = "0.05", ClampMax = "0.95"))
 	float AttackHitFraction = 0.45f;
 
@@ -181,10 +195,10 @@ public:
 
 	/**
 	 * 播放一段一次性动画 (攻击/受击/施法), 播完自动交还 ABP 运动混合。
-	 * 由技能资产与战斗逻辑共用, 避免各自处理恢复时机。
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Battle|Animation")
 	void PlayOneShotAnimation(UAnimSequence* Animation);
+
 	/** 播放攻击动作, 返回伤害应落地的延迟 (秒); 无动画资产时返回 0 (立即结算) */
 	UFUNCTION(BlueprintCallable, Category = "Battle|Animation")
 	float PlayAttackAnimation();
@@ -206,18 +220,25 @@ public:
 	void SetSelected(bool bInSelected);
 	void SetHovered(bool bInHovered);
 
-	/** 刷新头顶文字 */
+	/** 刷新头顶文字 (含状态摘要) */
 	void RefreshLabel();
 
 	/** 单位底部到场景地面的偏移 (胶囊半高) */
 	float GetCapsuleHalfHeight() const;
 
-	const TArray<FBattleSkillDef>& GetSkills() const { return Stats.Skills; }
-
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	/** 表现资产惰性加载 (骨骼网格/ABP/动画池), BeginPlay 调用一次 */
+	void EnsurePresentationAssets();
+	bool bPresentationReady = false;
+
+	/** 头顶名牌朝向缓存: 镜头或自身未移动时跳过 SetWorldRotation */
+	FVector LastLabelCamLoc = FVector::ZeroVector;
+	FVector LastLabelSelfLoc = FVector::ZeroVector;
+
 	UPROPERTY(VisibleAnywhere, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BodyMesh;
 
@@ -241,6 +262,14 @@ private:
 	TObjectPtr<class UAnimSequence> AttackAnimSequence;
 
 	// ---------- 动画资产 ----------
+
+	/** 移动循环动画 (移动期间以循环蒙太奇播放在 DefaultSlot 上, 结束淡出回 ABP) */
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> MoveAnimSequence;
+
+	/** 移动循环蒙太奇实例 (惰性创建, LoopCount 给足由 StopMoveAnimation 负责停) */
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> MoveMontage;
 
 	/** 攻击动作池 (随机取一段, 避免连段重复感) */
 	UPROPERTY(EditAnywhere, Category = "Battle|Animation")
@@ -271,9 +300,13 @@ private:
 	FTimerHandle PendingHitTimerHandle;
 	FTimerHandle RagdollTimerHandle;
 
-	/** 延迟伤害: 攻击动画命中时刻才结算 */
+	// ---------- 延迟命中 (动画命中时刻结算) ----------
 	TWeakObjectPtr<ABattleUnit> PendingHitTarget;
-	int32 PendingHitSkillIndex = INDEX_NONE;
+	TObjectPtr<UBattleSkillData> PendingSkillData = nullptr;
+	int32 PendingSkillLevel = 1;
+	FVector PendingTargetLocation = FVector::ZeroVector;
+	/** 空技能规格的静态返回值 (无技能组件时兜底) */
+	static const TArray<FBattleSkillSpec> EmptySkillSpecs;
 
 	FVector PendingRagdollImpulse = FVector::ZeroVector;
 	bool bRagdollActive = false;
@@ -304,7 +337,10 @@ private:
 	/** 取 (或建) 一段动画对应的 DefaultSlot 动态蒙太奇 */
 	UAnimMontage* GetOrCreateMontage(UAnimSequence* Animation);
 
-	void ResolveSkillImpact(const FBattleSkillDef& Skill, ABattleUnit* Target);
+	/** 开始/停止移动循环动画 (速度对齐播放速率) */
+	void PlayMoveAnimation();
+	void StopMoveAnimation();
+
 	void ApplyPendingHit();
 	void EnableRagdoll();
 };

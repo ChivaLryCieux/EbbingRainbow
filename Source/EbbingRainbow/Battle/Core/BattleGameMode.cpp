@@ -1,12 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Core/BattleGameMode.h"
+#include "Core/ERDebug.h"
+#include "Core/ERLog.h"
 #include "Battle/Arena/BattleArena.h"
-#include "WFC3DStyleTable.h"
+#include "WFC/WFC3DStyleTable.h"
 #include "Battle/Player/BattlePlayerController.h"
 #include "Battle/Player/TacticalCameraPawn.h"
 #include "Battle/Units/BattleUnit.h"
 #include "Battle/Core/BattleManager.h"
+#include "Battle/Skills/BattleRandomStream.h"
 #include "Battle/UI/BattleHUD.h"
 #include "Hall/HallCameraPawn.h"
 #include "Hall/HallPlayerController.h"
@@ -37,6 +40,7 @@ ABattleGameMode::ABattleGameMode()
 	UnitClass = ABattleUnit::StaticClass();
 
 	// 默认名单 (名称, 完整度, AP, 先攻值, 闪避率, 力学抗性, 热学抗性, 电学抗性, 化学抗性)
+	// 技能 Id 由 UBattleSkillLibrary 目录解析 (技能系统 2.0)
 	PlayerRoster = GetDefaultPlayerRoster();
 	EnemyRoster = {
 		FBattleUnitStats(TEXT("Goblin"),  26.0f, 4, 13, 0.15f, -0.10f, -0.15f,  0.0f,   0.10f), // 哥布林: 灵敏脆弱
@@ -44,16 +48,30 @@ ABattleGameMode::ABattleGameMode()
 		FBattleUnitStats(TEXT("Archer"),  28.0f, 4, 12, 0.10f,  0.0f,   0.0f,   0.0f,   0.0f),  // 射手: 远程游击
 		FBattleUnitStats(TEXT("Shaman"),  35.0f, 3, 9,  0.05f, -0.10f,  0.20f,  0.20f,  0.20f), // 萨满: 元素守卫
 	};
+	EnemyRoster[0].SkillIds = { TEXT("Slash"), TEXT("Shoot") };
+	EnemyRoster[1].SkillIds = { TEXT("Slash"), TEXT("FieldBarrier") };
+	EnemyRoster[2].SkillIds = { TEXT("Shoot"), TEXT("AcidBomb") };
+	EnemyRoster[3].SkillIds = { TEXT("Shock"), TEXT("ChainLightning") };
 }
 
 const TArray<FBattleUnitStats>& ABattleGameMode::GetDefaultPlayerRoster()
 {
-	static const TArray<FBattleUnitStats> Roster = {
-		FBattleUnitStats(TEXT("力学"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 重甲高力抗, 弱电导
-		FBattleUnitStats(TEXT("热学"), 38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 高先攻大跑动距离, 高闪避
-		FBattleUnitStats(TEXT("电学"), 32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 弱力学, 强元素抗性
-		FBattleUnitStats(TEXT("化学"), 45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 均衡, 高化学抗性
-	};
+	static const TArray<FBattleUnitStats> Roster = []()
+	{
+		TArray<FBattleUnitStats> Units = {
+			FBattleUnitStats(TEXT("力学"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 重甲高力抗, 弱电导
+			FBattleUnitStats(TEXT("热学"), 38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 高先攻大跑动距离, 高闪避
+			FBattleUnitStats(TEXT("电学"), 32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 弱力学, 强元素抗性
+			FBattleUnitStats(TEXT("化学"), 45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 均衡, 高化学抗性
+		};
+
+		// 技能构筑 (学派定位): 力学近战单体 / 热学周身新星 / 电学连锁 / 化学投掷 AoE
+		Units[0].SkillIds = { TEXT("Slash"),    TEXT("ShieldBash"),   TEXT("PowerStrike"),   TEXT("FieldBarrier") };
+		Units[1].SkillIds = { TEXT("Overheat"), TEXT("ScorchPulse"),  TEXT("NovaBlast") };
+		Units[2].SkillIds = { TEXT("Shock"),    TEXT("ChainLightning"),TEXT("ArcStorm"),     TEXT("Overclock") };
+		Units[3].SkillIds = { TEXT("AcidSpray"),TEXT("AcidBomb"),     TEXT("VenomCloud") };
+		return Units;
+	}();
 	return Roster;
 }
 
@@ -65,7 +83,7 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 	const FString CurrentMap = GetWorld() ? GetWorld()->GetMapName() : MapName;
 	if (MapName.Contains(TEXT("Hall")) || CurrentMap.Contains(TEXT("Hall")))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BattleGameMode] BattleGameMode loaded in Hall map '%s'! Redirecting classes to HallCameraPawn."), *CurrentMap);
+		UE_LOG(LogERBattle, Warning, TEXT("[BattleGameMode] BattleGameMode loaded in Hall map '%s'! Redirecting classes to HallCameraPawn."), *CurrentMap);
 		DefaultPawnClass = AHallCameraPawn::StaticClass();
 		PlayerControllerClass = AHallPlayerController::StaticClass();
 		HUDClass = AHallHUD::StaticClass();
@@ -75,6 +93,14 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 	// 航线图战斗：从 URL 读取节点，决定本场的地形种子与队伍状态
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
+		// 场景生成器显式覆盖 (调试用, 如 ?gen=2): 平时由关卡文件声明, 不走 URL
+		const FString GenOption = UGameplayStatics::ParseOption(Options, TEXT("gen"));
+		if (!GenOption.IsEmpty())
+		{
+			PendingGeneratorChoice = FCString::Atoi(*GenOption);
+			UE_LOG(LogERBattle, Log, TEXT("[Battle] URL 显式覆盖生成器: gen=%d"), PendingGeneratorChoice);
+		}
+
 		if (URunSubsystem* Run = GameInstance->GetSubsystem<URunSubsystem>())
 		{
 			const FString NodeOption = UGameplayStatics::ParseOption(Options, TEXT("node"));
@@ -85,12 +111,11 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 				{
 					PendingNodeId = Node->Id;
 					PendingEncounterSeed = Node->EncounterSeed;
-					// 自然战斗节点 -> Nature 生成器; 其余按默认 (Voxel)
-					PendingGeneratorChoice =
-						(Node->Type == ERouteNodeType::BattleNature) ? 2 : -1;
+					// 场景种类由关卡文件声明 (一场景一关卡): BattleNature 节点开 Lvl_NatureArena,
+					// 地图场景档案自动选自然岛生成器, 这里不再按节点推导生成器。
 					bRunBattle = true;
-					UE_LOG(LogTemp, Log, TEXT("[Battle] 来自航线图节点 %d (第 %d 层, 遭遇种子 %d)"),
-						Node->Id, Node->Layer + 1, Node->EncounterSeed);
+					UE_LOG(LogERBattle, Log, TEXT("[Battle] 来自航线图节点 %d (第 %d 层, 遭遇种子 %d, 地图 %s)"),
+						Node->Id, Node->Layer + 1, Node->EncounterSeed, *CurrentMap);
 				}
 			}
 		}
@@ -143,7 +168,7 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 30.0f, FColor::Red,
-				TEXT("Arena generation FAILED. Check LogBattleArena (is a NavMeshBoundsVolume present?)"));
+				TEXT("Arena generation FAILED. Check LogERBattle (is a NavMeshBoundsVolume present?)"));
 		}
 		return;
 	}
@@ -188,7 +213,7 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 
 	// 调试: ER.AutoShot > 0 (或命令行 -AutoShot) 时把镜头拉到全场中心并截一张图
 	if (CVarAutoShot.GetValueOnGameThread() > 0
-		|| FParse::Param(FCommandLine::Get(), TEXT("AutoShot")))
+		|| ER::Debug::IsAutoShot())
 	{
 		const FVector Center = Arena->GetActorLocation() + FVector(3800.0f, 3800.0f, 0.0f);
 		GetWorldTimerManager().SetTimer(AutoShotTimerHandle, FTimerDelegate::CreateWeakLambda(
@@ -196,7 +221,7 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 			{
 				// 临时俯瞰相机: 比战术镜头看得全, 便于离线检查整场构图
 				// -AutoShotTop 用正俯机位评估平面构图/破碎外壳剪影
-				const bool bTop = FParse::Param(FCommandLine::Get(), TEXT("AutoShotTop"));
+				const bool bTop = ER::Debug::IsAutoShotTop();
 				FActorSpawnParameters Params;
 				Params.SpawnCollisionHandlingOverride =
 					ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -218,7 +243,7 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 				GetWorldTimerManager().SetTimer(AutoShotTimerHandle, FTimerDelegate::CreateWeakLambda(
 					this, [this]()
 					{
-						if (FParse::Param(FCommandLine::Get(), TEXT("ShowNav")))
+						if (ER::Debug::IsShowNav())
 						{
 							if (APlayerController* PC2 = GetWorld()->GetFirstPlayerController())
 							{
@@ -226,14 +251,15 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 							}
 						}
 						FScreenshotRequest::RequestScreenshot(true);
-						UE_LOG(LogTemp, Log, TEXT("[Battle] AutoShot: 已请求截图。"));
+						UE_LOG(LogERBattle, Log, TEXT("[Battle] AutoShot: 已请求截图。"));
 					}), 2.5f, false);
 			}), 1.5f, false);
 	}
 
-	// 创建并启动战斗管理器
+	// 创建并启动战斗管理器 (战斗随机种子 = f(Run 种子, 遭遇种子), 完全可复现)
 	BattleManager = NewObject<UBattleManager>(this, TEXT("BattleManager"));
-	BattleManager->InitializeBattle(this, PlayerUnits, EnemyUnits);
+	const int32 BattleSeed = DeriveBattleSeed(GetRunSubsystem() ? GetRunSubsystem()->GetRunSeed() : 0, PendingEncounterSeed);
+	BattleManager->InitializeBattle(this, PlayerUnits, EnemyUnits, BattleSeed);
 
 	// 无论是否来自航线图都要接结果: 结算面板对两种来源都要弹
 	BattleManager->OnBattleFinished.AddDynamic(this, &ABattleGameMode::HandleBattleFinished);
@@ -246,7 +272,7 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 		{
 			GetWorldTimerManager().SetTimer(AutoWinTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this, AutoWin]()
 			{
-				UE_LOG(LogTemp, Log, TEXT("[Battle] ER.AutoWin 触发，自动判胜。"));
+				UE_LOG(LogERBattle, Log, TEXT("[Battle] ER.AutoWin 触发，自动判胜。"));
 				// 走和作弊按钮完全相同的路径: 管理器判胜负 -> GameMode 结算 -> 结算面板
 				if (BattleManager)
 				{
@@ -262,7 +288,7 @@ void ABattleGameMode::HandleArenaGenerated(bool bSuccess)
 				{
 					GetWorldTimerManager().SetTimer(AutoReturnTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
 					{
-						UE_LOG(LogTemp, Log, TEXT("[Battle] ER.AutoWin=2: 自动点击结算返回。"));
+						UE_LOG(LogERBattle, Log, TEXT("[Battle] ER.AutoWin=2: 自动点击结算返回。"));
 						ReturnFromBattle();
 					}), 2.5f, false);
 				}
@@ -366,19 +392,19 @@ void ABattleGameMode::HandleBattleFinished(bool bPlayerWon)
 				{
 					Run->WriteBackParty(PlayerUnits, PlayerPartyIndices);
 					Run->CompleteBattle(true);
-					UE_LOG(LogTemp, Log, TEXT("[Battle] 节点 %d 战斗胜利，等待玩家点击结算面板返回航线图"), PendingNodeId);
+					UE_LOG(LogERBattle, Log, TEXT("[Battle] 节点 %d 战斗胜利，等待玩家点击结算面板返回航线图"), PendingNodeId);
 				}
 				else
 				{
 					Run->CompleteBattle(false);
-					UE_LOG(LogTemp, Log, TEXT("[Battle] 本局失败，等待玩家点击结算面板返回大厅"));
+					UE_LOG(LogERBattle, Log, TEXT("[Battle] 本局失败，等待玩家点击结算面板返回大厅"));
 				}
 			}
 		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Battle] 非航线图战斗结束 (胜利=%s)，等待玩家点击结算面板"),
+		UE_LOG(LogERBattle, Log, TEXT("[Battle] 非航线图战斗结束 (胜利=%s)，等待玩家点击结算面板"),
 			bPlayerWon ? TEXT("是") : TEXT("否"));
 	}
 }

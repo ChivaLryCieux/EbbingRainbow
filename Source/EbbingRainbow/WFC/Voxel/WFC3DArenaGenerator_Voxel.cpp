@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Voxel/WFC3DArenaGenerator_Voxel.h"
+#include "WFC/Voxel/WFC3DArenaGenerator_Voxel.h"
+#include "WFC/Shared/ERArenaAtmosphere.h"
+#include "Core/ERDebug.h"
+#include "Core/ERLog.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -78,7 +81,7 @@ UMaterialInterface* AWFC3DArenaGenerator_Voxel::LoadMat(const TCHAR* Path)
 	{
 		M = LoadObject<UMaterialInterface>(
 			nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogERWFC, Warning,
 			TEXT("[Voxel] Missing material %s; falling back to BasicShapeMaterial "
 				"(run Scripts/voxel_build_materials.py)."), Path);
 	}
@@ -865,7 +868,7 @@ bool AWFC3DArenaGenerator_Voxel::PlaceStairs(FRandomStream& Rng, FVoxPlan& Plan)
 		// 找不到合法边也修不了才跳过: BFS 校验兜住连通性
 		if (!bPlaced)
 		{
-			UE_LOG(LogTemp, Warning,
+			UE_LOG(LogERWFC, Warning,
 				TEXT("[VoxDiag] adj r%d<->r%d SKIPPED cands=%d noapp=%d role=%d"),
 				Adjs[E].Ra, Adjs[E].Rb, Cands.Num(), SkipNoApp, SkipRole);
 		}
@@ -1107,7 +1110,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 		: CollapseHeightField(Rng, OutPlan.Motif, Cx, Cy, OutPlan.L);
 	if (!bFieldOk)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[VoxDiag] motif=%d fail: collapse"), OutPlan.Motif);
+		UE_LOG(LogERWFC, Warning, TEXT("[VoxDiag] motif=%d fail: collapse"), OutPlan.Motif);
 		return false;
 	}
 	FixupSmallRegions(OutPlan.L);
@@ -1158,7 +1161,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 	}
 	if (NonVoid == 0 || BestRegion * 5 < NonVoid)
 	{
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogERWFC, Warning,
 			TEXT("[VoxDiag] motif=%d fail: region nonvoid=%d best=%d"),
 			OutPlan.Motif, NonVoid, BestRegion);
 		return false;
@@ -1181,7 +1184,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 	}
 	if (West < 8 || East < 8)
 	{
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogERWFC, Warning,
 			TEXT("[VoxDiag] motif=%d fail: spawn west=%d east=%d"),
 			OutPlan.Motif, West, East);
 		return false;
@@ -1195,7 +1198,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 	{
 		if (!PlaceStairs(Rng, OutPlan))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[VoxDiag] motif=%d fail: stairs"), OutPlan.Motif);
+			UE_LOG(LogERWFC, Warning, TEXT("[VoxDiag] motif=%d fail: stairs"), OutPlan.Motif);
 			return false;
 		}
 		if (CheckConnectivity(OutPlan, &Reached))
@@ -1219,7 +1222,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 		{
 			NumRegions = FMath::Max(NumRegions, OutPlan.RegionOf[I] + 1);
 		}
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogERWFC, Warning,
 			TEXT("[VoxDiag] motif=%d fail: conn stairs=%d regions=%d reached=%d"),
 			OutPlan.Motif, OutPlan.Stairs.Num(), NumRegions, Reached);
 		static int32 Dumped = 0;
@@ -1236,7 +1239,7 @@ bool AWFC3DArenaGenerator_Voxel::BuildPlan(
 					else if (OutPlan.LowEntry.Contains(I)) { Row += TEXT("l"); }
 					else { Row += FString::Printf(TEXT("%d"), OutPlan.L[I]); }
 				}
-				UE_LOG(LogTemp, Warning, TEXT("[VoxDiag] %s"), *Row);
+				UE_LOG(LogERWFC, Warning, TEXT("[VoxDiag] %s"), *Row);
 			}
 		}
 		return false;
@@ -1434,7 +1437,7 @@ void AWFC3DArenaGenerator_Voxel::PartitionBlocks(
 		{
 			continue;
 		}
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogERWFC, Warning,
 			TEXT("[Voxel] bad BlockOf[%d]=%d (L=%d, blocks=%d) -> 1x1 fallback block"),
 			I, B, Plan.L[I], Plan.Blocks.Num());
 		FVoxBlock Bl;
@@ -1526,10 +1529,10 @@ void AWFC3DArenaGenerator_Voxel::PartitionBlocks(
 	{
 		if (MaxAdj > 30.0f)
 		{
-			UE_LOG(LogTemp, Warning,
+			UE_LOG(LogERWFC, Warning,
 				TEXT("[Voxel] Relief: maxAdj %.0f exceeds nav-safe 30"), MaxAdj);
 		}
-		UE_LOG(LogTemp, Log,
+		UE_LOG(LogERWFC, Log,
 			TEXT("[Voxel] Relief: min=%.0f max=%.0f maxAdj=%.0f pinned=%d blocks=%d"),
 			HMin, HMax, MaxAdj, Pinned, Plan.Blocks.Num());
 	}
@@ -1820,15 +1823,14 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 
 	auto MatPick = [&](float Fr) -> EVoxMat
 	{
-		if (Fr < 0.75f) { return EVoxMat::Concrete; }
-		if (Fr < 0.92f) { return EVoxMat::Marble; }
-		return EVoxMat::Glass;
+		// 外壳统一混凝土: 大理石/彩色渐变只留平台点缀 (美术要求)
+		(void)Fr;
+		return EVoxMat::Concrete;
 	};
 	auto MatPickKid = [&](float Fr) -> EVoxMat
 	{
-		if (Fr < 0.80f) { return EVoxMat::Concrete; }
-		if (Fr < 0.95f) { return EVoxMat::Marble; }
-		return EVoxMat::Glass;
+		(void)Fr;
+		return EVoxMat::Concrete;
 	};
 	auto PushBox = [&](EVoxMat M, const FVector& C, float Sz, const FRotator& Rot)
 	{
@@ -1934,14 +1936,7 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 		const float H = Rng.FRandRange(3000.0f, 5000.0f);
 		const FTransform T(FRotator::ZeroRotator,
 			FVector(P.X, P.Y, P.Z + H * 0.5f), FVector(W / 100.0f, W / 100.0f, H / 100.0f));
-		if (Rng.FRand() < 0.8f)
-		{
-			OutConcrete.Add(T);
-		}
-		else
-		{
-			OutMarble.Add(T);
-		}
+		OutConcrete.Add(T);
 	}
 
 	// 内侧碎屑: 抖动网格 (步长 900) 覆盖环带 [4800, 0.92R], 均匀 50%
@@ -1965,7 +1960,7 @@ void AWFC3DArenaGenerator_Voxel::BuildShell(
 				FRotator::ZeroRotator);
 		}
 	}
-	UE_LOG(LogTemp, Log, TEXT("[Voxel] Shell instances: %d"),
+	UE_LOG(LogERWFC, Log, TEXT("[Voxel] Shell instances: %d"),
 		OutConcrete.Num() + OutMarble.Num() + OutGlass.Num() - ShellStart);
 }
 
@@ -1977,7 +1972,7 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 
 	if (Request.Scale.X != GridW || Request.Scale.Y != GridH)
 	{
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogERWFC, Warning,
 			TEXT("[Voxel] Expects Scale 19x19, got %dx%dx%d; using 19x19."),
 			Request.Scale.X, Request.Scale.Y, Request.Scale.Z);
 	}
@@ -1989,7 +1984,7 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 	CubeMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (!CubeMesh)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Voxel] No engine cube mesh."));
+		UE_LOG(LogERWFC, Error, TEXT("[Voxel] No engine cube mesh."));
 		return false;
 	}
 	MatConcrete = LoadMat(TEXT("/Game/Materials/Architecture/MI_Concrete_1.MI_Concrete_1"));
@@ -2034,7 +2029,7 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 	}
 	if (!bOk)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Voxel] Plan failed after %d tries (seed=%d)."), Tries, Seed);
+		UE_LOG(LogERWFC, Error, TEXT("[Voxel] Plan failed after %d tries (seed=%d)."), Tries, Seed);
 		return false;
 	}
 	++Tries;
@@ -2170,7 +2165,7 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 	LastResult.CellCount = GridW * GridH * 2;
 	LastResult.DurationMs = DurationMs;
 
-	UE_LOG(LogTemp, Log,
+	UE_LOG(LogERWFC, Log,
 		TEXT("[Voxel] Generated seed=%d motif=%s tries=%d stairs=%d shellR=%.0f "
 			"instances: concrete=%d marble=%d glow=%d glass=%d in %.2f ms."),
 		Seed, Plan.Motif == 0 ? TEXT("Bowl") : TEXT("Ziggurat"), Tries,
@@ -2185,126 +2180,6 @@ bool AWFC3DArenaGenerator_Voxel::Generate(const FWFCGenerationRequest& Request)
 
 void AWFC3DArenaGenerator_Voxel::SpawnLighting(FRandomStream& Rng)
 {
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-	const FVector Origin = GetActorLocation();
-
-	// ---- 调谐关卡自带氛围演员 (Lvl_Arena 放好了 SkyLight/SkyAtmosphere/
-	//      SkyDome_Soft/ExponentialHeightFog, 它们的粉紫参数覆盖一切) ----
-	bool bFoundLevelFog = false;
-	for (TActorIterator<AActor> It(World); It; ++It)
-	{
-		AActor* A = *It;
-		if (A == this || A->GetOwner() == this)
-		{
-			continue;
-		}
-		if (AExponentialHeightFog* F = Cast<AExponentialHeightFog>(A))
-		{
-			bFoundLevelFog = true;
-			if (UExponentialHeightFogComponent* FC = F->GetComponent())
-			{
-				FC->SetFogDensity(0.008f);
-				FC->SetFogHeightFalloff(0.45f);
-				FC->SetFogInscatteringColor(
-					FLinearColor::FromSRGBColor(FColor(10, 13, 22)));
-				FC->SetDirectionalInscatteringColor(FLinearColor(0.001f, 0.002f, 0.004f));
-				FC->SetDirectionalInscatteringExponent(14.0f);
-				FC->SetStartDistance(1200.0f);
-				FC->SetVolumetricFog(true);
-				FC->SetVolumetricFogScatteringDistribution(0.55f);
-				FC->SetVolumetricFogAlbedo(FColor(18, 26, 48));
-				FC->SetVolumetricFogEmissive(FLinearColor(0.002f, 0.003f, 0.006f));
-			}
-		}
-		else if (ASkyLight* S = Cast<ASkyLight>(A))
-		{
-			if (USkyLightComponent* SC = S->GetLightComponent())
-			{
-				SC->SetIntensity(0.3f);
-				SC->SetLightColor(
-					FLinearColor::FromSRGBColor(FColor(70, 82, 110)));
-				SC->bLowerHemisphereIsBlack = true;
-			}
-		}
-		else if (A->GetClass()->GetName().Contains(TEXT("SkyAtmosphere")))
-		{
-			A->SetActorHiddenInGame(true);
-		}
-	}
-
-	FActorSpawnParameters P;
-	P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	P.ObjectFlags |= RF_Transient;
-	P.Owner = this;
-
-	// 主光: 暖白, 高位斜射, 方向随种子变化
-	const float YawDeg = 20.0f + Rng.FRand() * 320.0f;
-	const float PitchDeg = -(48.0f + Rng.FRand() * 14.0f);
-	ADirectionalLight* Key = World->SpawnActor<ADirectionalLight>(
-		ADirectionalLight::StaticClass(), Origin, FRotator(PitchDeg, YawDeg, 0.0f), P);
-	if (Key)
-	{
-		UDirectionalLightComponent* LC = Key->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(7.5f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(255, 244, 229))); // 微暖白
-		LC->SetCastShadows(true);
-		LC->LightSourceAngle = 0.8f;
-		LC->ForwardShadingPriority = 1; // 消 forward-shading 多主光警告
-		Key->SetActorRotation(FRotator(PitchDeg, YawDeg, 0.0f));
-		AtmoActors.Add(Key);
-	}
-
-	// 补光: 无影冷色低位, 只抬阴影不死黑 (替代 skylight, 避免捕获时序问题)
-	ADirectionalLight* Fill = World->SpawnActor<ADirectionalLight>(
-		ADirectionalLight::StaticClass(), Origin,
-		FRotator(-25.0f, YawDeg + 160.0f, 0.0f), P);
-	if (Fill)
-	{
-		UDirectionalLightComponent* LC = Fill->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(0.9f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(120, 140, 175))); // 冷蓝灰
-		LC->SetCastShadows(false);
-		LC->bAffectTranslucentLighting = true;
-		AtmoActors.Add(Fill);
-	}
-
-	// 反弹光: 从下往上打, 亮出立面/底面 -> "漂在云海之上"的反光感
-	ADirectionalLight* Bounce = World->SpawnActor<ADirectionalLight>(
-		ADirectionalLight::StaticClass(), Origin,
-		FRotator(65.0f, YawDeg + 180.0f, 0.0f), P);
-	if (Bounce)
-	{
-		UDirectionalLightComponent* LC = Bounce->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(1.4f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(90, 105, 140)));
-		LC->SetCastShadows(false);
-		AtmoActors.Add(Bounce);
-	}
-
-	// 雾池: 关卡已放雾则只调谐; 否则自己补一个 (其它地图兜底)
-	AExponentialHeightFog* Fog = bFoundLevelFog ? nullptr : World->SpawnActor<AExponentialHeightFog>(
-		AExponentialHeightFog::StaticClass(), Origin + FVector(0, 0, -1400.0f),
-		FRotator::ZeroRotator, P);
-	if (Fog)
-	{
-		UExponentialHeightFogComponent* FC = Fog->GetComponent();
-		FC->SetFogDensity(0.008f);
-		FC->SetFogHeightFalloff(0.45f);
-		FC->SetFogInscatteringColor(FLinearColor::FromSRGBColor(FColor(10, 13, 22))); // 近黑蓝 -> 虚空
-		FC->SetDirectionalInscatteringColor(FLinearColor(0.001f, 0.002f, 0.004f));
-		FC->SetDirectionalInscatteringExponent(14.0f);
-		FC->SetStartDistance(1200.0f);
-		FC->SetVolumetricFog(true);
-		FC->SetVolumetricFogScatteringDistribution(0.55f);
-		FC->SetVolumetricFogAlbedo(FColor(18, 26, 48)); // 深蓝紫 -> 饱和雾色即虚空色
-		FC->SetVolumetricFogEmissive(FLinearColor(0.002f, 0.003f, 0.006f));
-		AtmoActors.Add(Fog);
-	}
+	// 与 Nature 共用一份氛围实现 (三点光+虚空雾, -Atmo 开启)
+	ER::Atmosphere::SpawnVoidAtmosphere(this, Rng, AtmoActors);
 }

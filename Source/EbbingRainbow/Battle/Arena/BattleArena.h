@@ -4,14 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "WFCGenerationTypes.h"
+#include "WFC/WFCGenerationTypes.h"
 #include "BattleArena.generated.h"
 
 class AWFC3DArenaHost;
 class UWFC3DStyleTable;
 class UNavigationSystemV1;
-
-DECLARE_LOG_CATEGORY_EXTERN(LogBattleArena, Log, All);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnArenaGenerated, bool, bSuccess);
 

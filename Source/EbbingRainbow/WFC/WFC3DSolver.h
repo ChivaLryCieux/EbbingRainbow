@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "WFC3DTypes.h"
+#include "WFC/WFC3DTypes.h"
 
 enum class EWFCStepResult : uint8
 {
@@ -34,9 +34,6 @@ public:
 		const TArray<TArray<TBitArray<>>>& InCompatibilityTable
 	);
 
-	/**
-	 * 求解整个网格 (支持多轮重试)
-	 * @param MaxRetries 最大冲突重试次数
 	/**
 	 * 求解整个网格 (支持多轮重试)
 	 * @param MaxRetries 最大冲突重试次数

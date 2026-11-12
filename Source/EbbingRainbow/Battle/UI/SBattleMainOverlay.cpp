@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/UI/SBattleMainOverlay.h"
+#include "Core/ERLog.h"
 #include "Battle/UI/SBattleUnitPortrait.h"
 #include "Battle/UI/SBattleGlassKit.h"
 #include "Battle/UI/SBattleResultPanel.h"
@@ -15,11 +16,14 @@
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Notifications/SProgressBar.h"
+#include "Brushes/SlateImageBrush.h"
 #include "Rendering/SlateRenderTransform.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/Texture2D.h"
 
 // =========================================================================================
 // SBattleSkillCardWidget
@@ -32,27 +36,43 @@ void SBattleSkillCardWidget::Construct(const FArguments& InArgs)
 	bIsMoveCard = InArgs._bIsMoveCard;
 	AccentColor = InArgs._AccentColor;
 	OnClickedDelegate = InArgs._OnClicked;
+	CooldownText = InArgs._CooldownBadge;
 
-	// 卡牌玻璃底: 烟熏 + 主题色发丝描边
+	// 卡牌玻璃底: 乳白磨砂 + 主题色发丝描边 (白底上主题色压深一档保证可读)
+	const FLinearColor DeepAccent = BattleGlass::DeepenForWhite(AccentColor, 0.70f);
 	BattleGlass::ConfigureGlassBrush(CardBgBrush, BattleGlass::RadiusCard,
-		FLinearColor(0.045f, 0.065f, 0.100f, 0.82f), 1.2f, AccentColor.CopyWithNewOpacity(0.45f));
+		FLinearColor(0.97f, 0.98f, 1.00f, 0.62f), 1.2f, DeepAccent.CopyWithNewOpacity(0.65f));
 
-	// AP 晶体徽章
+	// AP 晶体徽章 (彩色药丸, 白字) + 冷却角标 (深色小药丸)
 	BattleGlass::ConfigureGlassBrush(CostGemBrush, BattleGlass::RadiusPill,
-		bIsMoveCard ? FLinearColor(0.10f, 0.55f, 0.35f, 0.90f) : FLinearColor(0.12f, 0.42f, 0.90f, 0.90f),
+		bIsMoveCard ? FLinearColor(0.10f, 0.55f, 0.35f, 0.92f) : FLinearColor(0.12f, 0.42f, 0.90f, 0.92f),
 		1.0f, FLinearColor(1.0f, 1.0f, 1.0f, 0.45f));
+	BattleGlass::ConfigureGlassBrush(CooldownBrush, BattleGlass::RadiusPill,
+		FLinearColor(0.10f, 0.11f, 0.16f, 0.88f), 0.8f, FLinearColor(1.0f, 1.0f, 1.0f, 0.30f));
 
-	const FText CostBadgeText = bIsMoveCard ? FText::FromString(TEXT("移动")) : FText::FromString(FString::Printf(TEXT("%.0f AP"), APCost));
+	// 技能图标画刷 (正方形渲染, 固定宽高杜绝拉伸); 纹理由 UBattleSkillData::Icon (UPROPERTY) 持有
+	if (IsValid(InArgs._IconTexture))
+	{
+		IconBrush = MakeShared<FSlateImageBrush>(InArgs._IconTexture, FVector2D(64.0f, 64.0f));
+	}
+
+	// 详细说明只在悬停提示里出现
+	if (!InArgs._ToolTip.IsEmpty())
+	{
+		SetToolTipText(InArgs._ToolTip);
+	}
+
+	const FText CostBadgeText = bIsMoveCard ? FText::FromString(TEXT("移")) : FText::FromString(FString::Printf(TEXT("%.0f"), APCost));
 
 	ChildSlot
 	[
 		SAssignNew(BorderWidget, SBorder)
 		.BorderImage(&CardBgBrush)
-		.Padding(FMargin(11.0f, 9.0f))
+		.Padding(FMargin(6.0f, 6.0f))
 		[
 			SNew(SBox)
-			.WidthOverride(150.0f)
-			.HeightOverride(185.0f)
+			.WidthOverride(72.0f)
+			.HeightOverride(84.0f)
 			[
 				SNew(SVerticalBox)
 
@@ -63,14 +83,15 @@ void SBattleSkillCardWidget::Construct(const FArguments& InArgs)
 					SNew(SHorizontalBox)
 					+ SHorizontalBox::Slot()
 					.AutoWidth()
+					.VAlign(VAlign_Center)
 					[
 						SNew(SBorder)
 						.BorderImage(&CostGemBrush)
-						.Padding(FMargin(8.0f, 3.0f))
+						.Padding(FMargin(6.0f, 1.5f))
 						[
 							SNew(STextBlock)
 							.Text(CostBadgeText)
-							.Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+							.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
 							.ColorAndOpacity(FLinearColor::White)
 						]
 					]
@@ -81,66 +102,60 @@ void SBattleSkillCardWidget::Construct(const FArguments& InArgs)
 					[
 						SNew(STextBlock)
 						.Text(InArgs._HotkeyText)
-						.Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
-						.ColorAndOpacity(FLinearColor(0.90f, 0.78f, 0.35f, 0.90f))
+						.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+						.ColorAndOpacity(BattleGlass::AccentGold)
 					]
 				]
 
-				// 卡牌标题
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 9.0f, 0.0f, 2.0f)
-				.HAlign(HAlign_Center)
-				[
-					SNew(STextBlock)
-					.Text(InArgs._Title)
-					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
-					.ColorAndOpacity(BattleGlass::TextPrimary)
-				]
-
-				// 技能类型 / 范围标签
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 0.0f, 0.0f, 7.0f)
-				.HAlign(HAlign_Center)
-				[
-					SNew(STextBlock)
-					.Text(InArgs._Category)
-					.Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
-					.ColorAndOpacity(AccentColor.CopyWithNewOpacity(0.95f))
-				]
-
-				// 卡牌效果描述 (多行自动折行)
+				// 图标区: 正方形镶嵌; 无图标 (移动卡) 则以标题字符为视觉主体
 				+ SVerticalBox::Slot()
 				.FillHeight(1.0f)
-				.Padding(2.0f, 4.0f)
-				[
-					SNew(STextBlock)
-					.Text(InArgs._Description)
-					.Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
-					.ColorAndOpacity(FLinearColor(0.80f, 0.85f, 0.90f, 0.80f))
-					.AutoWrapText(true)
-				]
-
-				// 底部状态提示
-				+ SVerticalBox::Slot()
-				.AutoHeight()
 				.HAlign(HAlign_Center)
+				.VAlign(VAlign_Center)
 				.Padding(0.0f, 3.0f)
 				[
-					SNew(STextBlock)
-					.Text_Lambda([this]() {
-						if (!bCanAfford) return FText::FromString(TEXT("! AP 不足"));
-						if (bIsSelected) return FText::FromString(TEXT(">> 瞄准中 <<"));
-						return FText::FromString(TEXT("点击使用"));
-					})
-					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
-					.ColorAndOpacity_Lambda([this]() {
-						if (!bCanAfford) return FSlateColor(FLinearColor(0.85f, 0.35f, 0.35f));
-						if (bIsSelected) return FSlateColor(FLinearColor(1.0f, 0.85f, 0.25f));
-						return FSlateColor(FLinearColor(0.55f, 0.68f, 0.82f, 0.65f));
-					})
+					SNew(SBox)
+					.WidthOverride(52.0f)
+					.HeightOverride(52.0f)
+					[
+						SNew(SOverlay)
+						+ SOverlay::Slot()
+						[
+							SNew(SImage)
+							.Image(IconBrush.Get())
+							.ColorAndOpacity_Lambda([this]() {
+								return bCanAfford ? FLinearColor::White : FLinearColor(1.0f, 1.0f, 1.0f, 0.35f);
+							})
+						]
+						+ SOverlay::Slot()
+						[
+							SNew(STextBlock)
+							.Visibility(IconBrush.IsValid() ? EVisibility::Collapsed : EVisibility::Visible)
+							.Text(InArgs._Title)
+							.Font(FCoreStyle::GetDefaultFontStyle("Bold", 20))
+							.Justification(ETextJustify::Center)
+							.ColorAndOpacity(DeepAccent)
+						]
+						// 冷却角标: 图标右下角深色小药丸
+						+ SOverlay::Slot()
+						.HAlign(HAlign_Right)
+						.VAlign(VAlign_Bottom)
+						.Padding(0.0f, 0.0f, -3.0f, -3.0f)
+						[
+							SNew(SBorder)
+							.Visibility(CooldownText.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
+							.BorderImage(&CooldownBrush)
+							.Padding(FMargin(5.0f, 1.0f))
+							[
+								SNew(STextBlock)
+								.Text(CooldownText)
+								.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+								.ColorAndOpacity(FLinearColor::White)
+							]
+						]
+					]
 				]
+
 			]
 		]
 	];
@@ -152,39 +167,44 @@ void SBattleSkillCardWidget::Tick(const FGeometry& AllottedGeometry, const doubl
 {
 	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
 
+	// 悬停标志以 Slate 权威命中为准, 防 Enter/Leave 不配对时卡死
+	// (Leave 丢失 -> bMouseOverUI 恒真 -> 战场点击全被吞)
+	bHovered = IsHovered();
+
 	// 平滑悬停上浮与缩放插值
-	const float TargetOffset = (bHovered || bIsSelected) ? -22.0f : 0.0f;
-	const float TargetScale = (bHovered || bIsSelected) ? 1.07f : 1.0f;
+	const float TargetOffset = (bHovered || bIsSelected) ? -14.0f : 0.0f;
+	const float TargetScale = (bHovered || bIsSelected) ? 1.06f : 1.0f;
 
 	HoverOffset = FMath::FInterpTo(HoverOffset, TargetOffset, InDeltaTime, 14.0f);
 	CurrentScale = FMath::FInterpTo(CurrentScale, TargetScale, InDeltaTime, 14.0f);
 
 	SetRenderTransform(FSlateRenderTransform(CurrentScale, FVector2D(0.0f, HoverOffset)));
 
-	// 玻璃描边随状态增强
+	// 玻璃描边随状态增强 (白底: 选中金边 / 悬停压深主题色 / 常态主题色)
+	const FLinearColor DeepAccent = BattleGlass::DeepenForWhite(AccentColor, 0.70f);
 	if (bIsSelected)
 	{
-		CardBgBrush.OutlineSettings.Color = FSlateColor(FLinearColor(1.0f, 0.85f, 0.25f, 1.0f));
+		CardBgBrush.OutlineSettings.Color = FSlateColor(BattleGlass::AccentGold);
 		CardBgBrush.OutlineSettings.Width = 2.6f;
-		CardBgBrush.TintColor = FSlateColor(FLinearColor(0.085f, 0.100f, 0.150f, 0.90f));
+		CardBgBrush.TintColor = FSlateColor(FLinearColor(1.0f, 1.0f, 1.0f, 0.88f));
 	}
 	else if (bHovered)
 	{
-		CardBgBrush.OutlineSettings.Color = FSlateColor(FLinearColor(1.0f, 0.82f, 0.35f, 0.90f));
+		CardBgBrush.OutlineSettings.Color = FSlateColor(BattleGlass::AccentGold.CopyWithNewOpacity(0.90f));
 		CardBgBrush.OutlineSettings.Width = 2.0f;
-		CardBgBrush.TintColor = FSlateColor(FLinearColor(0.075f, 0.105f, 0.160f, 0.87f));
+		CardBgBrush.TintColor = FSlateColor(FLinearColor(1.0f, 1.0f, 1.0f, 0.76f));
 	}
 	else if (!bCanAfford)
 	{
-		CardBgBrush.OutlineSettings.Color = FSlateColor(FLinearColor(0.35f, 0.38f, 0.44f, 0.45f));
+		CardBgBrush.OutlineSettings.Color = FSlateColor(FLinearColor(0.45f, 0.48f, 0.54f, 0.40f));
 		CardBgBrush.OutlineSettings.Width = 1.0f;
-		CardBgBrush.TintColor = FSlateColor(FLinearColor(0.05f, 0.06f, 0.08f, 0.72f));
+		CardBgBrush.TintColor = FSlateColor(FLinearColor(0.90f, 0.91f, 0.94f, 0.50f));
 	}
 	else
 	{
-		CardBgBrush.OutlineSettings.Color = FSlateColor(AccentColor.CopyWithNewOpacity(0.45f));
+		CardBgBrush.OutlineSettings.Color = FSlateColor(DeepAccent.CopyWithNewOpacity(0.65f));
 		CardBgBrush.OutlineSettings.Width = 1.2f;
-		CardBgBrush.TintColor = FSlateColor(FLinearColor(0.045f, 0.065f, 0.100f, 0.82f));
+		CardBgBrush.TintColor = FSlateColor(FLinearColor(0.97f, 0.98f, 1.00f, 0.62f));
 	}
 }
 
@@ -230,11 +250,11 @@ void SBattleMainOverlay::Construct(const FArguments& InArgs)
 
 	// 中等卡片: 先攻芯片
 	BattleGlass::ConfigureGlassBrush(CardBrush, BattleGlass::RadiusChip,
-		FLinearColor(0.055f, 0.110f, 0.205f, 0.78f), 1.2f, BattleGlass::Hairline);
+		FLinearColor(0.97f, 0.98f, 1.00f, 0.64f), 1.2f, BattleGlass::Hairline);
 
 	// 战报通知条
 	BattleGlass::ConfigureGlassBrush(NotificationBrush, BattleGlass::RadiusPill,
-		FLinearColor(0.05f, 0.07f, 0.11f, 0.84f), 1.1f, BattleGlass::AccentGold.CopyWithNewOpacity(0.35f));
+		FLinearColor(0.97f, 0.98f, 1.00f, 0.72f), 1.1f, BattleGlass::AccentGold.CopyWithNewOpacity(0.55f));
 
 	// 金色"结束回合"玻璃主按钮 (带呼吸光晕)
 	BattleGlass::ConfigureGlassBrush(EndTurnNormalBrush, BattleGlass::RadiusPill,
@@ -259,13 +279,13 @@ void SBattleMainOverlay::Construct(const FArguments& InArgs)
 	BattleGlass::ConfigureGlassBrush(HPFillBrush, 4.0f,
 		BattleGlass::HealthHigh, 0.0f, FLinearColor::Transparent);
 
-	// 作弊按钮: 暗红玻璃小胶囊, 刻意做得低调 (不抢战术 UI 的视觉重心)
+	// 作弊按钮: 淡红玻璃小胶囊, 刻意做得低调 (不抢战术 UI 的视觉重心)
 	BattleGlass::ConfigureGlassBrush(CheatNormalBrush, BattleGlass::RadiusPill,
-		FLinearColor(0.20f, 0.055f, 0.055f, 0.70f), 1.0f, FLinearColor(1.0f, 0.45f, 0.40f, 0.35f));
+		FLinearColor(0.98f, 0.90f, 0.88f, 0.62f), 1.0f, FLinearColor(0.78f, 0.30f, 0.24f, 0.45f));
 	BattleGlass::ConfigureGlassBrush(CheatHoverBrush, BattleGlass::RadiusPill,
-		FLinearColor(0.34f, 0.085f, 0.085f, 0.86f), 1.4f, FLinearColor(1.0f, 0.55f, 0.48f, 0.75f));
+		FLinearColor(1.00f, 0.87f, 0.84f, 0.80f), 1.4f, FLinearColor(0.82f, 0.28f, 0.22f, 0.75f));
 	BattleGlass::ConfigureGlassBrush(CheatPressedBrush, BattleGlass::RadiusPill,
-		FLinearColor(0.14f, 0.035f, 0.035f, 0.92f), 1.0f, FLinearColor(0.95f, 0.40f, 0.35f, 0.6f));
+		FLinearColor(0.94f, 0.78f, 0.74f, 0.90f), 1.0f, FLinearColor(0.80f, 0.32f, 0.26f, 0.60f));
 	CheatBtnStyle.SetNormal(CheatNormalBrush);
 	CheatBtnStyle.SetHovered(CheatHoverBrush);
 	CheatBtnStyle.SetPressed(CheatPressedBrush);
@@ -511,7 +531,7 @@ void SBattleMainOverlay::Construct(const FArguments& InArgs)
 					.Text(FText::FromString(TEXT("DEBUG · 秒杀敌人")))
 					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
 					.Justification(ETextJustify::Center)
-					.ColorAndOpacity(FLinearColor(1.0f, 0.78f, 0.72f, 0.92f))
+					.ColorAndOpacity(FLinearColor(0.72f, 0.20f, 0.15f, 0.92f))
 				]
 			]
 		]
@@ -565,50 +585,35 @@ void SBattleMainOverlay::Tick(const FGeometry& AllottedGeometry, const double In
 	const EBattleState CurrentState = Mgr->GetBattleState();
 	const EPlayerInteractionMode CurrentMode = PC ? PC->GetInteractionMode() : EPlayerInteractionMode::Idle;
 
-	// 1. 检查先攻队列是否有增减或单位阵亡, 触发重建
-	int32 QueueHash = 0;
-	const TArray<ABattleUnit*>& Queue = Mgr->GetInitiativeQueue();
-	for (int32 i = 0; i < Queue.Num(); ++i)
+	// 1. 先攻队列/单位存亡修订号比对 (修订号由管理器维护, 免每帧哈希+建数组)
+	const int32 QueueRev = Mgr->GetInitiativeRevision();
+	const int32 UnitsRev = Mgr->GetUnitsRevision();
+	int32 IntegritySum = 0;
+	for (ABattleUnit* U : Mgr->GetInitiativeQueue())
 	{
-		if (ABattleUnit* U = Queue[i])
-		{
-			QueueHash = HashCombine(QueueHash, GetTypeHash(U));
-			QueueHash = HashCombine(QueueHash, U->HP);
-		}
+		if (U) { IntegritySum += FMath::RoundToInt(U->Integrity); }
 	}
-	if (QueueHash != CachedQueueHash || CurrentActive != CachedActiveUnit)
+	if (QueueRev != CachedQueueRevision || UnitsRev != CachedUnitsRevision
+		|| IntegritySum != CachedIntegritySum || CurrentActive != CachedActiveUnit)
 	{
-		CachedQueueHash = QueueHash;
+		CachedQueueRevision = QueueRev;
+		CachedIntegritySum = IntegritySum;
 		RebuildInitiativeBar();
 	}
 
 	// 1b. 编队面板: 我方单位集合变化 (阵亡/增援) 时重建
 	{
-		TArray<TWeakObjectPtr<ABattleUnit>> PlayerUnitsNow;
-		for (ABattleUnit* U : Mgr->GetAllUnits())
+		if (UnitsRev != CachedUnitsRevision && RosterBox.IsValid())
 		{
-			if (U && U->Team == EBattleTeam::Player)
+			CachedUnitsRevision = UnitsRev;
+			CachedPlayerUnits.Reset();
+			for (ABattleUnit* U : Mgr->GetAllUnits())
 			{
-				PlayerUnitsNow.Add(U);
-			}
-		}
-
-		bool bRosterChanged = PlayerUnitsNow.Num() != CachedPlayerUnits.Num();
-		if (!bRosterChanged)
-		{
-			for (int32 i = 0; i < PlayerUnitsNow.Num(); ++i)
-			{
-				if (PlayerUnitsNow[i] != CachedPlayerUnits[i])
+				if (U && U->Team == EBattleTeam::Player)
 				{
-					bRosterChanged = true;
-					break;
+					CachedPlayerUnits.Add(U);
 				}
 			}
-		}
-
-		if (bRosterChanged && RosterBox.IsValid())
-		{
-			CachedPlayerUnits = PlayerUnitsNow;
 			RebuildRosterPanel();
 		}
 
@@ -628,7 +633,7 @@ void SBattleMainOverlay::Tick(const FGeometry& AllottedGeometry, const double In
 
 	// 2. 检查活跃单位数值变更或切换, 触发手牌与属性刷新
 	const float CurrAP = CurrentActive ? CurrentActive->AP : -1.0f;
-	const int32 CurrHP = CurrentActive ? CurrentActive->HP : -1;
+	const int32 CurrHP = CurrentActive ? FMath::RoundToInt(CurrentActive->Integrity) : -1;
 
 	if (CurrentActive != CachedActiveUnit || FMath::Abs(CurrAP - CachedAP) > 0.05f || CurrHP != CachedHP || CurrentMode != CachedMode)
 	{
@@ -677,7 +682,7 @@ void SBattleMainOverlay::Tick(const FGeometry& AllottedGeometry, const double In
 		if (AbsSize.X > 1.0f && AbsSize.Y > 1.0f)
 		{
 			bLoggedCheatGeometry = true;
-			UE_LOG(LogTemp, Log, TEXT("[BattleUI] 作弊按钮布局: 屏幕=(%.0f, %.0f) 尺寸=%.0fx%.0f"), AbsPos.X, AbsPos.Y, AbsSize.X, AbsSize.Y);
+			UE_LOG(LogERBattleUI, Log, TEXT("[BattleUI] 作弊按钮布局: 屏幕=(%.0f, %.0f) 尺寸=%.0fx%.0f"), AbsPos.X, AbsPos.Y, AbsSize.X, AbsSize.Y);
 		}
 	}
 	// 结算弹窗盖住整个屏幕时, 任何点击都不该穿透到场景
@@ -819,7 +824,7 @@ void SBattleMainOverlay::RebuildInitiativeBar()
 
 		TSharedPtr<FSlateBrush> ChipBrush = MakeShared<FSlateBrush>();
 		BattleGlass::ConfigureGlassBrush(*ChipBrush, BattleGlass::RadiusChip,
-			bIsAlive ? FLinearColor(0.055f, 0.105f, 0.195f, 0.78f) : FLinearColor(0.07f, 0.07f, 0.08f, 0.62f),
+			bIsAlive ? FLinearColor(0.97f, 0.98f, 1.00f, 0.62f) : FLinearColor(0.82f, 0.84f, 0.88f, 0.50f),
 			bIsActive ? 2.4f : 1.1f, FrameColor);
 		ChipBrushes.Add(ChipBrush);
 
@@ -894,24 +899,38 @@ void SBattleMainOverlay::UpdateHeroPlate(ABattleUnit* Unit)
 	{
 		if (Unit->Barrier > 0.0f)
 		{
-			ActiveHeroHPText->SetText(FText::FromString(FString::Printf(TEXT("完整度  %.0f / %.0f   +%.0f 护盾"), Unit->Integrity, Unit->Stats.MaxIntegrity, Unit->Barrier)));
+			const float MaxIntegrity = Unit->GetSkillComponent() ? Unit->GetSkillComponent()->GetEffectiveMaxIntegrity() : Unit->Stats.MaxIntegrity;
+			ActiveHeroHPText->SetText(FText::FromString(FString::Printf(TEXT("完整度  %.0f / %.0f   +%.0f 护盾"), Unit->Integrity, MaxIntegrity, Unit->Barrier)));
 		}
 		else
 		{
-			ActiveHeroHPText->SetText(FText::FromString(FString::Printf(TEXT("完整度  %.0f / %.0f"), Unit->Integrity, Unit->Stats.MaxIntegrity)));
+			const float MaxIntegrity = Unit->GetSkillComponent() ? Unit->GetSkillComponent()->GetEffectiveMaxIntegrity() : Unit->Stats.MaxIntegrity;
+			ActiveHeroHPText->SetText(FText::FromString(FString::Printf(TEXT("完整度  %.0f / %.0f"), Unit->Integrity, MaxIntegrity)));
 		}
 	}
 
 	if (ActiveHeroHPBar.IsValid())
 	{
-		const float Pct = (Unit->Stats.MaxIntegrity > 0.0f) ? (Unit->Integrity / Unit->Stats.MaxIntegrity) : 0.0f;
+		const float MaxIntegrity = Unit->GetSkillComponent() ? Unit->GetSkillComponent()->GetEffectiveMaxIntegrity() : Unit->Stats.MaxIntegrity;
+		const float Pct = (MaxIntegrity > 0.0f) ? (Unit->Integrity / MaxIntegrity) : 0.0f;
 		ActiveHeroHPBar->SetPercent(Pct);
 		HPFillBrush.TintColor = FSlateColor(BattleGlass::HealthColorFor(Pct));
 	}
 
 	if (ActiveHeroAPText.IsValid())
 	{
-		ActiveHeroAPText->SetText(FText::FromString(FString::Printf(TEXT("行动点  %d / %d   ·   1 AP = %.0f cm"), Unit->AP, Unit->Stats.MaxAP, Unit->GetCmPerAP())));
+		// 行动点 + 状态摘要 (燃烧/导电/酸蚀...)
+		const int32 MaxAP = Unit->GetSkillComponent() ? Unit->GetSkillComponent()->GetEffectiveMaxAP() : Unit->Stats.MaxAP;
+		FString APLine = FString::Printf(TEXT("行动点  %d / %d   ·   1 AP = %.0f cm"), Unit->AP, MaxAP, Unit->GetCmPerAP());
+		if (Unit->GetSkillComponent())
+		{
+			const FString StatusSummary = Unit->GetSkillComponent()->GetStatusSummary();
+			if (!StatusSummary.IsEmpty())
+			{
+				APLine += FString::Printf(TEXT("   ·   %s"), *StatusSummary);
+			}
+		}
+		ActiveHeroAPText->SetText(FText::FromString(APLine));
 	}
 }
 
@@ -925,7 +944,7 @@ void SBattleMainOverlay::RebuildHandCards(ABattleUnit* Unit)
 	HandCardsBox->ClearChildren();
 	CardWidgets.Reset();
 
-	if (!Unit || !Unit->IsAlive() || Unit->Team != EBattleTeam::Player)
+	if (!IsValid(Unit) || !Unit->IsAlive() || Unit->Team != EBattleTeam::Player)
 	{
 		return;
 	}
@@ -934,25 +953,72 @@ void SBattleMainOverlay::RebuildHandCards(ABattleUnit* Unit)
 	const EPlayerInteractionMode Mode = PC ? PC->GetInteractionMode() : EPlayerInteractionMode::Idle;
 	const int32 SelectedSkill = PC ? PC->GetSelectedSkillIndex() : -1;
 
-	const TArray<FBattleSkillDef>& Skills = Unit->GetSkills();
+	const TArray<FBattleSkillSpec>& Skills = Unit->GetSkillSpecs();
 
-	// 1. 生成技能手牌
+	// 1. 生成技能手牌 (技能系统 2.0: 统一技能实例, 冷却中置灰)
 	for (int32 i = 0; i < Skills.Num(); ++i)
 	{
-		const FBattleSkillDef& Skill = Skills[i];
-		const bool bCanAfford = (Unit->AP >= Skill.APCost);
+		const FBattleSkillSpec& Spec = Skills[i];
+		const UBattleSkillData* Skill = Spec.SkillData;
+		if (!IsValid(Skill))
+		{
+			continue;
+		}
+
+		const bool bOnCooldown = Spec.IsOnCooldown();
+		const bool bCanAfford = (Unit->AP >= Skill->APCost) && !bOnCooldown;
 		const bool bIsSelected = (Mode == EPlayerInteractionMode::TargetingSkill && SelectedSkill == i);
 		const FString Hotkey = FString::Printf(TEXT("[%d]"), i + 1);
 
+		// 悬停提示: 名称 + 描述 + 射程/伤害/费用/冷却一行
+		FString RangeStr;
+		if (Skill->TargetFilter == ESkillTargetFilter::SelfOnly && Skill->AoE.IsArea())
+		{
+			RangeStr = FString::Printf(TEXT("自身周围 %.0f cm"), Skill->AoE.Radius);
+		}
+		else if (Skill->TargetFilter == ESkillTargetFilter::SelfOnly)
+		{
+			RangeStr = TEXT("自身");
+		}
+		else if (Skill->AoE.IsArea())
+		{
+			RangeStr = FString::Printf(TEXT("射程 %.0f · 范围 %.0f"), Skill->Range, Skill->AoE.Radius);
+		}
+		else
+		{
+			RangeStr = FString::Printf(TEXT("射程 %.0f cm"), Skill->Range);
+		}
+		if (Skill->Chain.IsChain())
+		{
+			RangeStr += FString::Printf(TEXT(" · 连锁%d"), Skill->Chain.MaxJumps);
+		}
+
+		FString TipStr = FString::Printf(TEXT("%s\n%s\n%s  ·  %s %.0f  ·  %d AP"),
+			*Skill->DisplayName.ToString(), *Skill->Description.ToString(), *RangeStr,
+			GetDamageTypeName(Skill->Damage.DamageType), Skill->GetEstimatedTotalDamage(), Skill->APCost);
+		if (Skill->HitCount > 1)
+		{
+			TipStr += FString::Printf(TEXT(" (x%d)"), Skill->HitCount);
+		}
+		if (bOnCooldown)
+		{
+			TipStr += TEXT("  ·  ") + Spec.GetCooldownLabel();
+		}
+
+		const FText CooldownBadge = Spec.CooldownRemaining > 0 || Spec.bBlockedThisTurn
+			? FText::FromString(FString::Printf(TEXT("%d"), FMath::Max(1, Spec.CooldownRemaining)))
+			: FText::GetEmpty();
+
 		TSharedPtr<SBattleSkillCardWidget> CardWidget = SNew(SBattleSkillCardWidget)
 			.CardIndex(i)
-			.Title(FText::FromString(Skill.DisplayName))
-			.Category(FText::FromString(FString::Printf(TEXT("射程 %.0f cm   |   %s %d"), Skill.Range, GetDamageTypeName(Skill.DamageType), Skill.BaseDamage)))
-			.Description(FText::FromString(Skill.Description))
+			.Title(Skill->DisplayName)
+			.ToolTip(FText::FromString(TipStr))
+			.CooldownBadge(CooldownBadge)
 			.HotkeyText(FText::FromString(Hotkey))
-			.APCost((float)Skill.APCost)
+			.APCost((float)Skill->APCost)
 			.bIsMoveCard(false)
-			.AccentColor(Skill.Color)
+			.AccentColor(Skill->ThemeColor)
+			.IconTexture(Skill->Icon)
 			.OnClicked(this, &SBattleMainOverlay::HandleCardClicked, i, false);
 
 		CardWidget->SetAffordable(bCanAfford);
@@ -961,7 +1027,7 @@ void SBattleMainOverlay::RebuildHandCards(ABattleUnit* Unit)
 
 		HandCardsBox->AddSlot()
 		.AutoWidth()
-		.Padding(FMargin(8.0f, 0.0f))
+		.Padding(FMargin(4.0f, 0.0f))
 		[
 			CardWidget.ToSharedRef()
 		];
@@ -974,9 +1040,8 @@ void SBattleMainOverlay::RebuildHandCards(ABattleUnit* Unit)
 
 		TSharedPtr<SBattleSkillCardWidget> MoveCardWidget = SNew(SBattleSkillCardWidget)
 			.CardIndex(-1)
-			.Title(FText::FromString(TEXT("战术机动")))
-			.Category(FText::FromString(TEXT("自由位移   ·   1 AP = 200 cm")))
-			.Description(FText::FromString(TEXT("消耗 AP 沿地面寻路奔跑。\n点击地面可直接位移。")))
+			.Title(FText::FromString(TEXT("移")))
+			.ToolTip(FText::FromString(TEXT("战术机动\n消耗 AP 沿地面寻路奔跑，点击地面位移。\n1 AP = 200 cm")))
 			.HotkeyText(FText::FromString(TEXT("[M]")))
 			.APCost(0.0f)
 			.bIsMoveCard(true)
@@ -1123,7 +1188,7 @@ void SBattleMainOverlay::UpdateResultPanel(EBattleState State)
 		bPlayerWon ? FText::FromString(TEXT("战 斗 胜 利")) : FText::FromString(TEXT("战 斗 失 败")),
 		Subtitle, Rows, ButtonText);
 
-	UE_LOG(LogTemp, Log, TEXT("[BattleUI] 结算面板弹出: %s | %s | 返回按钮=%s | 回合=%d 存活=%d/%d 完整度=%.0f/%.0f"),
+	UE_LOG(LogERBattleUI, Log, TEXT("[BattleUI] 结算面板弹出: %s | %s | 返回按钮=%s | 回合=%d 存活=%d/%d 完整度=%.0f/%.0f"),
 		bPlayerWon ? TEXT("胜利") : TEXT("失败"), *Subtitle.ToString(), *ButtonText.ToString(),
 		Mgr ? Mgr->GetRoundIndex() : 0, AlivePlayers, TotalPlayers, CurrentIntegrity, MaxIntegrity);
 }
@@ -1151,7 +1216,7 @@ FReply SBattleMainOverlay::HandleCheatKillClicked()
 {
 	if (ABattleGameMode* GM = GetBattleGameMode())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Battle] DEBUG 按钮: 秒杀全部敌人"));
+		UE_LOG(LogERBattleUI, Log, TEXT("[Battle] DEBUG 按钮: 秒杀全部敌人"));
 		GM->DebugKillAllEnemies();
 	}
 	return FReply::Handled();
@@ -1173,7 +1238,7 @@ void SBattleMainOverlay::HandleResultPrimaryClicked()
 	}
 	if (World)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Battle] 结算返回 (兜底路径) -> Lvl_Hall"));
+		UE_LOG(LogERBattleUI, Log, TEXT("[Battle] 结算返回 (兜底路径) -> Lvl_Hall"));
 		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")), true,
 			TEXT("game=/Script/EbbingRainbow.HallGameMode"));
 	}
@@ -1191,6 +1256,7 @@ FReply SBattleMainOverlay::HandleEndTurnClicked()
 
 FReply SBattleMainOverlay::HandleCardClicked(int32 Index, bool bIsMove)
 {
+	UE_LOG(LogERBattleUI, Log, TEXT("[BattleInput] 卡牌点击: Index=%d bIsMove=%d PC有效=%d"), Index, bIsMove, PlayerController.IsValid());
 	if (ABattlePlayerController* PC = PlayerController.Get())
 	{
 		if (bIsMove)

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Run/UI/SRouteMapOverlay.h"
+#include "Core/ERLog.h"
 
 #include "Battle/UI/SBattleGlassKit.h"
 #include "Run/RunSubsystem.h"
@@ -256,7 +257,7 @@ void SRouteMapOverlay::RebuildNodes()
 		NodeWidgets[Node.Id] = Widget;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[RouteMap] 生成节点控件 %d 个，画布 %.0fx%.0f，边层=%s"),
+	UE_LOG(LogERRun, Log, TEXT("[RouteMap] 生成节点控件 %d 个，画布 %.0fx%.0f，边层=%s"),
 		NodeWidgets.Num(), MapWidth, MapHeight, EdgeLayer.IsValid() ? TEXT("ok") : TEXT("missing"));
 }
 

@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "Battle/Core/BattleTypes.h"
-#include "WFCGenerationTypes.h"
+#include "WFC/WFCGenerationTypes.h"
 #include "BattleGameMode.generated.h"
 
 class ABattleArena;

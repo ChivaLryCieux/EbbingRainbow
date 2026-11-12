@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Run/RouteGameMode.h"
+#include "Core/ERDebug.h"
+#include "Core/ERLog.h"
 
 #include "Kismet/GameplayStatics.h"
 #include "Misc/CommandLine.h"
@@ -28,7 +30,7 @@ void ARouteGameMode::InitGame(const FString& MapName, const FString& Options, FS
 	URunSubsystem* Run = GameInstance ? GameInstance->GetSubsystem<URunSubsystem>() : nullptr;
 	if (!Run)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Route] 找不到 URunSubsystem。"));
+		UE_LOG(LogERRun, Error, TEXT("[Route] 找不到 URunSubsystem。"));
 		return;
 	}
 
@@ -36,7 +38,7 @@ void ARouteGameMode::InitGame(const FString& MapName, const FString& Options, FS
 	{
 		// 从战斗返回：CompleteBattle 已消费待定节点；若是中途退出战斗则清掉残留。
 		Run->ClearPendingNode();
-		UE_LOG(LogTemp, Log, TEXT("[Route] 继续本局 seed=%d 当前节点=%d"), Run->GetRunSeed(), Run->GetCurrentNodeId());
+		UE_LOG(LogERRun, Log, TEXT("[Route] 继续本局 seed=%d 当前节点=%d"), Run->GetRunSeed(), Run->GetCurrentNodeId());
 		return;
 	}
 
@@ -53,7 +55,7 @@ void ARouteGameMode::InitGame(const FString& MapName, const FString& Options, FS
 
 	if (!Run->StartNewRun(Seed))
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Route] 新局生成失败 seed=%d"), Seed);
+		UE_LOG(LogERRun, Error, TEXT("[Route] 新局生成失败 seed=%d"), Seed);
 	}
 }
 
@@ -65,7 +67,7 @@ void ARouteGameMode::StartPlay()
 	URunSubsystem* Run = GameInstance ? GameInstance->GetSubsystem<URunSubsystem>() : nullptr;
 	if (Run && Run->HasActiveRun())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Route] %s"), *FRouteGraphGenerator::MakeReport(Run->GetGraph()));
+		UE_LOG(LogERRun, Log, TEXT("[Route] %s"), *FRouteGraphGenerator::MakeReport(Run->GetGraph()));
 	}
 
 	// 3D 航线场景: Slate 叠加层继续负责交互, 本层出视觉
@@ -82,13 +84,13 @@ void ARouteGameMode::StartPlay()
 	}
 
 	// -RouteShot: 场景搭好后延迟截图 (离线检查航线图构图)
-	if (FParse::Param(FCommandLine::Get(), TEXT("RouteShot")))
+	if (ER::Debug::IsRouteShot())
 	{
 		FTimerHandle ShotTimer;
 		GetWorldTimerManager().SetTimer(ShotTimer, FTimerDelegate::CreateWeakLambda(this, []()
 		{
 			FScreenshotRequest::RequestScreenshot(true);
-			UE_LOG(LogTemp, Log, TEXT("[Route3D] RouteShot requested"));
+			UE_LOG(LogERRun, Log, TEXT("[Route3D] RouteShot requested"));
 		}), 2.5f, false);
 	}
 }

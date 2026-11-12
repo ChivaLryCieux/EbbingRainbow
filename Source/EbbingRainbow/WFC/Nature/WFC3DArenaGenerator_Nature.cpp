@@ -1,6 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Nature/WFC3DArenaGenerator_Nature.h"
+#include "WFC/Nature/WFC3DArenaGenerator_Nature.h"
+#include "WFC/Shared/ERArenaAtmosphere.h"
+#include "Core/ERDebug.h"
+#include "Core/ERLog.h"
+#include "Core/ERCollisionChannels.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 
@@ -19,10 +23,14 @@
 #include "Materials/MaterialInterface.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
+#include "HAL/PlatformFileManager.h"
 #include "NavigationSystem.h"
 
 TArray<uint16> AWFC3DArenaGenerator_Nature::CachedHeight;
-bool AWFC3DArenaGenerator_Nature::bHeightLoadAttempted = false;
+int32 AWFC3DArenaGenerator_Nature::CachedWin = 0;
+int32 AWFC3DArenaGenerator_Nature::CachedOx = 0;
+int32 AWFC3DArenaGenerator_Nature::CachedOy = 0;
+bool AWFC3DArenaGenerator_Nature::bHeightFileMissing = false;
 
 namespace
 {
@@ -54,24 +62,46 @@ AWFC3DArenaGenerator_Nature::AWFC3DArenaGenerator_Nature()
 	Terrain->SetCanEverAffectNavigation(true);
 }
 
-bool AWFC3DArenaGenerator_Nature::LoadHeightmap()
+bool AWFC3DArenaGenerator_Nature::LoadHeightmap(int32 Ox, int32 Oy, int32 Win)
 {
-	if (bHeightLoadAttempted)
+	// 同窗口直接命中缓存 (同 seed 重进同窗口)
+	if (HasHeight() && CachedWin == Win && CachedOx == Ox && CachedOy == Oy)
 	{
-		return HasHeight();
+		return true;
 	}
-	bHeightLoadAttempted = true;
-
-	const FString Path = FPaths::ProjectContentDir() / TEXT("Nature/E-R-Terrain.u16");
-	TArray<uint8> Raw;
-	if (!FFileHelper::LoadFileToArray(Raw, *Path) || Raw.Num() < 4033 * 4033 * 2)
+	if (bHeightFileMissing)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Nature] heightmap missing/short: %s -> pure Perlin fallback"), *Path);
 		return false;
 	}
-	CachedHeight.SetNumUninitialized(4033 * 4033);
-	FMemory::Memcpy(CachedHeight.GetData(), Raw.GetData(), 4033 * 4033 * 2);
-	UE_LOG(LogTemp, Log, TEXT("[Nature] heightmap loaded: %d samples"), CachedHeight.Num());
+
+	const FString Path = FPaths::ProjectContentDir() / TEXT("Nature/E-R-Terrain.u16");
+	TUniquePtr<IFileHandle> FH(FPlatformFileManager::Get().GetPlatformFile().OpenRead(*Path));
+	if (!FH || FH->Size() < (int64)4033 * 4033 * 2)
+	{
+		UE_LOG(LogERWFC, Warning, TEXT("[Nature] heightmap missing/short: %s -> pure Perlin fallback"), *Path);
+		bHeightFileMissing = true;
+		return false;
+	}
+
+	// 只读需要的 Win*Win 窗口: 逐行 Seek, 不再整图 32.5MB 常驻
+	// (原实现 LoadFileToArray 全量读 + memcpy, 峰值 ~65MB 且 static 终身常驻)
+	CachedHeight.SetNumUninitialized(Win * Win);
+	uint8* Dst = reinterpret_cast<uint8*>(CachedHeight.GetData());
+	for (int32 R = 0; R < Win; ++R)
+	{
+		FH->Seek((int64)(Oy + R) * 4033 * 2 + (int64)Ox * 2);
+		if (!FH->Read(Dst + (int64)R * Win * 2, Win * 2))
+		{
+			UE_LOG(LogERWFC, Warning, TEXT("[Nature] heightmap read row %d failed -> Perlin fallback"), R);
+			CachedHeight.Reset();
+			return false;
+		}
+	}
+	CachedWin = Win;
+	CachedOx = Ox;
+	CachedOy = Oy;
+	UE_LOG(LogERWFC, Log, TEXT("[Nature] heightmap window %d@%d,%d loaded (%d samples)"),
+		Win, Ox, Oy, CachedHeight.Num());
 	return true;
 }
 
@@ -90,7 +120,7 @@ float AWFC3DArenaGenerator_Nature::OutlineRadius(float AngleRad, float Phase) co
 void AWFC3DArenaGenerator_Nature::BuildField(int32 Seed, FNatField& F) const
 {
 	const int32 N = GridN;
-	const bool bForceFlat = FParse::Param(FCommandLine::Get(), TEXT("NatureFlat"));
+	const bool bForceFlat = ER::Debug::IsNatureFlat();
 	F.H.SetNumUninitialized(N * N);
 	F.Valid.SetNumUninitialized(N * N);
 	F.PlateauH = 0.0f;
@@ -101,13 +131,13 @@ void AWFC3DArenaGenerator_Nature::BuildField(int32 Seed, FNatField& F) const
 	// ---- 1. Gaea 截取窗口 + 旋转/镜像 -> 细节源 ----
 	const int32 Pad = 20;                        // 模糊半径 + 边界余量
 	const int32 Win = N + Pad * 2;               // 截取窗口 (px)
-	const bool bHM = LoadHeightmap();
 	const int32 MaxOff = 4033 - Win;
 	const int32 Ox = Rng.RandRange(0, MaxOff);
 	const int32 Oy = Rng.RandRange(0, MaxOff);
+	const bool bHM = LoadHeightmap(Ox, Oy, Win);
 	const int32 Rot = Rng.RandRange(0, 3);
 	const bool bMirror = Rng.RandRange(0, 1) == 1;
-	UE_LOG(LogTemp, Log, TEXT("[Nature] crop %d,%d rot=%d mirror=%d"), Ox, Oy, Rot, bMirror);
+	UE_LOG(LogERWFC, Log, TEXT("[Nature] crop %d,%d rot=%d mirror=%d"), Ox, Oy, Rot, bMirror);
 
 	// field 顶点 (i,j) -> crop 像素 (px,py) 映射 (旋转/镜像作用于 N 网格内部,
 	// 像素偏移 Pad 留给模糊边界)
@@ -139,7 +169,7 @@ void AWFC3DArenaGenerator_Nature::BuildField(int32 Seed, FNatField& F) const
 		{
 			PX = FMath::Clamp(PX, 0, Win - 1);
 			PY = FMath::Clamp(PY, 0, Win - 1);
-			return (float)HM[(Oy + PY) * 4033 + (Ox + PX)];
+			return (float)HM[PY * Win + PX];   // 窗口局部坐标 (stride=Win)
 		};
 		// 先算每行水平模糊存入临时, 再垂直模糊
 		TArray<float> HB;
@@ -182,6 +212,42 @@ void AWFC3DArenaGenerator_Nature::BuildField(int32 Seed, FNatField& F) const
 		}
 	}
 
+	// 细节预模糊: 高通细节里 <4m 的高频是坡度杀手 (±260cm/2m ≈ 百cm 级梯度),
+	// 会把 nav 板层拆碎; 模糊到只留 ~10m+ 中观波, 再归一化放大回来
+	{
+		const int32 DR = 8;
+		TArray<float> Tmp;
+		Tmp.SetNumUninitialized(N * N);
+		for (int32 J = 0; J < N; ++J)
+		{
+			for (int32 I = 0; I < N; ++I)
+			{
+				float Acc = 0.0f;
+				int32 Cnt = 0;
+				for (int32 K = -DR; K <= DR; ++K)
+				{
+					Acc += Detail[J * N + FMath::Clamp(I + K, 0, N - 1)];
+					++Cnt;
+				}
+				Tmp[J * N + I] = Acc / (float)Cnt;
+			}
+		}
+		for (int32 J = 0; J < N; ++J)
+		{
+			for (int32 I = 0; I < N; ++I)
+			{
+				float Acc = 0.0f;
+				int32 Cnt = 0;
+				for (int32 K = -DR; K <= DR; ++K)
+				{
+					Acc += Tmp[FMath::Clamp(J + K, 0, N - 1) * N + I];
+					++Cnt;
+				}
+				Detail[J * N + I] = Acc / (float)Cnt;
+			}
+		}
+	}
+
 	// 归一化细节 -> 目标 RMS ≈ 260cm, 并做边缘增幅 (崖带更破碎)
 	double Rms = 0.0;
 	for (float D : Detail) { Rms += (double)D * D; }
@@ -191,6 +257,16 @@ void AWFC3DArenaGenerator_Nature::BuildField(int32 Seed, FNatField& F) const
 	// ---- 3. 岛形 + 高度合成 ----
 	const float Phase = Rng.FRand() * 37.0f;
 	const float P0 = 420.0f + Rng.FRand() * 320.0f;   // 平台基准微扰相位
+
+	// 可玩区骨架相位 (在既有随机抽取之后追加, 不前移 crop/轮廓的随机序列):
+	// 主坡方向 + 反侧洼地 -> 每张图有明确的地形焦点, 而不是均匀噪声
+	const float TiltAng = Rng.FRand() * 2.0f * PI;
+	const float TiltX = FMath::Cos(TiltAng), TiltY = FMath::Sin(TiltAng);
+	const float HollowAng = TiltAng + PI + (Rng.FRand() - 0.5f) * 1.4f;
+	const float HollowDist = PlateauR * (0.35f + Rng.FRand() * 0.30f);
+	const float HollowX = FMath::Cos(HollowAng) * HollowDist;
+	const float HollowY = FMath::Sin(HollowAng) * HollowDist;
+	const float HollowR = 2200.0f + Rng.FRand() * 800.0f;
 	const float CX = N * 0.5f, CY = N * 0.5f;
 
 	for (int32 J = 0; J < N; ++J)
@@ -213,9 +289,37 @@ void AWFC3DArenaGenerator_Nature::BuildField(int32 Seed, FNatField& F) const
 			}
 			F.Valid[Idx] = 1;
 
-			// 平台近纯平: 只有 ±8cm 微观 + 极淡细节 (nav/站位完全可靠)
-			float H = 8.0f * P2(P0 * 0.31f + X / 160.0f, P0 * 0.37f + Y / 160.0f)
-				+ Detail[Idx] * DetailScale * 0.06f;
+			// ---- 可玩区地形: 宏观骨架 + 梯田 + 中观细节 ----
+			// 骨架: 低频丘陵 (波长 ~30m) + 定向主坡 + 反侧洼地 + 中频起伏
+			const float LowF = P2(P0 * 0.11f + X / 4000.0f, P0 * 0.13f + Y / 4000.0f);
+			const float MidF = P2(P0 * 0.19f + X / 1800.0f, P0 * 0.23f + Y / 1800.0f);
+			const float Hdx = X - HollowX, Hdy = Y - HollowY;
+			const float HDist = FMath::Sqrt(Hdx * Hdx + Hdy * Hdy);
+			float Macro = ReliefHillAmp * LowF
+				+ ReliefTiltAmp * ((X * TiltX + Y * TiltY) / PlateauR)
+				+ ReliefHollowAmp * (1.0f - NatSmooth(0.0f, HollowR, HDist))
+				+ ReliefMidAmp * MidF;
+
+			// 梯田: 骨架高度量化到 TierH 级高, 平顶 + 坡道。坡道的水平宽度
+			// 由骨架梯度决定, 过陡处由下面的坡度松弛放宽到 <=26cm/步,
+			// 150cm 级高恰好跨过技能高差规则 (>150cm ±10%) 的门槛
+			{
+				const float Q = Macro / ReliefTierH;
+				const float Qf = FMath::FloorToFloat(Q);
+				float Frac = Q - Qf;                                  // 0..1
+				const float Flat = 1.0f - ReliefTierRamp;
+				Frac = (Frac <= Flat) ? 0.0f
+					: FMath::SmoothStep(0.0f, 1.0f, (Frac - Flat) / ReliefTierRamp);
+				Macro = (Qf + Frac) * ReliefTierH;
+			}
+
+			// 梯田权重: 可玩区内全额, 平台缘渐隐与缓坡带衔接
+			const float TW = 1.0f - NatSmooth(PlateauR * 0.92f, PlateauR + 900.0f, R);
+
+			// ±6cm 微观颗粒 + Gaea 细节 (RMS ±52cm) 叠在台地上, 打碎人工感
+			float H = 6.0f * P2(P0 * 0.31f + X / 200.0f, P0 * 0.37f + Y / 200.0f)
+				+ Detail[Idx] * DetailScale * ReliefDetailAmp
+				+ Macro * TW;
 
 			// [诊断] -NatureFlat: 平台绝对归零, 隔离高度场因素
 			if (bForceFlat && R < PlateauR) { H = 0.0f; }
@@ -234,41 +338,96 @@ void AWFC3DArenaGenerator_Nature::BuildField(int32 Seed, FNatField& F) const
 		}
 	}
 
-	// ---- 4. 坡度松弛: 平台+缓冲带 <=26cm (nav 步高 35 留余量),
-	//    缓坡带 <=40cm (≈39°, nav 上限 44°); 24 轮保证收敛 ----
-	for (int32 It = 0; It < 24; ++It)
+	// ---- 4. 坡度松弛 (两个独立域, 不跨区钳制: 缓坡带 -1400cm 沉降的
+	//    质量扩散不能把可玩区拽斜) ----
+	auto RelaxZone = [&](float MaxD, int32 MaxIters, int32 Zone)
 	{
-		bool bChanged = false;
-		for (int32 J = 0; J < N - 1; ++J)
+		for (int32 It = 0; It < MaxIters; ++It)
 		{
-			for (int32 I = 0; I < N - 1; ++I)
+			bool bChanged = false;
+			for (int32 J = 0; J < N - 1; ++J)
 			{
-				const float X = (I - CX) * Step;
-				const float Y = (J - CY) * Step;
-				const float R = FMath::Sqrt(X * X + Y * Y);
-				const float Ang = FMath::Atan2(Y, X);
-				const float Rout = OutlineRadius(Ang, Phase);
-				float MaxD;
-				if (R <= PlateauR + 800.0f) { MaxD = 26.0f; }
-				else if (R <= Rout * 0.95f)  { MaxD = 40.0f; }
-				else { continue; }
-				const int32 A = J * N + I, B = J * N + I + 1, C = (J + 1) * N + I;
-				auto ClampPair = [&](int32 P, int32 Q, float MD)
+				for (int32 I = 0; I < N - 1; ++I)
 				{
-					const float D = F.H[Q] - F.H[P];
-					if (FMath::Abs(D) > MD)
+					const float X = (I - CX) * Step;
+					const float Y = (J - CY) * Step;
+					const float R = FMath::Sqrt(X * X + Y * Y);
+					const float Ang = FMath::Atan2(Y, X);
+					const float Rout = OutlineRadius(Ang, Phase);
+					const float RB = FMath::Sqrt((X + Step) * (X + Step) + Y * Y);
+					const float RC = FMath::Sqrt(X * X + (Y + Step) * (Y + Step));
+					auto InZone = [&](float RR) -> bool
 					{
-						const float Mid = (F.H[P] + F.H[Q]) * 0.5f;
-						F.H[P] = Mid - FMath::Sign(D) * MD * 0.5f;
-						F.H[Q] = Mid + FMath::Sign(D) * MD * 0.5f;
-						bChanged = true;
-					}
-				};
-				ClampPair(A, B, MaxD);
-				ClampPair(A, C, MaxD);
+						return (Zone == 0) ? (RR <= PlateauR + 100.0f)
+							: (RR > PlateauR + 100.0f && RR <= Rout * 0.95f);
+					};
+					if (!InZone(R) || !InZone(RB) || !InZone(RC)) { continue; }
+					const int32 A = J * N + I, B = J * N + I + 1, C = (J + 1) * N + I;
+					auto ClampPair = [&](int32 P, int32 Q)
+					{
+						const float D = F.H[Q] - F.H[P];
+						if (FMath::Abs(D) > MaxD)
+						{
+							const float Mid = (F.H[P] + F.H[Q]) * 0.5f;
+							F.H[P] = Mid - FMath::Sign(D) * MaxD * 0.5f;
+							F.H[Q] = Mid + FMath::Sign(D) * MaxD * 0.5f;
+							bChanged = true;
+						}
+					};
+					ClampPair(A, B);
+					ClampPair(A, C);
+				}
+			}
+			if (!bChanged) { break; }
+		}
+	};
+	// 可玩区: <=10cm/步 收敛为止 —— 行走层是 100cm 间距的 HISM 板,
+	// 板高差 <=20cm (远低于 Recast 步高 35) 保证 nav 连通且板贴地;
+	// 梯田 150cm 级高 -> 坡道 >=7.5m 宽 (≈11°), 过陡处自动放宽成宽坡。
+	// 收敛只作用于可玩区 (无沉降项), 不存在质量扩散灾难
+	RelaxZone(10.0f, 400, 0);
+	// 缓坡带: <=40cm (≈39°, nav 上限 44°); 24 轮 = 旧版行为, 沉降带形态不变
+	RelaxZone(40.0f, 24, 1);
+
+	// ---- 5. 高度统计: 可玩区高差的量化验收 (改振幅后看这行日志) ----
+	{
+		double Sum = 0.0, Sum2 = 0.0;
+		float MinH = 1e9f, MaxH = -1e9f;
+		float MaxStep = 0.0f;
+		int32 Cnt = 0;
+		for (int32 J = 0; J < N; ++J)
+		{
+			for (int32 I = 0; I < N; ++I)
+			{
+				const int32 Idx = J * N + I;
+				if (!F.Valid[Idx]) { continue; }
+				const float X = (I - CX) * Step, Y = (J - CY) * Step;
+				if (X * X + Y * Y > PlateauR * PlateauR) { continue; }
+				const float H = F.H[Idx];
+				MinH = FMath::Min(MinH, H);
+				MaxH = FMath::Max(MaxH, H);
+				Sum += H;
+				Sum2 += (double)H * H;
+				++Cnt;
+				// nav 约束实测: 可玩区内最大步进高差 (板距 100cm -> 板高差 x2,
+				// 必须远低于 Recast 步高 35)
+				if (I + 1 < N && F.Valid[Idx + 1])
+				{
+					MaxStep = FMath::Max(MaxStep, FMath::Abs(F.H[Idx + 1] - H));
+				}
+				if (J + 1 < N && F.Valid[Idx + N])
+				{
+					MaxStep = FMath::Max(MaxStep, FMath::Abs(F.H[Idx + N] - H));
+				}
 			}
 		}
-		if (!bChanged) { break; }
+		if (Cnt > 0)
+		{
+			const double Mean = Sum / Cnt;
+			const double Sigma = FMath::Sqrt(FMath::Max(Sum2 / Cnt - Mean * Mean, 0.0));
+			UE_LOG(LogERWFC, Log, TEXT("[Nature] relief: play H [%.0f..%.0f] span=%.0f sigma=%.0f maxStep=%.1f (n=%d)"),
+				MinH, MaxH, MaxH - MinH, (float)Sigma, MaxStep, Cnt);
+		}
 	}
 }
 
@@ -349,7 +508,7 @@ void AWFC3DArenaGenerator_Nature::BuildTerrainMesh(const FNatField& F)
 	{
 		Terrain->SetMaterial(0, MatGround);
 	}
-	UE_LOG(LogTemp, Log, TEXT("[Nature] terrain mesh: %d verts %d tris"),
+	UE_LOG(LogERWFC, Log, TEXT("[Nature] terrain mesh: %d verts %d tris"),
 		Verts.Num(), Tris.Num() / 3);
 }
 
@@ -410,9 +569,12 @@ void AWFC3DArenaGenerator_Nature::BuildNavProxy(const FNatField& F)
 	UStaticMesh* Cube = LoadMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (!Cube) { return; }
 	// 独立组件: 不能走 GetOrCreateComp (它会复用同 mesh 的方碑组件,
-	// 隐藏它会把可见方碑也藏起来)
+	// 隐藏它会把可见方碑也藏起来)。唯一名: 重试生成时旧组件若还在清理,
+	// 固定名 NewObject 会覆盖它 (HISM 建树断言崩溃的根源)
 	UHierarchicalInstancedStaticMeshComponent* Proxy =
-		NewObject<UHierarchicalInstancedStaticMeshComponent>(this, TEXT("NavProxy"));
+		NewObject<UHierarchicalInstancedStaticMeshComponent>(this,
+			MakeUniqueObjectName(this, UHierarchicalInstancedStaticMeshComponent::StaticClass(),
+				TEXT("NavProxy")));
 	Proxy->SetupAttachment(GetRootComponent());
 	Proxy->RegisterComponent();
 	Proxy->SetStaticMesh(Cube);
@@ -423,9 +585,14 @@ void AWFC3DArenaGenerator_Nature::BuildNavProxy(const FNatField& F)
 	Proxy->SetVisibility(false);
 	Proxy->SetHiddenInGame(true);
 	Proxy->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+	// 隐藏 nav 代理不应挡视线 (否则坡面上胸到胸的射线会被贴地板截胡)
+	Proxy->SetCollisionResponseToChannel(ER_TRACE_BATTLELOS, ECR_Ignore);
 	Proxy->SetCanEverAffectNavigation(true);
 
-	const float T = 200.0f;                    // 板间距
+	// 板间距 100cm: 配合可玩区坡度松弛 <=10cm/步, 相邻板高差 <=20cm,
+	// 远低于 Recast 步高 35 -> 整片 nav 连通且板贴地 (200cm 板距会把
+	// 梯田坡道拆成断板, 制造孤立口袋)
+	const float T = 100.0f;
 	const float Half = PlateauR + 800.0f;      // 覆盖平台+边缘缓冲
 	const int32 N = FMath::CeilToInt(Half * 2.0f / T);
 	const float O0 = -Half + T * 0.5f;
@@ -479,7 +646,9 @@ void AWFC3DArenaGenerator_Nature::BuildNavProxy(const FNatField& F)
 		if (!bChanged) { break; }
 	}
 
-	int32 Placed = 0;
+	// 批量加实例: 逐个 AddInstance 会在建树期间反复失效实例状态
+	TArray<FTransform> PlacedT;
+	PlacedT.Reserve(N * N);
 	for (int32 J = 0; J < N; ++J)
 	{
 		for (int32 I = 0; I < N; ++I)
@@ -487,12 +656,12 @@ void AWFC3DArenaGenerator_Nature::BuildNavProxy(const FNatField& F)
 			const int32 Idx = J * N + I;
 			if (!Ok[Idx] || FMath::Abs(Top[Idx] - Orig[Idx]) > 80.0f) { continue; }
 			const float X = O0 + I * T + CenterX, Y = O0 + J * T + CenterY;
-			Proxy->AddInstance(FTransform(FRotator::ZeroRotator,
-				FVector(X, Y, Top[Idx] - 30.0f), FVector(2.0f, 2.0f, 0.6f)));
-			++Placed;
+			PlacedT.Add(FTransform(FRotator::ZeroRotator,
+				FVector(X, Y, Top[Idx] - 30.0f), FVector(1.05f, 1.05f, 0.6f)));
 		}
 	}
-	UE_LOG(LogTemp, Log, TEXT("[Nature] nav proxy: %d/%d tiles"), Placed, N * N);
+	Proxy->AddInstances(PlacedT, false);
+	UE_LOG(LogERWFC, Log, TEXT("[Nature] nav proxy: %d/%d tiles"), PlacedT.Num(), N * N);
 }
 
 void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomStream& Rng)
@@ -507,7 +676,7 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 	TArray<UInstancedStaticMeshComponent*> Grass;
 	for (const TCHAR* P : GrassPaths) { Grass.Add(GetOrCreateComp(LoadMesh(P), false)); }
 
-	const int32 GrassTries = 16000;
+	const int32 GrassTries = 26000;
 	for (int32 K = 0; K < GrassTries; ++K)
 	{
 		const float X = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
@@ -536,10 +705,9 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 		TEXT("/Game/Foliage/Foliage/Flower/SM_Flower_02.SM_Flower_02"),
 		TEXT("/Game/Foliage/Foliage/Flower/SM_Flower_03.SM_Flower_03"),
 	};
-	TArray<UInstancedStaticMeshComponent*> Deco;
-	for (const TCHAR* P : BushPaths)   { Deco.Add(GetOrCreateComp(LoadMesh(P), false)); }
-	for (const TCHAR* P : FlowerPaths) { Deco.Add(GetOrCreateComp(LoadMesh(P), false)); }
-	for (int32 K = 0; K < 700; ++K)
+	TArray<UInstancedStaticMeshComponent*> Bushes;
+	for (const TCHAR* P : BushPaths) { Bushes.Add(GetOrCreateComp(LoadMesh(P), false)); }
+	for (int32 K = 0; K < 550; ++K)
 	{
 		const float X = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
 		const float Y = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
@@ -547,9 +715,27 @@ void AWFC3DArenaGenerator_Nature::ScatterVegetation(const FNatField& F, FRandomS
 		if (!SampleHeight(F, X, Y, H, S) || S > 32.0f) { continue; }
 		const float R = FMath::Sqrt(X * X + Y * Y);
 		if (R < PlateauR * 0.35f) { continue; }      // 广场中心留空
-		const int32 Mi = Rng.RandRange(0, Deco.Num() - 1);
-		AddInstance(Deco[Mi], FVector(X + CenterX, Y + CenterY, -15.0f),
+		const int32 Mi = Rng.RandRange(0, Bushes.Num() - 1);
+		AddInstance(Bushes[Mi], FVector(X + CenterX, Y + CenterY, -15.0f),
 			FRotator(0, Rng.FRand() * 360.0f, 0), Rng.FRandRange(1.0f, 2.2f), &F);
+	}
+
+	// 花: 独立一滩, 用另一条 Perlin 带做花田 (成斑块分布而非均匀撒点)
+	TArray<UInstancedStaticMeshComponent*> Flowers;
+	for (const TCHAR* P : FlowerPaths) { Flowers.Add(GetOrCreateComp(LoadMesh(P), false)); }
+	for (int32 K = 0; K < 1400; ++K)
+	{
+		const float X = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
+		const float Y = Rng.FRandRange(-1.0f, 1.0f) * F.MaxRadius;
+		float H, S;
+		if (!SampleHeight(F, X, Y, H, S) || S > 26.0f) { continue; }
+		const float R = FMath::Sqrt(X * X + Y * Y);
+		if (R < PlateauR * 0.35f || R > F.MaxRadius * 0.98f) { continue; }
+		const float Patch = P2(X / 1100.0f + 37.0f, Y / 1100.0f - 29.0f);
+		if (Patch < -0.02f) { continue; }
+		const int32 Mi = Rng.RandRange(0, Flowers.Num() - 1);
+		AddInstance(Flowers[Mi], FVector(X + CenterX, Y + CenterY, -12.0f),
+			FRotator(0, Rng.FRand() * 360.0f, 0), Rng.FRandRange(1.0f, 1.9f), &F);
 	}
 
 	// 树: 只种在缓坡带/岛缘 (不挡可玩区), 少量剪影
@@ -699,119 +885,8 @@ void AWFC3DArenaGenerator_Nature::ScatterUnderRocks(const FNatField& F, FRandomS
 
 void AWFC3DArenaGenerator_Nature::SpawnLighting(FRandomStream& Rng)
 {
-	UWorld* World = GetWorld();
-	if (!World) { return; }
-	const FVector Origin = GetActorLocation();
-
-	// 调谐关卡自带氛围演员 (与体素场景同一套虚空基调)
-	bool bFoundLevelFog = false;
-	for (TActorIterator<AActor> It(World); It; ++It)
-	{
-		AActor* A = *It;
-		if (A == this || A->GetOwner() == this) { continue; }
-		if (AExponentialHeightFog* F = Cast<AExponentialHeightFog>(A))
-		{
-			bFoundLevelFog = true;
-			if (UExponentialHeightFogComponent* FC = F->GetComponent())
-			{
-				FC->SetFogDensity(0.008f);
-				FC->SetFogHeightFalloff(0.45f);
-				FC->SetFogInscatteringColor(
-					FLinearColor::FromSRGBColor(FColor(10, 13, 22)));
-				FC->SetDirectionalInscatteringColor(FLinearColor(0.001f, 0.002f, 0.004f));
-				FC->SetDirectionalInscatteringExponent(14.0f);
-				FC->SetStartDistance(1200.0f);
-				FC->SetVolumetricFog(true);
-				FC->SetVolumetricFogScatteringDistribution(0.55f);
-				FC->SetVolumetricFogAlbedo(FColor(18, 26, 48));
-				FC->SetVolumetricFogEmissive(FLinearColor(0.002f, 0.003f, 0.006f));
-			}
-		}
-		else if (ASkyLight* S = Cast<ASkyLight>(A))
-		{
-			if (USkyLightComponent* SC = S->GetLightComponent())
-			{
-				SC->SetIntensity(0.3f);
-				SC->SetLightColor(FLinearColor::FromSRGBColor(FColor(70, 82, 110)));
-				SC->bLowerHemisphereIsBlack = true;
-			}
-		}
-		else if (A->GetClass()->GetName().Contains(TEXT("SkyAtmosphere")))
-		{
-			A->SetActorHiddenInGame(true);
-		}
-	}
-
-	FActorSpawnParameters P;
-	P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	P.ObjectFlags |= RF_Transient;
-	P.Owner = this;
-
-	const float YawDeg = 20.0f + Rng.FRand() * 320.0f;
-	const float PitchDeg = -(46.0f + Rng.FRand() * 14.0f);
-	ADirectionalLight* Key = World->SpawnActor<ADirectionalLight>(
-		ADirectionalLight::StaticClass(), Origin, FRotator(PitchDeg, YawDeg, 0.0f), P);
-	if (Key)
-	{
-		UDirectionalLightComponent* LC = Key->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(7.5f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(255, 246, 232)));
-		LC->SetCastShadows(true);
-		LC->LightSourceAngle = 0.8f;
-		LC->ForwardShadingPriority = 1;
-		Key->SetActorRotation(FRotator(PitchDeg, YawDeg, 0.0f));
-		AtmosphereActors.Add(Key);
-	}
-
-	ADirectionalLight* Fill = World->SpawnActor<ADirectionalLight>(
-		ADirectionalLight::StaticClass(), Origin,
-		FRotator(-25.0f, YawDeg + 160.0f, 0.0f), P);
-	if (Fill)
-	{
-		UDirectionalLightComponent* LC = Fill->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(0.9f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(120, 140, 175)));
-		LC->SetCastShadows(false);
-		LC->bAffectTranslucentLighting = true;
-		AtmosphereActors.Add(Fill);
-	}
-
-	ADirectionalLight* Bounce = World->SpawnActor<ADirectionalLight>(
-		ADirectionalLight::StaticClass(), Origin,
-		FRotator(65.0f, YawDeg + 180.0f, 0.0f), P);
-	if (Bounce)
-	{
-		UDirectionalLightComponent* LC = Bounce->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(1.4f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(90, 105, 140)));
-		LC->SetCastShadows(false);
-		AtmosphereActors.Add(Bounce);
-	}
-
-	if (!bFoundLevelFog)
-	{
-		if (AExponentialHeightFog* Fog = World->SpawnActor<AExponentialHeightFog>(
-			AExponentialHeightFog::StaticClass(), Origin + FVector(0, 0, -1400.0f),
-			FRotator::ZeroRotator, P))
-		{
-			UExponentialHeightFogComponent* FC = Fog->GetComponent();
-			FC->SetFogDensity(0.008f);
-			FC->SetFogHeightFalloff(0.45f);
-			FC->SetFogInscatteringColor(
-				FLinearColor::FromSRGBColor(FColor(10, 13, 22)));
-			FC->SetDirectionalInscatteringColor(FLinearColor(0.001f, 0.002f, 0.004f));
-			FC->SetDirectionalInscatteringExponent(14.0f);
-			FC->SetStartDistance(1200.0f);
-			FC->SetVolumetricFog(true);
-			FC->SetVolumetricFogScatteringDistribution(0.55f);
-			FC->SetVolumetricFogAlbedo(FColor(18, 26, 48));
-			FC->SetVolumetricFogEmissive(FLinearColor(0.002f, 0.003f, 0.006f));
-			AtmosphereActors.Add(Fog);
-		}
-	}
+	// 与 Voxel 共用一份氛围实现 (三点光+虚空雾, -Atmo 开启)
+	ER::Atmosphere::SpawnVoidAtmosphere(this, Rng, AtmosphereActors);
 }
 
 bool AWFC3DArenaGenerator_Nature::Generate(const FWFCGenerationRequest& Request)
@@ -819,9 +894,10 @@ bool AWFC3DArenaGenerator_Nature::Generate(const FWFCGenerationRequest& Request)
 	const double T0 = FPlatformTime::Seconds();
 	ClearGenerated();
 
-	// 每次重试换一块截取窗: attempt 计数混入种子
-	static int32 AttemptCtr = 0;
-	const int32 Seed = (Request.Seed != 0 ? Request.Seed : 1337) + (++AttemptCtr * 7919);
+	// 重试变体由竞技场层承担 (StartSeed + Attempt 递增 Request.Seed)。
+	// 这里不得再叠加任何函数内状态——否则同 Request.Seed 二次调用产出不同岛,
+	// 直接破坏 "同 seed 同图" 的可复现约定
+	const int32 Seed = (Request.Seed != 0) ? Request.Seed : 1337;
 	FRandomStream Rng(Seed);
 
 	FNatField Field;
@@ -845,7 +921,7 @@ bool AWFC3DArenaGenerator_Nature::Generate(const FWFCGenerationRequest& Request)
 	BuildTerrainMesh(Field);
 
 	// [诊断] 微型 PMC 方块: 若它的顶面有 nav -> PMC 本身没问题
-	if (FParse::Param(FCommandLine::Get(), TEXT("NatureCube")))
+	if (ER::Debug::IsNatureCube())
 	{
 		UProceduralMeshComponent* Probe = NewObject<UProceduralMeshComponent>(this, TEXT("NavProbe"));
 		Probe->SetupAttachment(GetRootComponent());
@@ -866,6 +942,7 @@ bool AWFC3DArenaGenerator_Nature::Generate(const FWFCGenerationRequest& Request)
 		Probe->CreateMeshSection(0, V, T, N, UV, TArray<FColor>(), Ta, true);
 		Probe->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 		Probe->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+		Probe->SetCollisionResponseToChannel(ER_TRACE_BATTLELOS, ECR_Ignore);
 		Probe->UpdateBounds();
 		if (UNavigationSystemV1* NS = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld()))
 		{
@@ -875,7 +952,7 @@ bool AWFC3DArenaGenerator_Nature::Generate(const FWFCGenerationRequest& Request)
 	}
 
 	// [诊断] 大平板碰撞 (HISM cube): 若 nav 可达面积暴增 -> 只有 HISM 进 navmesh
-	if (FParse::Param(FCommandLine::Get(), TEXT("NatureNavBox")))
+	if (ER::Debug::IsNatureNavBox())
 	{
 		UStaticMesh* Cube = LoadMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 		UHierarchicalInstancedStaticMeshComponent* Aid =
@@ -884,11 +961,13 @@ bool AWFC3DArenaGenerator_Nature::Generate(const FWFCGenerationRequest& Request)
 		Aid->SetStaticMesh(Cube);
 		Aid->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 		Aid->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+		Aid->SetCollisionResponseToChannel(ER_TRACE_BATTLELOS, ECR_Ignore);
 		Aid->SetCanEverAffectNavigation(true);
 		Aid->SetVisibility(false);
 		Aid->RegisterComponent();
 		Aid->AddInstance(FTransform(FRotator::ZeroRotator,
 			FVector(CenterX, CenterY, -50.0f), FVector(120.0f, 120.0f, 0.4f)));
+		ScatterComps.Add(Aid);   // 纳入统一销毁, 防重试时同名覆盖
 	}
 	BuildNavProxy(Field);
 	ScatterVegetation(Field, Rng);
@@ -939,7 +1018,7 @@ bool AWFC3DArenaGenerator_Nature::Generate(const FWFCGenerationRequest& Request)
 		}
 	}
 	LastResult.bSuccess = true;
-	LastResult.UsedSeed = Request.Seed;
+	LastResult.UsedSeed = Seed;
 	// UsedScale*CellSize 会成为校验/导航的 3D 包围盒 (从原点起算):
 	// Z 给足 2000cm 覆盖丘顶; X/Y 120m 覆盖整个岛 (悬崖/岛底在盒外, 本就不可走)
 	LastResult.UsedScale = FIntVector(GridN, GridN, 40);
@@ -948,7 +1027,7 @@ bool AWFC3DArenaGenerator_Nature::Generate(const FWFCGenerationRequest& Request)
 	LastResult.CellCount = GridN * GridN;
 	LastResult.DurationMs = (FPlatformTime::Seconds() - T0) * 1000.0;
 
-	UE_LOG(LogTemp, Log, TEXT("[Nature] Generated seed=%d islandR=%.0f in %.1f ms"),
+	UE_LOG(LogERWFC, Log, TEXT("[Nature] Generated seed=%d islandR=%.0f in %.1f ms"),
 		Request.Seed, Field.MaxRadius, LastResult.DurationMs);
 	return true;
 }
@@ -959,9 +1038,18 @@ void AWFC3DArenaGenerator_Nature::ClearGenerated()
 	{
 		Terrain->ClearAllMeshSections();
 	}
+	// 销毁而非 ClearInstances: 重试生成会再次 NewObject 同名组件, 旧 HISM
+	// 异步建树未清完就被覆盖 -> InstanceReorderTable 断言崩溃 (2026-11 实锤);
+	// 生成物全部销毁重建, 也顺带清掉跨尝试的实例状态
 	for (UInstancedStaticMeshComponent* C : ScatterComps)
 	{
-		if (C) { C->ClearInstances(); }
+		if (C) { C->DestroyComponent(); }
+	}
+	ScatterComps.Reset();
+	if (ScatterProbe)
+	{
+		ScatterProbe->DestroyComponent();
+		ScatterProbe = nullptr;
 	}
 	for (AActor* A : AtmosphereActors)
 	{

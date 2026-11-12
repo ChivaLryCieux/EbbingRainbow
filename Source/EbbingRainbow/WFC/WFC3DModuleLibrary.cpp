@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "WFC3DModuleLibrary.h"
+#include "WFC/WFC3DModuleLibrary.h"
+#include "Core/ERLog.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/StaticMesh.h"
@@ -23,7 +24,7 @@ int32 UWFC3DModuleLibrary::ScanDirectoryForStaticMeshes(
 
 	if (DirectoryPath.IsEmpty())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WFC] ScanDirectoryForStaticMeshes: DirectoryPath is empty!"));
+		UE_LOG(LogERWFC, Warning, TEXT("[WFC] ScanDirectoryForStaticMeshes: DirectoryPath is empty!"));
 		return 0;
 	}
 
@@ -81,7 +82,7 @@ int32 UWFC3DModuleLibrary::ScanDirectoryForStaticMeshes(
 		AddedCount++;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[WFC] Scanned directory '%s': added %d meshes. Total modules: %d"), *DirectoryPath, AddedCount, Modules.Num());
+	UE_LOG(LogERWFC, Log, TEXT("[WFC] Scanned directory '%s': added %d meshes. Total modules: %d"), *DirectoryPath, AddedCount, Modules.Num());
 	return AddedCount;
 }
 
@@ -214,7 +215,7 @@ bool UWFC3DModuleLibrary::CompileLibrary(
 	const int32 TotalModules = OutCompiledModules.Num();
 	if (TotalModules == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WFC] CompileLibrary: No modules defined in library!"));
+		UE_LOG(LogERWFC, Warning, TEXT("[WFC] CompileLibrary: No modules defined in library!"));
 		return false;
 	}
 
@@ -245,6 +246,6 @@ bool UWFC3DModuleLibrary::CompileLibrary(
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[WFC] CompileLibrary: Successfully compiled %d variant modules and built adjacency matrix."), TotalModules);
+	UE_LOG(LogERWFC, Log, TEXT("[WFC] CompileLibrary: Successfully compiled %d variant modules and built adjacency matrix."), TotalModules);
 	return true;
 }

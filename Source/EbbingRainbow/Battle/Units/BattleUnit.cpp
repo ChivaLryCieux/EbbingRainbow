@@ -1,8 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Units/BattleUnit.h"
+#include "Core/ERLog.h"
+#include "Battle/Core/UBattleContext.h"
+#include "Core/ERAssetCatalog.h"
+#include "Core/ERCollisionChannels.h"
 #include "Battle/Skills/BattleSkillData.h"
-#include "Battle/UI/BattleFloatingText.h"
+#include "Battle/Skills/BattleSkillComponent.h"
+#include "Battle/Skills/BattleResolver.h"
+#include "Battle/Skills/BattleSkillLibrary.h"
+#include "Battle/Terrain/BattleTerrainQuery.h"
+#include "Battle/FX/BattleFloatingText.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -21,15 +29,21 @@
 #include "NavigationPath.h"
 #include "UObject/ConstructorHelpers.h"
 
+const TArray<FBattleSkillSpec> ABattleUnit::EmptySkillSpecs;
+
 ABattleUnit::ABattleUnit()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	AutoPossessAI = EAutoPossessAI::Disabled;
 	bUseControllerRotationYaw = false;
 
+	SkillComp = CreateDefaultSubobject<UBattleSkillComponent>(TEXT("SkillComp"));
+
 	UCapsuleComponent* Capsule = GetCapsuleComponent();
 	Capsule->InitCapsuleSize(40.0f, 88.0f);
-	Capsule->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block); // 供鼠标拾取
+	Capsule->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);       // 供鼠标拾取
+	Capsule->SetCollisionResponseToChannel(ER_TRACE_BATTLELOS, ECR_Ignore); // 战斗视线穿透
+	GetMesh()->SetCollisionResponseToChannel(ER_TRACE_BATTLELOS, ECR_Ignore);
 
 	UCharacterMovementComponent* Move = GetCharacterMovement();
 	Move->bOrientRotationToMovement = true;
@@ -56,38 +70,85 @@ ABattleUnit::ABattleUnit()
 		BodyMesh->SetMaterial(0, MatFinder.Object);
 	}
 
-	// 接入 UE Manny 人形骨骼网格体与动画资产
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyFinder(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
-	if (MannyFinder.Succeeded())
+	// 脚底队伍光环底盘: 零资产依赖, 用 MID 调色表达敌我/选中/悬停/当前回合
+	TeamDisc = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TeamDisc"));
+	TeamDisc->SetupAttachment(GetRootComponent());
+	TeamDisc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	TeamDisc->SetCanEverAffectNavigation(false);
+	TeamDisc->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f + 1.2f));
+	TeamDisc->SetRelativeScale3D(FVector(0.92f, 0.92f, 0.02f));
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> DiscFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	if (DiscFinder.Succeeded())
 	{
-		GetMesh()->SetSkeletalMeshAsset(MannyFinder.Object);
+		TeamDisc->SetStaticMesh(DiscFinder.Object);
+	}
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> DiscMatFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	if (DiscMatFinder.Succeeded())
+	{
+		TeamDisc->SetMaterial(0, DiscMatFinder.Object);
+	}
+
+	Label = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
+	Label->SetupAttachment(GetRootComponent());
+	Label->SetRelativeLocation(FVector(0.0f, 0.0f, 88.0f + 70.0f));
+	Label->SetHorizontalAlignment(EHTA_Center);
+	Label->SetVerticalAlignment(EVRTA_TextCenter);
+	Label->SetWorldSize(26.0f);
+	Label->SetCanEverAffectNavigation(false);
+}
+
+void ABattleUnit::EnsurePresentationAssets()
+{
+	if (bPresentationReady)
+	{
+		return;
+	}
+	bPresentationReady = true;
+
+	UERAssetCatalog* Catalog = UERAssetCatalog::Get(this);
+	if (!Catalog)
+	{
+		return; // 无世界 (CDO/编辑器预览): 保持白模圆柱
+	}
+
+	// 接入 UE Manny 人形骨骼网格体与动画资产。
+	// 原先在构造函数里 ConstructorHelpers 硬引用 14 个资产 —— 每张图加载 CDO 都拖一遍
+	// (大厅也不放过); 挪到首个运行时单位 BeginPlay, 目录缓存后所有单位共享
+	if (USkeletalMesh* Manny = Catalog->LoadAsset<USkeletalMesh>(
+		TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple")))
+	{
+		GetMesh()->SetSkeletalMeshAsset(Manny);
 		GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
 		GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
-		BodyMesh->SetVisibility(false);
+		if (BodyMesh)
+		{
+			BodyMesh->SetVisibility(false);
+		}
 	}
 
-	static ConstructorHelpers::FClassFinder<UAnimInstance> AnimFinder(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed_C"));
-	if (AnimFinder.Succeeded())
+	if (UClass* ABP = Catalog->LoadAsset<UClass>(
+		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed_C")))
 	{
-		GetMesh()->SetAnimInstanceClass(AnimFinder.Class);
+		GetMesh()->SetAnimInstanceClass(ABP);
 	}
 
-	static ConstructorHelpers::FObjectFinder<UAnimSequence> AttackFinder(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01.MM_Attack_01"));
-	if (AttackFinder.Succeeded())
-	{
-		AttackAnimSequence = AttackFinder.Object;
-	}
+	AttackAnimSequence = Catalog->LoadAsset<UAnimSequence>(
+		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01.MM_Attack_01"));
+
+	// 移动循环动画: TP 模板原地慢跑 (MF_* 是 in-place 版, 无根位移)
+	MoveAnimSequence = Catalog->LoadAsset<UAnimSequence>(
+		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jog/MF_Unarmed_Jog_Fwd.MF_Unarmed_Jog_Fwd"));
 
 	// 一次性动画资产池 (硬引用由 UPROPERTY 数组持有, 不会被 GC 回收)
-	auto LoadAnims = [](const TCHAR* const* Paths, int32 Count, TArray<TObjectPtr<UAnimSequence>>& OutPool)
+	auto LoadAnims = [Catalog](const TCHAR* const* Paths, int32 Count, TArray<TObjectPtr<UAnimSequence>>& OutPool)
 	{
 		for (int32 i = 0; i < Count; ++i)
 		{
-			// 注意: 不能用 static, 否则循环里只会加载第一条路径
-			ConstructorHelpers::FObjectFinder<UAnimSequence> Finder(Paths[i]);
-			if (Finder.Succeeded())
+			if (UAnimSequence* Seq = Catalog->LoadAsset<UAnimSequence>(Paths[i]))
 			{
-				OutPool.Add(Finder.Object);
+				OutPool.Add(Seq);
 			}
 		}
 	};
@@ -120,39 +181,18 @@ ABattleUnit::ABattleUnit()
 		TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Right_01.MM_Death_Right_01")
 	};
 	LoadAnims(DeathPaths, (int32)UE_ARRAY_COUNT(DeathPaths), DeathAnimations);
-
-	// 脚底队伍光环底盘: 零资产依赖, 用 MID 调色表达敌我/选中/悬停/当前回合
-	TeamDisc = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TeamDisc"));
-	TeamDisc->SetupAttachment(GetRootComponent());
-	TeamDisc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	TeamDisc->SetCanEverAffectNavigation(false);
-	TeamDisc->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f + 1.2f));
-	TeamDisc->SetRelativeScale3D(FVector(0.92f, 0.92f, 0.02f));
-
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> DiscFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-	if (DiscFinder.Succeeded())
-	{
-		TeamDisc->SetStaticMesh(DiscFinder.Object);
-	}
-
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> DiscMatFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	if (DiscMatFinder.Succeeded())
-	{
-		TeamDisc->SetMaterial(0, DiscMatFinder.Object);
-	}
-
-	Label = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
-	Label->SetupAttachment(GetRootComponent());
-	Label->SetRelativeLocation(FVector(0.0f, 0.0f, 88.0f + 70.0f));
-	Label->SetHorizontalAlignment(EHTA_Center);
-	Label->SetVerticalAlignment(EVRTA_TextCenter);
-	Label->SetWorldSize(26.0f);
-	Label->SetCanEverAffectNavigation(false);
 }
 
 void ABattleUnit::BeginPlay()
 {
 	Super::BeginPlay();
+	EnsurePresentationAssets();
+
+	if (UBattleContext* Ctx = UBattleContext::Get(GetWorld()))
+	{
+		Ctx->RegisterUnit(this);
+	}
+
 	if (BodyMesh && !BodyMID)
 	{
 		BodyMID = BodyMesh->CreateAndSetMaterialInstanceDynamic(0);
@@ -182,8 +222,9 @@ float ABattleUnit::GetCapsuleHalfHeight() const
 
 float ABattleUnit::GetCmPerAP() const
 {
-	const int32 EffectiveInitiative = FMath::Max(1, Stats.Initiative);
-	return EffectiveInitiative * CmPerInitiativeUnit;
+	// 有效先攻 (状态可改先攻) 决定移动转化率
+	const float EffectiveInitiative = SkillComp ? SkillComp->GetEffectiveInitiative() : (float)Stats.Initiative;
+	return FMath::Max(1.0f, EffectiveInitiative) * CmPerInitiativeUnit;
 }
 
 void ABattleUnit::AddBarrier(float Amount)
@@ -197,98 +238,139 @@ void ABattleUnit::AddBarrier(float Amount)
 	}
 }
 
-void ABattleUnit::ApplyModifierBundle(const FAttributeModifierBundle& Bundle, ABattleUnit* InInstigator, EDamageType DamageType)
+void ABattleUnit::DrainBarrier(float Amount)
 {
-	if (!IsAlive())
+	if (Amount > 0.0f && Barrier > 0.0f)
+	{
+		const float Drained = FMath::Min(Barrier, Amount);
+		Barrier -= Drained;
+		RefreshLabel();
+		const FVector FloatingLoc = GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f);
+		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, FString::Printf(TEXT("-%d 护盾"), FMath::RoundToInt(Drained)), FColor(120, 160, 220), 36.0f);
+	}
+}
+
+void ABattleUnit::ApplyHeal(float Amount, ABattleUnit* Source)
+{
+	if (!IsAlive() || Amount <= 0.0f)
 	{
 		return;
+	}
+
+	const float MaxIntegrity = SkillComp ? SkillComp->GetEffectiveMaxIntegrity() : Stats.MaxIntegrity;
+	const float HealAmount = FMath::Min(Amount, MaxIntegrity - Integrity);
+	if (HealAmount <= 0.0f)
+	{
+		return;
+	}
+
+	Integrity += HealAmount;
+	RefreshLabel();
+	const FVector FloatingLoc = GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f);
+	ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc,
+		FString::Printf(TEXT("+%d 完整度"), FMath::RoundToInt(HealAmount)), FColor(80, 255, 120), 38.0f);
+}
+
+float ABattleUnit::ApplyDamageAmount(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType,
+	bool bCrit, float* OutBarrierAbsorbed, float* OutIntegrityDamage)
+{
+	if (OutBarrierAbsorbed)
+	{
+		*OutBarrierAbsorbed = 0.0f;
+	}
+	if (OutIntegrityDamage)
+	{
+		*OutIntegrityDamage = 0.0f;
+	}
+
+	if (!IsAlive() || DamageAmount <= 0.0f)
+	{
+		return 0.0f;
 	}
 
 	const FVector FloatingLoc = GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f);
 
-	// 1. 完整度修改 (负数为扣减/受击伤害，正数为修复完整度)
-	if (Bundle.IntegrityDelta < 0.0f)
+	// 1. 护盾吸收 (Barrier)
+	float BarrierAbsorbed = 0.0f;
+	if (Barrier > 0.0f)
 	{
-		TakeBattleDamage(-Bundle.IntegrityDelta, InInstigator, DamageType);
-	}
-	else if (Bundle.IntegrityDelta > 0.0f)
-	{
-		const float HealAmount = FMath::Min(Bundle.IntegrityDelta, Stats.MaxIntegrity - Integrity);
-		Integrity += HealAmount;
-		HP = FMath::RoundToInt(Integrity);
-		RefreshLabel();
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, FString::Printf(TEXT("+%d 完整度"), FMath::RoundToInt(HealAmount)), FColor(80, 255, 120), 38.0f);
+		BarrierAbsorbed = FMath::Min(Barrier, DamageAmount);
+		Barrier -= BarrierAbsorbed;
+		DamageAmount -= BarrierAbsorbed;
 	}
 
-	// 若在受到伤害后已阵亡，无需继续结算后续附加状态
+	// 2. 扣除完整度 (Integrity)
+	const float ActualIntegrityDamage = FMath::Min(Integrity, DamageAmount);
+	Integrity -= ActualIntegrityDamage;
+
+	if (OutBarrierAbsorbed)
+	{
+		*OutBarrierAbsorbed = BarrierAbsorbed;
+	}
+	if (OutIntegrityDamage)
+	{
+		*OutIntegrityDamage = ActualIntegrityDamage;
+	}
+
+	// 3. 飘字与反馈
+	const FColor DamageColor = GetDamageTypeColor(DamageType);
+	FString DamageText;
+	if (BarrierAbsorbed > 0.0f && ActualIntegrityDamage > 0.0f)
+	{
+		DamageText = FString::Printf(TEXT("-%d (护盾 -%d)"), FMath::RoundToInt(ActualIntegrityDamage), FMath::RoundToInt(BarrierAbsorbed));
+	}
+	else if (BarrierAbsorbed > 0.0f)
+	{
+		DamageText = FString::Printf(TEXT("[护盾吸收 %d]"), FMath::RoundToInt(BarrierAbsorbed));
+	}
+	else
+	{
+		DamageText = FString::Printf(TEXT("-%d"), FMath::RoundToInt(ActualIntegrityDamage));
+	}
+
+	// 伤害越大字越大: 重击与弱点一眼可辨 (暴击再放大)
+	const float TotalDealt = ActualIntegrityDamage + BarrierAbsorbed;
+	const float DamageTextSize = FMath::Clamp(36.0f + TotalDealt * 0.55f + (bCrit ? 8.0f : 0.0f), 36.0f, 64.0f);
+	ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, DamageText, DamageColor, DamageTextSize);
+
+	// 受击反馈: 光环闪白 + 按来袭方向播受击动作
+	TriggerDiscFlash();
+	PlayHitReaction(Attacker ? Attacker->GetActorLocation() : GetActorLocation() + GetActorForwardVector() * 100.0f);
+
+	// 白模兜底路径的受击闪烁 (骨骼路径没有可用的 Tint 参数)
+	if (BodyMID)
+	{
+		BodyMID->SetVectorParameterValue(TEXT("Color"), FLinearColor::White);
+		FTimerHandle Handle;
+		GetWorldTimerManager().SetTimer(Handle, [this]() {
+			UpdateVisualColor();
+		}, 0.15f, false);
+	}
+
+	OnUnitDamaged.Broadcast(this, FMath::RoundToInt(ActualIntegrityDamage));
+	RefreshLabel();
+
+	// 4. 阵亡结算: 倒地动画 -> 布娃娃 -> 沿受击方向击飞
 	if (!IsAlive())
 	{
-		return;
-	}
-
-	// 2. 护盾修改
-	if (!FMath::IsNearlyZero(Bundle.BarrierDelta))
-	{
-		AddBarrier(Bundle.BarrierDelta);
-	}
-
-	// 3. 行动点 AP 修改
-	if (Bundle.APDelta != 0)
-	{
-		AP = FMath::Clamp(AP + Bundle.APDelta, 0, Stats.MaxAP);
+		Integrity = 0.0f;
+		if (GetCapsuleComponent())
+		{
+			GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+		UpdateVisualColor();
 		RefreshLabel();
-		const FString APStr = (Bundle.APDelta > 0) ? FString::Printf(TEXT("+%d AP"), Bundle.APDelta) : FString::Printf(TEXT("%d AP"), Bundle.APDelta);
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, APStr, FColor(100, 200, 255), 38.0f);
+		StartDeathRagdoll(Attacker, TotalDealt);
+		OnUnitDied.Broadcast(this);
 	}
 
-	// 4. 先攻值修改
-	if (Bundle.InitiativeDelta != 0)
-	{
-		Stats.Initiative = FMath::Max(1, Stats.Initiative + Bundle.InitiativeDelta);
-		RefreshLabel();
-		const FString InitStr = (Bundle.InitiativeDelta > 0) ? FString::Printf(TEXT("先攻 +%d"), Bundle.InitiativeDelta) : FString::Printf(TEXT("先攻 %d"), Bundle.InitiativeDelta);
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, InitStr, FColor(255, 210, 80), 38.0f);
-	}
+	return ActualIntegrityDamage + BarrierAbsorbed;
+}
 
-	// 5. 闪避率修改
-	if (!FMath::IsNearlyZero(Bundle.EvasionDelta))
-	{
-		Stats.EvasionRate = FMath::Clamp(Stats.EvasionRate + Bundle.EvasionDelta, 0.0f, 1.0f);
-		const FString EvaStr = FString::Printf(TEXT("闪避率 %s%.0f%%"), Bundle.EvasionDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.EvasionDelta * 100.0f);
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, EvaStr, FColor(180, 180, 255), 36.0f);
-	}
-
-	// 6. 力学抗性
-	if (!FMath::IsNearlyZero(Bundle.KineticResistanceDelta))
-	{
-		Stats.KineticResistance = FMath::Clamp(Stats.KineticResistance + Bundle.KineticResistanceDelta, -1.0f, 0.85f);
-		const FString ResStr = FString::Printf(TEXT("力学抗性 %s%.0f%%"), Bundle.KineticResistanceDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.KineticResistanceDelta * 100.0f);
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Kinetic), 36.0f);
-	}
-
-	// 7. 热学抗性
-	if (!FMath::IsNearlyZero(Bundle.ThermalResistanceDelta))
-	{
-		Stats.ThermalResistance = FMath::Clamp(Stats.ThermalResistance + Bundle.ThermalResistanceDelta, -1.0f, 0.85f);
-		const FString ResStr = FString::Printf(TEXT("热学抗性 %s%.0f%%"), Bundle.ThermalResistanceDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.ThermalResistanceDelta * 100.0f);
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Thermal), 36.0f);
-	}
-
-	// 8. 电学抗性
-	if (!FMath::IsNearlyZero(Bundle.ElectricResistanceDelta))
-	{
-		Stats.ElectricResistance = FMath::Clamp(Stats.ElectricResistance + Bundle.ElectricResistanceDelta, -1.0f, 0.85f);
-		const FString ResStr = FString::Printf(TEXT("电学抗性 %s%.0f%%"), Bundle.ElectricResistanceDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.ElectricResistanceDelta * 100.0f);
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Electric), 36.0f);
-	}
-
-	// 9. 化学抗性
-	if (!FMath::IsNearlyZero(Bundle.ChemicalResistanceDelta))
-	{
-		Stats.ChemicalResistance = FMath::Clamp(Stats.ChemicalResistance + Bundle.ChemicalResistanceDelta, -1.0f, 0.85f);
-		const FString ResStr = FString::Printf(TEXT("化学抗性 %s%.0f%%"), Bundle.ChemicalResistanceDelta > 0.0f ? TEXT("+") : TEXT(""), Bundle.ChemicalResistanceDelta * 100.0f);
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, ResStr, GetDamageTypeColor(EDamageType::Chemical), 36.0f);
-	}
+float ABattleUnit::TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType)
+{
+	// 兼容入口: 无命中判定的直接伤害, 仍走抗性/护盾管线
+	return UBattleResolver::ApplyDirectDamage(Attacker, this, DamageType, DamageAmount);
 }
 
 void ABattleUnit::InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam)
@@ -296,17 +378,22 @@ void ABattleUnit::InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam)
 	Stats = InStats;
 	Team = InTeam;
 	Integrity = Stats.MaxIntegrity;
-	HP = FMath::RoundToInt(Integrity);
 	AP = Stats.MaxAP;
 	Barrier = 0.0f;
 
-	// 默认技能配置 (涵盖力学、热学、电学以供基础演示)
-	if (Stats.Skills.Num() == 0)
+	// 技能系统 2.0: 技能由 Id 经内置目录装配 (肉鸽构筑持久化同款路径)
+	if (SkillComp)
 	{
-		Stats.Skills.Add(FBattleSkillDef(TEXT("Slash"), TEXT("Slash (近战斩击)"), 1, 250.0f, 15, EDamageType::Kinetic, TEXT("近身重击目标敌军 (力学伤害)"), FLinearColor(1.0f, 0.4f, 0.1f)));
-		Stats.Skills.Add(FBattleSkillDef(TEXT("Shoot"), TEXT("Shoot (远程穿透)"), 2, 1200.0f, 12, EDamageType::Kinetic, TEXT("远程狙击敌军目标 (力学伤害)"), FLinearColor(0.2f, 0.9f, 0.4f)));
-		Stats.Skills.Add(FBattleSkillDef(TEXT("Overheat"), TEXT("Overheat (热能过载)"), 2, 650.0f, 18, EDamageType::Thermal, TEXT("向目标倾泻高热粒子 (热学伤害)"), FLinearColor(1.0f, 0.15f, 0.1f)));
-		Stats.Skills.Add(FBattleSkillDef(TEXT("Shock"), TEXT("Shock (电弧激荡)"), 1, 800.0f, 10, EDamageType::Electric, TEXT("发射高频电弧脉冲 (电学伤害)"), FLinearColor(0.2f, 0.7f, 1.0f)));
+		SkillComp->ClearSkills();
+		if (Stats.SkillIds.Num() > 0)
+		{
+			SkillComp->GrantSkillsByIds(Stats.SkillIds);
+		}
+		else
+		{
+			// 默认演示技能组 (覆盖力学/热学/电学/化学四学派)
+			SkillComp->GrantSkillsByIds({ TEXT("Slash"), TEXT("Shoot"), TEXT("Overheat"), TEXT("Shock") });
+		}
 	}
 
 	if (!BodyMID && BodyMesh)
@@ -325,7 +412,6 @@ void ABattleUnit::InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam)
 void ABattleUnit::ApplyPersistentIntegrity(float InIntegrity)
 {
 	Integrity = FMath::Clamp(InIntegrity, 0.0f, Stats.MaxIntegrity);
-	HP = FMath::RoundToInt(Integrity);
 	Barrier = 0.0f;
 
 	UpdateVisualColor();
@@ -335,7 +421,7 @@ void ABattleUnit::ApplyPersistentIntegrity(float InIntegrity)
 
 void ABattleUnit::ResetAP()
 {
-	AP = Stats.MaxAP;
+	AP = SkillComp ? SkillComp->GetEffectiveMaxAP() : Stats.MaxAP;
 	RefreshLabel();
 }
 
@@ -475,17 +561,32 @@ void ABattleUnit::RefreshLabel()
 		}
 		else
 		{
+			const float MaxIntegrity = SkillComp ? SkillComp->GetEffectiveMaxIntegrity() : Stats.MaxIntegrity;
+			const int32 MaxAP = SkillComp ? SkillComp->GetEffectiveMaxAP() : Stats.MaxAP;
+			const int32 EffectiveInit = FMath::RoundToInt(SkillComp ? SkillComp->GetEffectiveInitiative() : (float)Stats.Initiative);
+
 			FString StatusStr;
 			if (Barrier > 0.0f)
 			{
 				StatusStr = FString::Printf(TEXT("%s\n完整度 %.0f/%.0f (+%.0f护盾)  AP %d/%d  先攻 %d"),
-					*Stats.DisplayName, Integrity, Stats.MaxIntegrity, Barrier, AP, Stats.MaxAP, Stats.Initiative);
+					*Stats.DisplayName, Integrity, MaxIntegrity, Barrier, AP, MaxAP, EffectiveInit);
 			}
 			else
 			{
 				StatusStr = FString::Printf(TEXT("%s\n完整度 %.0f/%.0f  AP %d/%d  先攻 %d"),
-					*Stats.DisplayName, Integrity, Stats.MaxIntegrity, AP, Stats.MaxAP, Stats.Initiative);
+					*Stats.DisplayName, Integrity, MaxIntegrity, AP, MaxAP, EffectiveInit);
 			}
+
+			// 状态摘要 (燃烧 x2 (1) · 导电 ...)
+			if (SkillComp)
+			{
+				const FString StatusSummary = SkillComp->GetStatusSummary();
+				if (!StatusSummary.IsEmpty())
+				{
+					StatusStr += FString::Printf(TEXT("\n%s"), *StatusSummary);
+				}
+			}
+
 			Label->SetText(FText::FromString(StatusStr));
 		}
 	}
@@ -505,14 +606,30 @@ bool ABattleUnit::PlanMove(const FVector& Destination, TArray<FVector>& OutPath,
 	OutCostAP = 0;
 	bOutTruncated = false;
 
+	// 诊断节流: PlanMove 在移动预览悬停时每帧都会被调, 同一原因每秒只报一条
+	auto LogPlanFail = [this, &Destination](const TCHAR* Reason)
+	{
+		static TMap<FString, double> LastLogByReason;
+		const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+		double& Last = LastLogByReason.FindOrAdd(FString(Reason), -10.0);
+		if (Now - Last > 1.0)
+		{
+			Last = Now;
+			UE_LOG(LogERBattle, Log, TEXT("[BattleInput] PlanMove 失败: %s (%s AP=%d dest=%s)"),
+				Reason, *GetName(), AP, *Destination.ToCompactString());
+		}
+	};
+
 	if (!IsAlive() || AP <= 0)
 	{
+		LogPlanFail(TEXT("单位死亡或 AP 耗尽"));
 		return false;
 	}
 
 	UNavigationSystemV1* Nav = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
 	if (!Nav)
 	{
+		LogPlanFail(TEXT("无导航系统"));
 		return false;
 	}
 
@@ -520,12 +637,14 @@ bool ABattleUnit::PlanMove(const FVector& Destination, TArray<FVector>& OutPath,
 	FNavLocation StartNav;
 	if (!Nav->ProjectPointToNavigation(GetActorLocation(), StartNav, FVector(250.0f, 250.0f, 500.0f)))
 	{
+		LogPlanFail(TEXT("起点投影不到导航 (单位脚下无 nav)"));
 		return false;
 	}
 
 	FNavLocation Projected;
 	if (!Nav->ProjectPointToNavigation(Destination, Projected, FVector(350.0f, 350.0f, 600.0f)))
 	{
+		LogPlanFail(TEXT("目标点投影不到导航 (点击处无 nav)"));
 		return false;
 	}
 
@@ -538,6 +657,7 @@ bool ABattleUnit::PlanMove(const FVector& Destination, TArray<FVector>& OutPath,
 	UNavigationPath* NavPath = Nav->FindPathToLocationSynchronously(GetWorld(), StartNav.Location, Projected.Location);
 	if (!NavPath || !NavPath->IsValid() || NavPath->PathPoints.Num() < 2)
 	{
+		LogPlanFail(TEXT("寻路无有效路径"));
 		return false;
 	}
 
@@ -583,6 +703,8 @@ bool ABattleUnit::MoveTo(const FVector& Destination)
 {
 	if (bMoving || !IsAlive() || AP <= 0)
 	{
+		UE_LOG(LogERBattle, Log, TEXT("[BattleInput] MoveTo 拒绝: %s bMoving=%d alive=%d AP=%d"),
+			*GetName(), bMoving, IsAlive(), AP);
 		return false;
 	}
 
@@ -599,6 +721,7 @@ bool ABattleUnit::MoveTo(const FVector& Destination)
 	MovePathIndex = 1;
 	bMoving = true;
 	RefreshLabel();
+	PlayMoveAnimation();
 
 	// 启动安全看门狗: 最多允许位移 6 秒, 避免极端阻挡时无法结算
 	GetWorldTimerManager().SetTimer(MoveWatchdogTimer, this, &ABattleUnit::StopMovement, 6.0f, false);
@@ -620,35 +743,8 @@ void ABattleUnit::FinishMove()
 	MovePath.Reset();
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->Velocity = FVector::ZeroVector;
+	StopMoveAnimation();
 	OnMoveFinished.Broadcast(this);
-}
-
-void ABattleUnit::EquipSkillData(UBattleSkillData* InSkillData)
-{
-	if (!InSkillData)
-	{
-		return;
-	}
-
-	EquippedSkills.Add(InSkillData);
-
-	// 同步生成一份 FBattleSkillDef 供 UI 与控制器无缝展现
-	FBattleSkillDef SkillDef;
-	SkillDef.SkillId = InSkillData->SkillId;
-	SkillDef.DisplayName = InSkillData->DisplayName.IsEmpty() ? InSkillData->GetName() : InSkillData->DisplayName.ToString();
-	SkillDef.APCost = InSkillData->APCost;
-	SkillDef.Range = InSkillData->Range;
-	SkillDef.DamageType = InSkillData->GetDisciplineDamageType();
-	SkillDef.Description = InSkillData->Description.ToString();
-	SkillDef.Color = InSkillData->ThemeColor;
-
-	// 从 TargetModifiers 中提取预估伤害数值供卡牌角标展示
-	if (InSkillData->TargetModifiers.IntegrityDelta < 0.0f)
-	{
-		SkillDef.BaseDamage = FMath::RoundToInt(-InSkillData->TargetModifiers.IntegrityDelta * InSkillData->HitCount);
-	}
-
-	Stats.Skills.Add(SkillDef);
 }
 
 bool ABattleUnit::CanUseSkill(int32 SkillIndex, const ABattleUnit* Target, FString& OutReason) const
@@ -659,43 +755,48 @@ bool ABattleUnit::CanUseSkill(int32 SkillIndex, const ABattleUnit* Target, FStri
 		return false;
 	}
 
-	// 优先走技能资产验证
-	if (EquippedSkills.IsValidIndex(SkillIndex) && EquippedSkills[SkillIndex])
-	{
-		FBattleSkillExecutionContext Context;
-		Context.Caster = const_cast<ABattleUnit*>(this);
-		Context.Target = const_cast<ABattleUnit*>(Target);
-		Context.TargetLocation = Target ? Target->GetActorLocation() : FVector::ZeroVector;
-		return EquippedSkills[SkillIndex]->CanActivate(this, Context, OutReason);
-	}
-
-	if (!Stats.Skills.IsValidIndex(SkillIndex))
+	if (!SkillComp || !SkillComp->HasSkillIndex(SkillIndex))
 	{
 		OutReason = TEXT("无效的技能索引");
 		return false;
 	}
-	const FBattleSkillDef& Skill = Stats.Skills[SkillIndex];
-	if (AP < Skill.APCost)
+
+	const FBattleSkillSpec* Spec = SkillComp->GetSpec(SkillIndex);
+	UBattleSkillData* Skill = Spec ? Spec->SkillData.Get() : nullptr;
+	if (!Skill)
 	{
-		OutReason = FString::Printf(TEXT("行动点不足 (需要 %d, 剩余 %d)"), Skill.APCost, AP);
-		return false;
-	}
-	if (!Target || !Target->IsAlive())
-	{
-		OutReason = TEXT("目标不存在或已损毁");
-		return false;
-	}
-	if (Target->Team == Team)
-	{
-		OutReason = TEXT("不能以友军为目标");
+		OutReason = TEXT("无效的技能索引");
 		return false;
 	}
 
-	const float Dist = FVector::Dist2D(GetActorLocation(), Target->GetActorLocation());
-	if (Dist > Skill.Range)
+	// 冷却判定 (设计文档 §4 语义)
+	if (Spec->IsOnCooldown())
 	{
-		OutReason = FString::Printf(TEXT("目标超出射程 (当前 %.0fcm, 最大 %.0fcm)"), Dist, Skill.Range);
+		OutReason = FString::Printf(TEXT("技能冷却中 (还需 %d 回合)"), FMath::Max(1, Spec->CooldownRemaining));
 		return false;
+	}
+
+	FBattleSkillExecutionContext Context;
+	Context.Caster = const_cast<ABattleUnit*>(this);
+	Context.Target = const_cast<ABattleUnit*>(Target);
+	Context.TargetLocation = Target ? Target->GetActorLocation() : FVector::ZeroVector;
+
+	if (!Skill->CanActivate(this, Context, OutReason))
+	{
+		return false;
+	}
+
+	// 视线判定 (地形耦合: 与 WFC 几何碰撞, 单位不挡视线)
+	if (Skill->bRequiresLineOfSight && Target && Target != this)
+	{
+		if (UBattleTerrainQuery* Terrain = UBattleTerrainQuery::Get(GetWorld()))
+		{
+			if (!Terrain->HasLineOfSight(const_cast<ABattleUnit*>(this), const_cast<ABattleUnit*>(Target)))
+			{
+				OutReason = TEXT("目标被地形遮挡 (无视线)");
+				return false;
+			}
+		}
 	}
 
 	return true;
@@ -709,88 +810,147 @@ bool ABattleUnit::ExecuteSkill(int32 SkillIndex, ABattleUnit* Target)
 		return false;
 	}
 
-	// 优先执行 UBattleSkillData 资产逻辑
-	if (EquippedSkills.IsValidIndex(SkillIndex) && EquippedSkills[SkillIndex])
+	if (!SkillComp)
 	{
-		UBattleSkillData* SkillAsset = EquippedSkills[SkillIndex];
-		AP = FMath::Max(0, AP - SkillAsset->APCost);
-		RefreshLabel();
-
-		FBattleSkillExecutionContext Context;
-		Context.Caster = this;
-		Context.Target = Target;
-		Context.TargetLocation = Target ? Target->GetActorLocation() : FVector::ZeroVector;
-		return SkillAsset->Execute(Context);
+		return false;
 	}
 
-	const FBattleSkillDef& Skill = Stats.Skills[SkillIndex];
-	AP = FMath::Max(0, AP - Skill.APCost);
+	FBattleSkillSpec* Spec = SkillComp->GetSpec(SkillIndex);
+	UBattleSkillData* Skill = Spec ? Spec->SkillData.Get() : nullptr;
+	if (!Skill)
+	{
+		return false;
+	}
+
+	// 1. 扣 AP + 写冷却
+	AP = FMath::Max(0, AP - Skill->APCost);
+	SkillComp->NotifySkillActivated(SkillIndex);
 	RefreshLabel();
 
-	// 面向目标
-	const FVector ToTarget = Target->GetActorLocation() - GetActorLocation();
-	SetActorRotation(FRotator(0.0f, ToTarget.Rotation().Yaw, 0.0f));
+	// 2. 面向目标
+	if (Target && Target != this)
+	{
+		const FVector ToTarget = Target->GetActorLocation() - GetActorLocation();
+		SetActorRotation(FRotator(0.0f, ToTarget.Rotation().Yaw, 0.0f));
+	}
 
-	// 攻击动作 -> 在动画命中时刻才结算伤害 (近战手感的关键)
-	const float HitDelay = PlayAttackAnimation();
+	// 3. 延迟命中: 施法动画命中时刻才结算 (近战手感的关键)
+	float HitDelay = 0.0f;
+	if (Skill->CastAnimation)
+	{
+		PlayOneShotAnimation(Skill->CastAnimation);
+		const float Length = Skill->CastAnimation->GetPlayLength();
+		if (Length > KINDA_SMALL_NUMBER)
+		{
+			HitDelay = FMath::Clamp(Length * AttackHitFraction, 0.12f, 0.9f);
+		}
+	}
+	else
+	{
+		HitDelay = PlayAttackAnimation();
+	}
+
+	PendingHitTarget = Target;
+	PendingSkillData = Skill;
+	PendingSkillLevel = Spec->Level;
+	PendingTargetLocation = Target ? Target->GetActorLocation() : GetActorLocation() + GetActorForwardVector() * 250.0f;
+
 	if (HitDelay > KINDA_SMALL_NUMBER)
 	{
-		PendingHitTarget = Target;
-		PendingHitSkillIndex = SkillIndex;
 		GetWorldTimerManager().ClearTimer(PendingHitTimerHandle);
 		GetWorldTimerManager().SetTimer(PendingHitTimerHandle, this, &ABattleUnit::ApplyPendingHit, HitDelay, false);
 	}
 	else
 	{
 		// 无动画资产: 立即结算, 保证逻辑不卡
-		ResolveSkillImpact(Skill, Target);
+		ApplyPendingHit();
 	}
 
 	return true;
 }
 
-void ABattleUnit::ResolveSkillImpact(const FBattleSkillDef& Skill, ABattleUnit* Target)
-{
-	if (!Target)
-	{
-		return;
-	}
-
-	// 目标受击反应由 TakeBattleDamage 内部按来袭方向播放, 这里不重复触发
-
-	// 表现: 绘制技能击中射线与落点火花
-	if (UWorld* World = GetWorld())
-	{
-		const FVector Muzzle = GetActorLocation() + FVector(0.0f, 0.0f, 30.0f);
-		const FVector HitLoc = Target->GetActorLocation() + FVector(0.0f, 0.0f, 30.0f);
-		DrawDebugLine(World, Muzzle, HitLoc, Skill.Color.ToFColor(true), false, 1.2f, 0, 5.0f);
-		DrawDebugSphere(World, HitLoc, 40.0f, 12, Skill.Color.ToFColor(true), false, 1.0f);
-	}
-
-	Target->TakeBattleDamage(Skill.BaseDamage, this, Skill.DamageType);
-}
-
 void ABattleUnit::ApplyPendingHit()
 {
 	ABattleUnit* Target = PendingHitTarget.Get();
-	const int32 SkillIndex = PendingHitSkillIndex;
-	PendingHitTarget.Reset();
-	PendingHitSkillIndex = INDEX_NONE;
+	UBattleSkillData* Skill = PendingSkillData;
+	const int32 Level = PendingSkillLevel;
+	const FVector TargetLocation = PendingTargetLocation;
 
-	// 施法者被打断 / 目标已倒: 本次伤害作废
-	if (!IsAlive() || !Target || !Target->IsAlive() || !Stats.Skills.IsValidIndex(SkillIndex))
+	PendingHitTarget.Reset();
+	PendingSkillData = nullptr;
+	PendingSkillLevel = 1;
+	PendingTargetLocation = FVector::ZeroVector;
+
+	// 施法者被打断: 本次技能作废
+	if (!IsAlive() || !Skill)
 	{
 		return;
 	}
 
-	ResolveSkillImpact(Stats.Skills[SkillIndex], Target);
+	// 单体目标已倒: 目标类技能作废 (AoE 落点类仍结算)
+	if ((!Target || !Target->IsAlive()) && !Skill->AoE.IsArea())
+	{
+		return;
+	}
+
+	FBattleSkillExecutionContext Context;
+	Context.Caster = this;
+	Context.Target = Target;
+	Context.TargetLocation = Target ? Target->GetActorLocation() : TargetLocation;
+
+	// 全部数值结算交给 Resolver 管线 (命中/暴击/地形/反应/状态/事件)
+	UBattleResolver::ResolveSkill(this, Target, Context.TargetLocation, Skill, Level, Context);
 }
 
 void ABattleUnit::CancelPendingHit()
 {
 	PendingHitTarget.Reset();
-	PendingHitSkillIndex = INDEX_NONE;
+	PendingSkillData = nullptr;
+	PendingSkillLevel = 1;
+	PendingTargetLocation = FVector::ZeroVector;
 	GetWorldTimerManager().ClearTimer(PendingHitTimerHandle);
+}
+
+void ABattleUnit::PlayMoveAnimation()
+{
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MoveAnimSequence || !MeshComp)
+	{
+		return;
+	}
+	UAnimInstance* AnimInst = MeshComp->GetAnimInstance();
+	if (!AnimInst)
+	{
+		return;
+	}
+	if (!MoveMontage)
+	{
+		// 循环次数给足, 实际停止由 StopMoveAnimation 负责 (0.12s 淡入/淡出)
+		MoveMontage = UAnimMontage::CreateSlotAnimationAsDynamicMontage(
+			MoveAnimSequence, FName(TEXT("DefaultSlot")), 0.12f, 0.12f, 1.0f, 10000);
+	}
+	if (MoveMontage)
+	{
+		// 步速对齐: 基准动画约 420cm/s, 钳制播放速率减少滑步与鬼畜
+		const float PlayRate = FMath::Clamp(MoveSpeed / 420.0f, 0.8f, 1.8f);
+		AnimInst->Montage_Play(MoveMontage, PlayRate);
+	}
+}
+
+void ABattleUnit::StopMoveAnimation()
+{
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp || !MoveMontage)
+	{
+		return;
+	}
+	if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
+	{
+		if (AnimInst->Montage_IsPlaying(MoveMontage))
+		{
+			AnimInst->Montage_Stop(0.15f, MoveMontage);
+		}
+	}
 }
 
 UAnimMontage* ABattleUnit::GetOrCreateMontage(UAnimSequence* Animation)
@@ -869,7 +1029,7 @@ float ABattleUnit::PlayAttackAnimation()
 		return 0.0f;
 	}
 
-	const int32 Index = FMath::RandRange(0, AttackAnimations.Num() - 1);
+	const int32 Index = UBattleResolver::GetRng(GetWorld())->RandRange(0, AttackAnimations.Num() - 1);
 	UAnimSequence* Anim = AttackAnimations[Index];
 	if (!Anim)
 	{
@@ -919,7 +1079,7 @@ void ABattleUnit::PlayHitReaction(const FVector& FromWorldLocation)
 		return;
 	}
 
-	const int32 Index = FMath::RandRange(0, Pool.Num() - 1);
+	const int32 Index = UBattleResolver::GetRng(GetWorld())->RandRange(0, Pool.Num() - 1);
 	if (UAnimSequence* Anim = Pool[Index])
 	{
 		PlayOneShotAnimation(Anim);
@@ -939,6 +1099,7 @@ void ABattleUnit::StartDeathRagdoll(AActor* DamageCauser, float DamageAmount)
 	GetWorldTimerManager().ClearTimer(OneShotAnimTimerHandle);
 	bMoving = false;
 	MovePath.Reset();
+	StopMoveAnimation();
 	GetWorldTimerManager().ClearTimer(MoveWatchdogTimer);
 
 	if (UCharacterMovementComponent* Move = GetCharacterMovement())
@@ -967,7 +1128,7 @@ void ABattleUnit::StartDeathRagdoll(AActor* DamageCauser, float DamageAmount)
 	UAnimSequence* DeathAnim = nullptr;
 	if (DeathAnimations.Num() > 0)
 	{
-		const int32 Index = FMath::RandRange(0, DeathAnimations.Num() - 1);
+		const int32 Index = UBattleResolver::GetRng(GetWorld())->RandRange(0, DeathAnimations.Num() - 1);
 		DeathAnim = DeathAnimations[Index];
 	}
 	if (DeathAnim)
@@ -994,15 +1155,19 @@ void ABattleUnit::EnableRagdoll()
 		return;
 	}
 
-	// 兜底: 骨骼网格体没带物理资产时, 手动挂上 Mannequin 的 PA
+	// 兜底: 骨骼网格体没带物理资产时, 手动挂上 Mannequin 的 PA。
+	// 走资产目录而不是 ConstructorHelpers (后者只允许在构造函数中调用)
 	if (USkeletalMesh* SkelMesh = MeshComp->GetSkeletalMeshAsset())
 	{
 		if (!SkelMesh->GetPhysicsAsset())
 		{
-			static ConstructorHelpers::FObjectFinder<UPhysicsAsset> PAFinder(TEXT("/Game/Characters/Mannequins/Rigs/PA_Mannequin.PA_Mannequin"));
-			if (PAFinder.Succeeded())
+			if (UERAssetCatalog* Catalog = UERAssetCatalog::Get(this))
 			{
-				MeshComp->SetPhysicsAsset(PAFinder.Object);
+				if (UPhysicsAsset* PA = Catalog->LoadAsset<UPhysicsAsset>(
+					TEXT("/Game/Characters/Mannequins/Rigs/PA_Mannequin.PA_Mannequin")))
+				{
+					MeshComp->SetPhysicsAsset(PA);
+				}
 			}
 		}
 	}
@@ -1037,7 +1202,6 @@ void ABattleUnit::DebugKill()
 	// 作弊路径: 不走闪避/抗性/护盾, 直接清零, 但后续表现与结算完全复用正常战死流程
 	Integrity = 0.0f;
 	Barrier = 0.0f;
-	HP = 0;
 
 	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
 	{
@@ -1055,129 +1219,34 @@ void ABattleUnit::DebugKill()
 	OnUnitDied.Broadcast(this);
 }
 
-float ABattleUnit::TakeBattleDamage(float DamageAmount, ABattleUnit* Attacker, EDamageType DamageType)
+void ABattleUnit::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (!IsAlive() || DamageAmount <= 0.0f)
+	if (UBattleContext* Ctx = UBattleContext::Get(GetWorld()))
 	{
-		return 0.0f;
+		Ctx->UnregisterUnit(this);
 	}
-
-	const FVector FloatingLoc = GetActorLocation() + FVector(0.0f, 0.0f, GetCapsuleHalfHeight() + 35.0f);
-
-	// 1. 闪避判定 (EvasionRate)
-	if (Stats.EvasionRate > 0.0f && FMath::FRand() < Stats.EvasionRate)
-	{
-		ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, TEXT("闪避 (EVADED)"), FColor(120, 200, 255), 36.0f);
-		return 0.0f;
-	}
-
-	// 2. 抗性减免计算
-	float Resistance = 0.0f;
-	switch (DamageType)
-	{
-	case EDamageType::Kinetic:    Resistance = Stats.KineticResistance; break;
-	case EDamageType::Thermal:    Resistance = Stats.ThermalResistance; break;
-	case EDamageType::Electric:   Resistance = Stats.ElectricResistance; break;
-	case EDamageType::Chemical:   Resistance = Stats.ChemicalResistance; break;
-	case EDamageType::TrueDamage: Resistance = 0.0f; break;
-	}
-
-	// 抗性减免 [-1.0f, 0.85f]
-	Resistance = FMath::Clamp(Resistance, -1.0f, 0.85f);
-	float MitigatedDamage = DamageAmount * (1.0f - Resistance);
-	MitigatedDamage = FMath::Max(1.0f, MitigatedDamage);
-
-	// 3. 护盾吸收 (Barrier)
-	float BarrierAbsorbed = 0.0f;
-	if (Barrier > 0.0f)
-	{
-		BarrierAbsorbed = FMath::Min(Barrier, MitigatedDamage);
-		Barrier -= BarrierAbsorbed;
-		MitigatedDamage -= BarrierAbsorbed;
-	}
-
-	// 4. 扣除完整度 (Integrity)
-	const float ActualIntegrityDamage = FMath::Min(Integrity, MitigatedDamage);
-	Integrity -= ActualIntegrityDamage;
-	HP = FMath::RoundToInt(Integrity);
-
-	// 5. 飘字与反馈
-	const FColor DamageColor = GetDamageTypeColor(DamageType);
-	FString DamageText;
-	if (BarrierAbsorbed > 0.0f && ActualIntegrityDamage > 0.0f)
-	{
-		DamageText = FString::Printf(TEXT("-%d (护盾 -%d)"), FMath::RoundToInt(ActualIntegrityDamage), FMath::RoundToInt(BarrierAbsorbed));
-	}
-	else if (BarrierAbsorbed > 0.0f)
-	{
-		DamageText = FString::Printf(TEXT("[护盾吸收 %d]"), FMath::RoundToInt(BarrierAbsorbed));
-	}
-	else
-	{
-		if (Resistance <= -0.15f)
-		{
-			DamageText = FString::Printf(TEXT("-%d [弱点!]"), FMath::RoundToInt(ActualIntegrityDamage));
-		}
-		else if (Resistance >= 0.25f)
-		{
-			DamageText = FString::Printf(TEXT("-%d [抵抗]"), FMath::RoundToInt(ActualIntegrityDamage));
-		}
-		else
-		{
-			DamageText = FString::Printf(TEXT("-%d"), FMath::RoundToInt(ActualIntegrityDamage));
-		}
-	}
-
-	// 伤害越大字越大: 重击与弱点一眼可辨
-	const float TotalDealt = ActualIntegrityDamage + BarrierAbsorbed;
-	const float DamageTextSize = FMath::Clamp(36.0f + TotalDealt * 0.55f, 36.0f, 64.0f);
-	ABattleFloatingText::SpawnFloatingText(GetWorld(), FloatingLoc, DamageText, DamageColor, DamageTextSize);
-
-	// 受击反馈: 光环闪白 + 按来袭方向播受击动作
-	TriggerDiscFlash();
-	PlayHitReaction(Attacker ? Attacker->GetActorLocation() : GetActorLocation() + GetActorForwardVector() * 100.0f);
-
-	// 白模兜底路径的受击闪烁 (骨骼路径没有可用的 Tint 参数)
-	if (BodyMID)
-	{
-		BodyMID->SetVectorParameterValue(TEXT("Color"), FLinearColor::White);
-		FTimerHandle Handle;
-		GetWorldTimerManager().SetTimer(Handle, [this]() {
-			UpdateVisualColor();
-		}, 0.15f, false);
-	}
-
-	OnUnitDamaged.Broadcast(this, FMath::RoundToInt(ActualIntegrityDamage));
-	RefreshLabel();
-
-	// 6. 阵亡结算: 倒地动画 -> 布娃娃 -> 沿受击方向击飞
-	if (!IsAlive())
-	{
-		Integrity = 0.0f;
-		HP = 0;
-		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		UpdateVisualColor();
-		RefreshLabel();
-		StartDeathRagdoll(Attacker, DamageAmount);
-		OnUnitDied.Broadcast(this);
-	}
-
-	return ActualIntegrityDamage + BarrierAbsorbed;
+	Super::EndPlay(EndPlayReason);
 }
 
 void ABattleUnit::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// 头顶文字朝向摄像机
+	// 头顶文字朝向摄像机: 仅当镜头或自身移动才重算 (原每帧无条件 SetWorldRotation)
 	if (Label)
 	{
 		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
 		{
 			if (PC->PlayerCameraManager)
 			{
-				const FVector ToCam = PC->PlayerCameraManager->GetCameraLocation() - Label->GetComponentLocation();
-				Label->SetWorldRotation(ToCam.Rotation());
+				const FVector CamLoc = PC->PlayerCameraManager->GetCameraLocation();
+				const FVector SelfLoc = Label->GetComponentLocation();
+				if (!CamLoc.Equals(LastLabelCamLoc, 0.5f) || !SelfLoc.Equals(LastLabelSelfLoc, 1.0f))
+				{
+					LastLabelCamLoc = CamLoc;
+					LastLabelSelfLoc = SelfLoc;
+					Label->SetWorldRotation((CamLoc - SelfLoc).Rotation());
+				}
 			}
 		}
 	}

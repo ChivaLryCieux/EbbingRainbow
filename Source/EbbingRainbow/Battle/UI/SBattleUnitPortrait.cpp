@@ -34,9 +34,9 @@ void SBattleUnitPortrait::Construct(const FArguments& InArgs)
 	BattleGlass::ConfigureGlassBrush(TopHighlightBrush, 2.0f,
 		BattleGlass::TopHighlight, 0.0f, FLinearColor::Transparent);
 
-	// 占位头像: 圆形玻璃徽章
+	// 占位头像: 圆形玻璃徽章 (白底: 淡蓝灰填充 + 主题色描边)
 	BattleGlass::ConfigureGlassBrush(AvatarBrush, BattleGlass::RadiusAvatar,
-		FLinearColor(1, 1, 1, 0.07f), 1.4f, AccentColor.CopyWithNewOpacity(0.45f));
+		FLinearColor(0.80f, 0.85f, 0.93f, 0.55f), 1.4f, AccentColor.CopyWithNewOpacity(0.55f));
 
 	// 血量条
 	BattleGlass::ConfigureGlassBrush(HPTrackBrush, 4.0f,
@@ -125,7 +125,7 @@ void SBattleUnitPortrait::Construct(const FArguments& InArgs)
 												SAssignNew(AvatarLetter, STextBlock)
 												.Font(FCoreStyle::GetDefaultFontStyle("Bold", 19))
 												.Justification(ETextJustify::Center)
-												.ColorAndOpacity(FLinearColor::White)
+												.ColorAndOpacity(BattleGlass::TextPrimary)
 											]
 										]
 									]
@@ -323,6 +323,10 @@ void SBattleUnitPortrait::Tick(const FGeometry& AllottedGeometry, const double I
 {
 	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
 
+	// 悬停标志以 Slate 权威命中为准, 防 Enter/Leave 不配对时卡死
+	// (Leave 丢失 -> bMouseOverUI 恒真 -> 战场点击全被吞)
+	bHovered = IsHovered();
+
 	// 入场动画 (带错峰延迟, 首个 Tick 记录起始时刻)
 	if (EntranceProgress < 1.0f)
 	{
@@ -396,19 +400,19 @@ void SBattleUnitPortrait::RefreshVisuals(double CurrentTime, float DeltaTime)
 		FocusRail->Invalidate(EInvalidateWidgetReason::Paint);
 	}
 
-	// ---- 占位头像: 聚焦时填充主题色, 阵亡时灰化 ----
-	FLinearColor AvatarFill = FLinearColor(1, 1, 1, 0.07f);
-	AvatarFill = FMath::Lerp(AvatarFill, AccentColor.CopyWithNewOpacity(0.22f + 0.10f * Breath * ActiveAlpha), 0.5f + 0.5f * FocusAlpha);
-	AvatarFill = FMath::Lerp(AvatarFill, FLinearColor(1, 1, 1, 0.04f), DeathAlpha);
+	// ---- 占位头像: 聚焦时填充主题色, 阵亡时灰化 (白底: 淡蓝灰底) ----
+	FLinearColor AvatarFill = FLinearColor(0.80f, 0.85f, 0.93f, 0.55f);
+	AvatarFill = FMath::Lerp(AvatarFill, AccentColor.CopyWithNewOpacity(0.28f + 0.10f * Breath * ActiveAlpha), 0.5f + 0.5f * FocusAlpha);
+	AvatarFill = FMath::Lerp(AvatarFill, FLinearColor(0.82f, 0.84f, 0.88f, 0.40f), DeathAlpha);
 	AvatarBrush.TintColor = FSlateColor(AvatarFill);
 	AvatarBrush.OutlineSettings.Color = FSlateColor(FMath::Lerp(
-		AccentColor.CopyWithNewOpacity(0.45f),
+		AccentColor.CopyWithNewOpacity(0.55f),
 		AccentColor.CopyWithNewOpacity(0.95f),
 		FMath::Max(FocusAlpha, ActiveAlpha * (0.5f + 0.5f * Breath))));
 
 	if (AvatarLetter.IsValid())
 	{
-		FLinearColor LetterColor = FMath::Lerp(FLinearColor(1, 1, 1, 0.92f), AccentColor * 1.15f, FMath::Max(FocusAlpha, ActiveAlpha));
+		FLinearColor LetterColor = FMath::Lerp(BattleGlass::TextPrimary, AccentColor, FMath::Max(FocusAlpha, ActiveAlpha));
 		LetterColor = FMath::Lerp(LetterColor, BattleGlass::TextDead, DeathAlpha);
 		AvatarLetter->SetColorAndOpacity(LetterColor);
 	}

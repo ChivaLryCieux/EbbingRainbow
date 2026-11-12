@@ -67,6 +67,21 @@ public:
 	TArray<FRunUnitState>& GetParty() { return Party; }
 	const TArray<FRunUnitState>& GetParty() const { return Party; }
 
+	/**
+	 * 技能构筑接口 (肉鸽奖励层用): 给队员添加技能。
+	 * 技能 Id 由 UBattleSkillLibrary 目录解析, 下一场战斗自动装配。
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Run|Skills")
+	bool GrantSkillToParty(int32 PartyIndex, FName SkillId);
+
+	/** 移除队员技能 (构筑取舍/遗忘) */
+	UFUNCTION(BlueprintCallable, Category = "Run|Skills")
+	bool RemoveSkillFromParty(int32 PartyIndex, FName SkillId);
+
+	/** 查询队员已构筑技能 */
+	UFUNCTION(BlueprintPure, Category = "Run|Skills")
+	TArray<FName> GetPartySkillIds(int32 PartyIndex) const;
+
 	/** 把战斗中的存活状态写回队伍（PartyIndices 是战斗中单位对应的队伍下标）。 */
 	void WriteBackParty(const TArray<ABattleUnit*>& Units, const TArray<int32>& PartyIndices);
 

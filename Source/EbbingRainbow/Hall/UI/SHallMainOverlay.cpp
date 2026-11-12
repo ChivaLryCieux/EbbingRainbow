@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Hall/UI/SHallMainOverlay.h"
+#include "Core/ERLog.h"
 #include "Hall/UI/HallGlassButton.h"
 #include "Kismet/GameplayStatics.h"
 #include "Run/RunSubsystem.h"
@@ -183,7 +184,7 @@ void SHallMainOverlay::LaunchRouteMap()
 	UWorld* World = FindPlayWorld();
 	if (!World)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Hall] LaunchRouteMap failed: could not resolve active UWorld!"));
+		UE_LOG(LogERHall, Error, TEXT("[Hall] LaunchRouteMap failed: could not resolve active UWorld!"));
 		return;
 	}
 
@@ -199,7 +200,7 @@ void SHallMainOverlay::LaunchRouteMap()
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[Hall] Launching Route Map (/Game/Battle/Maps/Lvl_Route)..."));
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Launching Route Map (/Game/Battle/Maps/Lvl_Route)..."));
 	UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Route")), true,
 		TEXT("game=/Script/EbbingRainbow.RouteGameMode"));
 }
@@ -207,14 +208,14 @@ void SHallMainOverlay::LaunchRouteMap()
 FReply SHallMainOverlay::HandlePersonnelClicked()
 {
 	// 人员管理: 功能待实现
-	UE_LOG(LogTemp, Log, TEXT("[Hall] Personnel Management clicked (not implemented yet)."));
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Personnel Management clicked (not implemented yet)."));
 	return FReply::Handled();
 }
 
 FReply SHallMainOverlay::HandleRoutesClicked()
 {
 	// 航线管理: 进入航线图（Roguelike DAG）
-	UE_LOG(LogTemp, Log, TEXT("[Hall] Routes Management clicked -> Route Map."));
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Routes Management clicked -> Route Map."));
 	LaunchRouteMap();
 	return FReply::Handled();
 }

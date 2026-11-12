@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/UI/SBattleResultPanel.h"
+#include "Core/ERLog.h"
 #include "Battle/UI/SBattleGlassKit.h"
 
 #include "Widgets/SOverlay.h"
@@ -17,13 +18,13 @@ void SBattleResultPanel::Construct(const FArguments& InArgs)
 
 	// ---------------- 画刷 ----------------
 
-	// 主面板: 比常规玻璃更实一点, 保证结算数字读得清
+	// 主面板: 白色半透明, 比常规玻璃更实一点保证结算数字读得清
 	BattleGlass::ConfigureGlassBrush(PanelBrush, BattleGlass::RadiusPanel,
-		FLinearColor(0.030f, 0.045f, 0.072f, 0.94f), 1.2f, BattleGlass::HairlineHover);
+		FLinearColor(0.97f, 0.98f, 1.00f, 0.92f), 1.2f, BattleGlass::HairlineHover);
 	BattleGlass::ConfigureGlassBrush(PanelShadowBrush, BattleGlass::RadiusPanel + 8.0f,
 		FLinearColor(0.0f, 0.0f, 0.0f, 0.52f), 0.0f, FLinearColor::Transparent);
 	BattleGlass::ConfigureGlassBrush(DividerBrush, 0.0f,
-		FLinearColor(1.0f, 1.0f, 1.0f, 0.12f), 0.0f, FLinearColor::Transparent);
+		FLinearColor(0.25f, 0.30f, 0.40f, 0.28f), 0.0f, FLinearColor::Transparent);
 	BattleGlass::ConfigureGlassBrush(BackdropBrush, 0.0f,
 		FLinearColor(0.0f, 0.0f, 0.0f, 0.42f), 0.0f, FLinearColor::Transparent);
 
@@ -262,7 +263,7 @@ void SBattleResultPanel::Tick(const FGeometry& AllottedGeometry, const double In
 		const FGeometry& Geo = GetCachedGeometry();
 		const FVector2D AbsPos = Geo.GetAbsolutePosition();
 		const FVector2D AbsSize = Geo.GetAbsoluteSize();
-		UE_LOG(LogTemp, Log, TEXT("[BattleUI] 结算面板布局: 屏幕=(%.0f, %.0f) 尺寸=%.0fx%.0f"),
+		UE_LOG(LogERBattleUI, Log, TEXT("[BattleUI] 结算面板布局: 屏幕=(%.0f, %.0f) 尺寸=%.0fx%.0f"),
 			AbsPos.X, AbsPos.Y, AbsSize.X, AbsSize.Y);
 	}
 }

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
-#include "WFC3DTypes.h"
+#include "WFC/WFC3DTypes.h"
 #include "WFC3DModuleLibrary.generated.h"
 
 /**

@@ -2,7 +2,7 @@ import json
 import os
 
 KIT = r"D:\EbbingRainbow\sci_fi_interior_20fbx\WFC_Kit"
-OUT = r"D:\EbbingRainbow\Source\EbbingRainbow\WFC\Arch\WFCKitTileTable.h"
+OUT = r"D:\EbbingRainbow\Source\EbbingRainbow\Legacy\Atrium\WFCKitTileTable.h"
 
 data = json.load(open(os.path.join(KIT, "tilesets", "kit.json"), encoding="utf-8"))
 walls = [t for t in data["tiles"] if t["layer"] == "wall"]

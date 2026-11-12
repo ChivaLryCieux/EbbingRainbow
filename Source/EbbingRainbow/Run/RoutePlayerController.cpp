@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Run/RoutePlayerController.h"
+#include "Core/ERLog.h"
 
 #include "Run/RouteGraphGenerator.h"
 #include "Run/RouteHUD.h"
@@ -29,12 +30,12 @@ void ARoutePlayerController::RouteDump()
 	URunSubsystem* Run = GetGameInstance() ? GetGameInstance()->GetSubsystem<URunSubsystem>() : nullptr;
 	if (!Run || !Run->HasActiveRun())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[RouteDump] 没有进行中的 Run。"));
+		UE_LOG(LogERRun, Warning, TEXT("[RouteDump] 没有进行中的 Run。"));
 		return;
 	}
 
 	const FRouteGraph& Graph = Run->GetGraph();
-	UE_LOG(LogTemp, Log, TEXT("[RouteDump] %s"), *FRouteGraphGenerator::MakeReport(Graph));
+	UE_LOG(LogERRun, Log, TEXT("[RouteDump] %s"), *FRouteGraphGenerator::MakeReport(Graph));
 
 	for (const FRouteNode& Node : Graph.Nodes)
 	{
@@ -43,7 +44,7 @@ void ARoutePlayerController::RouteDump()
 		{
 			Next += FString::Printf(TEXT("%d "), NextId);
 		}
-		UE_LOG(LogTemp, Log, TEXT("[RouteDump] id=%d L=%d S=%d T=%d visited=%d next[%s]"),
+		UE_LOG(LogERRun, Log, TEXT("[RouteDump] id=%d L=%d S=%d T=%d visited=%d next[%s]"),
 			Node.Id, Node.Layer, Node.Slot, static_cast<int32>(Node.Type), Node.bVisited ? 1 : 0, *Next);
 	}
 }
@@ -56,5 +57,5 @@ void ARoutePlayerController::RouteSelect(int32 NodeId)
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[RouteSelect] 当前 HUD 不是 ARouteHUD。"));
+	UE_LOG(LogERRun, Warning, TEXT("[RouteSelect] 当前 HUD 不是 ARouteHUD。"));
 }

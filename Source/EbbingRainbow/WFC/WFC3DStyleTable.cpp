@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "WFC3DStyleTable.h"
+#include "WFC/WFC3DStyleTable.h"
+#include "Core/ERLog.h"
 
 TSubclassOf<AWFC3DArenaGeneratorBase> UWFC3DStyleTable::Resolve(EWFCBuildingStyle InStyle) const
 {
@@ -14,14 +15,14 @@ TSubclassOf<AWFC3DArenaGeneratorBase> UWFC3DStyleTable::Resolve(EWFCBuildingStyl
 		UClass* LoadedClass = Entry.GeneratorClass.LoadSynchronous();
 		if (!LoadedClass)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[WFC] StyleTable: style %d has no valid generator class (soft path '%s')."),
+			UE_LOG(LogERWFC, Warning, TEXT("[WFC] StyleTable: style %d has no valid generator class (soft path '%s')."),
 				static_cast<int32>(InStyle), *Entry.GeneratorClass.ToString());
 			return nullptr;
 		}
 
 		if (!LoadedClass->IsChildOf(AWFC3DArenaGeneratorBase::StaticClass()))
 		{
-			UE_LOG(LogTemp, Error, TEXT("[WFC] StyleTable: class '%s' for style %d is not an arena generator."),
+			UE_LOG(LogERWFC, Error, TEXT("[WFC] StyleTable: class '%s' for style %d is not an arena generator."),
 				*LoadedClass->GetName(), static_cast<int32>(InStyle));
 			return nullptr;
 		}

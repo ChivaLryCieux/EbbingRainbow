@@ -1,0 +1,9 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Core/ERLog.h"
+
+DEFINE_LOG_CATEGORY(LogERBattle);
+DEFINE_LOG_CATEGORY(LogERBattleUI);
+DEFINE_LOG_CATEGORY(LogERWFC);
+DEFINE_LOG_CATEGORY(LogERRun);
+DEFINE_LOG_CATEGORY(LogERHall);

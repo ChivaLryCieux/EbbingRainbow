@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "WFC3DArenaGeneratorBase.h"
+#include "WFC/WFC3DArenaGeneratorBase.h"
 #include "WFC3DArenaGenerator_Nature.generated.h"
 
 class UProceduralMeshComponent;
@@ -17,7 +17,7 @@ class UMaterialInterface;
  * 思路:
  * - 从 Gaea 高度图 (Content/Nature/E-R-Terrain.u16, 4033^2 uint16) 随机截取
  *   一块窗口做高通滤波得到中小尺度细节; 宏观形态由本生成器的
- *   Perlin + 岛形遮罩决定 (平顶可玩区 -> 缓坡丘陵 -> 边缘悬崖 -> 虚空)。
+ *   Perlin + 岛形遮罩决定 (骨架台地可玩区 -> 缓坡丘陵 -> 边缘悬崖 -> 虚空)。
  * - 地形用 UProceduralMeshComponent 运行时构建, 带碰撞 -> Recast 自动烘焙
  *   可行走面 (坡度限制内)。出生点仍由 BattleArena 在 nav 面上自动选。
  * - 植被/岩石/废墟全部 HISM 种子化撒点; 岛底挂漂浮岩块, 与体素岛同一
@@ -48,6 +48,17 @@ private:
 	static constexpr float IslandR0 = 5600.0f;   // 岛轮廓基准半径 (cm)
 	static constexpr float RimDrop = 2600.0f;    // 边缘崖壁下落深度 (cm)
 
+	// ---- 可玩区起伏 (骨架+台地): 调画面先动这里 ----
+	// 坡度预算: 各分量每 50cm 步进梯度之和 <=10cm (松弛器兜底收敛),
+	// 梯田坡道处 x(1/ReliefTierRamp), 过陡被松弛器自动放宽成宽坡
+	static constexpr float ReliefDetailAmp = 0.20f;  // Gaea 细节振幅 (预模糊+RMS260cm 后 ≈ ±52cm)
+	static constexpr float ReliefHillAmp = 230.0f;   // 低频丘陵振幅, 波长 ~40m (cm)
+	static constexpr float ReliefTiltAmp = 190.0f;    // 定向主坡总升幅 (cm)
+	static constexpr float ReliefHollowAmp = -170.0f; // 洼地深度 (cm)
+	static constexpr float ReliefMidAmp = 70.0f;      // 中频起伏振幅, 波长 ~18m (cm)
+	static constexpr float ReliefTierH = 150.0f;      // 梯田级高: >150cm 恰好触发技能高差规则
+	static constexpr float ReliefTierRamp = 0.45f;   // 每级中坡道占的高度比例 (其余为平顶)
+
 	struct FNatField
 	{
 		TArray<float> H;                         // GridN*GridN 世界高度 (cm)
@@ -56,12 +67,15 @@ private:
 		float MaxRadius = 0.0f;                  // 实际最大轮廓半径
 	};
 
-	/** 载入(并缓存) Gaea 高度图; 失败返回 false 走纯 Perlin 兜底 */
-	static bool LoadHeightmap();
+	/**
+	 * 载入(并缓存) Gaea 高度图的一个截取窗口; 失败返回 false 走纯 Perlin 兜底。
+	 * 只读需要的 Win*Win 区域 (逐行 Seek), 不再常驻整张 4033^2 (~32.5MB)。
+	 */
+	static bool LoadHeightmap(int32 Ox, int32 Oy, int32 Win);
 	static const TArray<uint16>& HeightData() { return CachedHeight; }
-	static bool HasHeight() { return CachedHeight.Num() == 4033 * 4033; }
+	static bool HasHeight() { return CachedHeight.Num() > 0; }
 
-	/** 构建高度场: 截取+高通细节 + 岛形 + 可玩区坡度松弛 */
+	/** 构建高度场: 截取+高通细节 + 岛形 + 可玩区骨架台地 + 坡度松弛 */
 	void BuildField(int32 Seed, FNatField& OutField) const;
 	/** 世界坐标 -> 高度场采样 (双线性); 不在岛内返回 false */
 	bool SampleHeight(const FNatField& Field, float X, float Y, float& OutH, float& OutSlopeDeg) const;
@@ -75,8 +89,8 @@ private:
 	// ---- 行走层 ----
 	// UE5.8 中运行时构建的 ProceduralMeshComponent 不向 nav 八叉树供几何时
 	// (元素初始化时无 BodySetup, 之后不重建), 已用微型方块实验证实。
-	// 因此用隐形 HISM 阶梯板按高度场铺一层 nav 地面: 板间距松弛到 <=30cm
-	// (Recast 步高 35), 走不过去的陡沿自然断开。
+	// 因此用隐形 HISM 阶梯板按高度场铺一层 nav 地面: 100cm 板距,
+	// 板间高差松弛到 <=30cm (Recast 步高 35), 走不过去的陡沿自然断开。
 	void BuildNavProxy(const FNatField& Field);
 
 	// ---- 撒点 ----
@@ -101,6 +115,9 @@ private:
 	TArray<TObjectPtr<AActor>> AtmosphereActors;
 	TArray<TObjectPtr<UInstancedStaticMeshComponent>> ScatterComps;
 
-	static TArray<uint16> CachedHeight;
-	static bool bHeightLoadAttempted;
+	static TArray<uint16> CachedHeight;   // Win*Win 窗口数据 (行主序)
+	static int32 CachedWin;               // 当前缓存窗口参数
+	static int32 CachedOx;
+	static int32 CachedOy;
+	static bool bHeightFileMissing;       // 源文件缺失 -> 永久 Perlin 兜底
 };

@@ -27,7 +27,9 @@ enum class ERouteNodeVisual : uint8
 class SRouteNodeWidget : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS(SRouteNodeWidget) {}
+	SLATE_BEGIN_ARGS(SRouteNodeWidget)
+		: _NodeId(-1)
+	{}
 		SLATE_ARGUMENT(int32, NodeId)
 		SLATE_ARGUMENT(FText, Glyph)
 		SLATE_ARGUMENT(FText, Label)

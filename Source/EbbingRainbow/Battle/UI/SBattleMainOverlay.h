@@ -10,6 +10,7 @@
 #include "Battle/Core/BattleTypes.h"
 
 class UBattleManager;
+class UTexture2D;
 class ABattlePlayerController;
 class ABattleGameMode;
 class ABattleUnit;
@@ -35,15 +36,17 @@ public:
 		, _APCost(0.0f)
 		, _bIsMoveCard(false)
 		, _AccentColor(FLinearColor(0.2f, 0.6f, 1.0f))
+		, _IconTexture(nullptr)
 	{}
 		SLATE_ARGUMENT(int32, CardIndex)
 		SLATE_ARGUMENT(FText, Title)
-		SLATE_ARGUMENT(FText, Category)
-		SLATE_ARGUMENT(FText, Description)
+		SLATE_ARGUMENT(FText, ToolTip)
+		SLATE_ARGUMENT(FText, CooldownBadge)
 		SLATE_ARGUMENT(FText, HotkeyText)
 		SLATE_ARGUMENT(float, APCost)
 		SLATE_ARGUMENT(bool, bIsMoveCard)
 		SLATE_ARGUMENT(FLinearColor, AccentColor)
+		SLATE_ARGUMENT(UTexture2D*, IconTexture)
 		SLATE_EVENT(FOnClicked, OnClicked)
 	SLATE_END_ARGS()
 
@@ -74,6 +77,9 @@ private:
 
 	FSlateBrush CardBgBrush;
 	FSlateBrush CostGemBrush;
+	FSlateBrush CooldownBrush;
+	TSharedPtr<FSlateBrush> IconBrush;
+	FText CooldownText;
 	TSharedPtr<SBorder> BorderWidget;
 };
 
@@ -144,7 +150,9 @@ private:
 
 	// 缓存状态比对
 	TWeakObjectPtr<ABattleUnit> CachedActiveUnit;
-	int32 CachedQueueHash = 0;
+	int32 CachedQueueRevision = -1;
+	int32 CachedUnitsRevision = -1;
+	int32 CachedIntegritySum = -1;
 	float CachedAP = -1.0f;
 	int32 CachedHP = -1;
 	EPlayerInteractionMode CachedMode = EPlayerInteractionMode::Idle;

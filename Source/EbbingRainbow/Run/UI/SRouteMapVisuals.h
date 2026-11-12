@@ -12,7 +12,9 @@
 class SRouteBackdrop : public SLeafWidget
 {
 public:
-	SLATE_BEGIN_ARGS(SRouteBackdrop) {}
+	SLATE_BEGIN_ARGS(SRouteBackdrop)
+		: _Seed(0)
+	{}
 		SLATE_ARGUMENT(int32, Seed)
 	SLATE_END_ARGS()
 

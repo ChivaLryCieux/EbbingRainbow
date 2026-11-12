@@ -1,9 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Player/BattlePlayerController.h"
+#include "Core/ERLog.h"
 #include "Battle/Core/BattleGameMode.h"
 #include "Battle/Core/BattleManager.h"
 #include "Battle/Units/BattleUnit.h"
+#include "Battle/Skills/BattleSkillData.h"
+#include "Battle/Terrain/BattleTerrainQuery.h"
 #include "Battle/Player/TacticalCameraPawn.h"
 #include "Battle/UI/BattleHUD.h"
 #include "Engine/World.h"
@@ -155,6 +158,7 @@ void ABattlePlayerController::ToggleMoveMode()
 	{
 		SetInteractionMode(EPlayerInteractionMode::Moving);
 	}
+	UE_LOG(LogERBattle, Log, TEXT("[BattleInput] ToggleMoveMode -> InteractionMode=%d (0=Idle 1=Moving 2=Targeting)"), (int32)InteractionMode);
 }
 
 void ABattlePlayerController::StartSkillTargeting(int32 SkillIndex)
@@ -166,8 +170,17 @@ void ABattlePlayerController::StartSkillTargeting(int32 SkillIndex)
 	}
 
 	ABattleUnit* Active = Mgr->GetActiveUnit();
-	if (!Active || Active->Team != EBattleTeam::Player || !Active->GetSkills().IsValidIndex(SkillIndex))
+	if (!Active || Active->Team != EBattleTeam::Player || !Active->GetSkillSpecs().IsValidIndex(SkillIndex))
 	{
+		return;
+	}
+
+	// 仅自身目标的技能 (自身增益 / 自身为圆心的周身 AoE) 一键即放, 不再要求点选自己
+	const FBattleSkillSpec& Spec = Active->GetSkillSpecs()[SkillIndex];
+	const UBattleSkillData* Skill = Spec.SkillData;
+	if (Skill && Skill->TargetFilter == ESkillTargetFilter::SelfOnly)
+	{
+		Mgr->RequestSkill(Active, SkillIndex, Active);
 		return;
 	}
 
@@ -233,7 +246,7 @@ void ABattlePlayerController::FocusOnUnit(ABattleUnit* Unit)
 		{
 			Cam->ClearFocus();
 		}
-		UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 解除聚焦, 回到全景锚点 (Unit=%s)"),
+		UE_LOG(LogERBattle, Log, TEXT("[BattleFocus] 解除聚焦, 回到全景锚点 (Unit=%s)"),
 			Unit ? *Unit->Stats.DisplayName : TEXT("none"));
 		return;
 	}
@@ -249,7 +262,7 @@ void ABattlePlayerController::FocusOnUnit(ABattleUnit* Unit)
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[BattleFocus] 请求聚焦 -> %s @ (%.0f, %.0f, %.0f)"),
+	UE_LOG(LogERBattle, Log, TEXT("[BattleFocus] 请求聚焦 -> %s @ (%.0f, %.0f, %.0f)"),
 		*Unit->Stats.DisplayName, Unit->GetActorLocation().X, Unit->GetActorLocation().Y, Unit->GetActorLocation().Z);
 
 	if (ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(GetPawn()))
@@ -265,8 +278,11 @@ void ABattlePlayerController::OnLeftClick()
 	{
 		if (ABattleHUD* HUD = Cast<ABattleHUD>(GetHUD()))
 		{
-			if (HUD->HandleMouseClick(FVector2D(MX, MY)) || HUD->IsMouseOverUI())
+			const bool bHandled = HUD->HandleMouseClick(FVector2D(MX, MY));
+			const bool bOverUI = HUD->IsMouseOverUI();
+			if (bHandled || bOverUI)
 			{
+				UE_LOG(LogERBattle, Log, TEXT("[BattleInput] 左键被 UI 吞掉: 鼠标=(%.0f,%.0f) handled=%d overUI=%d"), MX, MY, bHandled, bOverUI);
 				return;
 			}
 		}
@@ -275,21 +291,27 @@ void ABattlePlayerController::OnLeftClick()
 	UBattleManager* Mgr = GetBattleManager();
 	if (!Mgr || Mgr->GetBattleState() != EBattleState::TurnActive)
 	{
+		UE_LOG(LogERBattle, Log, TEXT("[BattleInput] 左键忽略: 战斗状态=%d (需 TurnActive=2)"), Mgr ? (int32)Mgr->GetBattleState() : -1);
 		return;
 	}
 
 	ABattleUnit* Active = Mgr->GetActiveUnit();
 	if (!Active || Active->Team != EBattleTeam::Player || !Active->IsAlive())
 	{
+		UE_LOG(LogERBattle, Log, TEXT("[BattleInput] 左键忽略: 无有效玩家活动单位 Active=%s"), *GetNameSafe(Active));
 		return;
 	}
 
 	FHitResult Hit;
 	if (RaycastUnderCursor(Hit, ECC_Visibility))
 	{
+		UE_LOG(LogERBattle, Log, TEXT("[BattleInput] 左键场景命中: 模式=%d 命中=%s 位置=(%.0f,%.0f,%.0f)"),
+			(int32)InteractionMode, *GetNameSafe(Hit.GetActor()), Hit.Location.X, Hit.Location.Y, Hit.Location.Z);
 		if (InteractionMode == EPlayerInteractionMode::Moving)
 		{
-			if (Mgr->RequestMove(Active, Hit.Location))
+			const bool bMoved = Mgr->RequestMove(Active, Hit.Location);
+			UE_LOG(LogERBattle, Log, TEXT("[BattleInput] 移动请求 -> %d"), bMoved);
+			if (bMoved)
 			{
 				SetInteractionMode(EPlayerInteractionMode::Idle);
 			}
@@ -323,9 +345,18 @@ void ABattlePlayerController::OnLeftClick()
 			// 默认 Idle 状态下: 点击地面直接发起移动
 			if (Active->AP >= 0.5f)
 			{
-				Mgr->RequestMove(Active, Hit.Location);
+				const bool bMoved = Mgr->RequestMove(Active, Hit.Location);
+				UE_LOG(LogERBattle, Log, TEXT("[BattleInput] Idle 地面直移 -> %d (AP=%d)"), bMoved, Active->AP);
+			}
+			else
+			{
+				UE_LOG(LogERBattle, Log, TEXT("[BattleInput] Idle 地面点击忽略: AP=%d 不足"), Active->AP);
 			}
 		}
+	}
+	else
+	{
+		UE_LOG(LogERBattle, Log, TEXT("[BattleInput] 左键射线未命中任何物体 (ECC_Visibility)"));
 	}
 }
 
@@ -365,7 +396,7 @@ void ABattlePlayerController::BattleCheatWin()
 	{
 		if (ABattleGameMode* GM = Cast<ABattleGameMode>(World->GetAuthGameMode()))
 		{
-			UE_LOG(LogTemp, Log, TEXT("[Battle] 控制台命令 BattleCheatWin: 秒杀全部敌人"));
+			UE_LOG(LogERBattle, Log, TEXT("[Battle] 控制台命令 BattleCheatWin: 秒杀全部敌人"));
 			GM->DebugKillAllEnemies();
 		}
 	}
@@ -377,7 +408,7 @@ void ABattlePlayerController::BattleResultReturn()
 	{
 		if (ABattleGameMode* GM = Cast<ABattleGameMode>(World->GetAuthGameMode()))
 		{
-			UE_LOG(LogTemp, Log, TEXT("[Battle] 控制台命令 BattleResultReturn: 结算返回"));
+			UE_LOG(LogERBattle, Log, TEXT("[Battle] 控制台命令 BattleResultReturn: 结算返回"));
 			GM->ReturnFromBattle();
 		}
 	}
@@ -500,24 +531,58 @@ void ABattlePlayerController::DrawSkillPreview()
 	ABattleUnit* Active = Mgr->GetActiveUnit();
 	if (!Active || Active->Team != EBattleTeam::Player || !Active->IsAlive()) return;
 
-	const TArray<FBattleSkillDef>& Skills = Active->GetSkills();
+	const TArray<FBattleSkillSpec>& Skills = Active->GetSkillSpecs();
 	if (!Skills.IsValidIndex(SelectedSkillIndex)) return;
 
-	const FBattleSkillDef& Skill = Skills[SelectedSkillIndex];
+	const FBattleSkillSpec& Spec = Skills[SelectedSkillIndex];
+	const UBattleSkillData* Skill = Spec.SkillData;
+	if (!Skill) return;
+
 	UWorld* World = GetWorld();
 
-	// 在脚底绘制射程范围圈
+	// 在脚底绘制射程范围圈 (自身 AoE 画作用半径; 冷却中转为灰色)
 	const FVector Center = Active->GetActorLocation() - FVector(0, 0, Active->GetCapsuleHalfHeight() - 5.0f);
-	DrawDebugCircle(World, Center, Skill.Range, 48, Skill.Color.ToFColor(true), false, -1.0f, 0, 3.0f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+	const FColor RingColor = Spec.IsOnCooldown() ? FColor(120, 120, 120) : Skill->ThemeColor.ToFColor(true);
+	const float PreviewRadius = (Skill->TargetFilter == ESkillTargetFilter::SelfOnly && Skill->AoE.IsArea())
+		? Skill->AoE.Radius : Skill->Range;
+	DrawDebugCircle(World, Center, PreviewRadius, 48, RingColor, false, -1.0f, 0, 3.0f, FVector(1, 0, 0), FVector(0, 1, 0), false);
 
-	// 若鼠标悬停在敌军上, 绘制连接线并提示是否在射程内
-	if (CurrentHoveredUnit && CurrentHoveredUnit->IsAlive() && CurrentHoveredUnit->Team == EBattleTeam::Enemy)
+	// 若鼠标悬停在敌军上: 3D 射程 + 视线/掩体提示 (地形耦合)
+	if (CurrentHoveredUnit && CurrentHoveredUnit->IsAlive())
 	{
-		const float Dist = FVector::Dist2D(Active->GetActorLocation(), CurrentHoveredUnit->GetActorLocation());
-		const bool bInRange = (Dist <= Skill.Range);
-		const FColor BeamColor = bInRange ? FColor::Yellow : FColor::Red;
+		const float Dist = FVector::Dist(Active->GetActorLocation(), CurrentHoveredUnit->GetActorLocation());
+		const bool bInRange = (Dist <= Skill->Range);
+
+		bool bHasLOS = true;
+		FBattleTerrainContext TerrainCtx;
+		if (UBattleTerrainQuery* Terrain = UBattleTerrainQuery::Get(World))
+		{
+			TerrainCtx = Terrain->Evaluate(Active, CurrentHoveredUnit);
+			bHasLOS = TerrainCtx.bHasLineOfSight;
+		}
+
+		FColor BeamColor = FColor::Yellow;
+		if (!bInRange)
+		{
+			BeamColor = FColor::Red;
+		}
+		else if (Skill->bRequiresLineOfSight && !bHasLOS)
+		{
+			BeamColor = FColor(160, 60, 255); // 紫色: 无视线
+		}
+		else if (TerrainCtx.Cover == ECoverQuality::Half)
+		{
+			BeamColor = FColor(255, 170, 40); // 橙色: 目标有掩体
+		}
 
 		DrawDebugLine(World, Active->GetActorLocation() + FVector(0, 0, 30.0f),
 			CurrentHoveredUnit->GetActorLocation() + FVector(0, 0, 30.0f), BeamColor, false, -1.0f, 0, 3.5f);
+
+		// AoE 落点范围圈
+		if (Skill->AoE.IsArea())
+		{
+			DrawDebugSphere(World, CurrentHoveredUnit->GetActorLocation(), Skill->AoE.Radius, 20,
+				FColor(255, 120, 40), false, -1.0f, 0, 1.5f);
+		}
 	}
 }

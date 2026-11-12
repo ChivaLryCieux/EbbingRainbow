@@ -27,7 +27,9 @@ DECLARE_DELEGATE_OneParam(FOnRouteNodeClicked, int32);
 class SRouteMapOverlay : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS(SRouteMapOverlay) {}
+	SLATE_BEGIN_ARGS(SRouteMapOverlay)
+		: _RunSubsystem(nullptr)
+	{}
 		SLATE_ARGUMENT(URunSubsystem*, RunSubsystem)
 		SLATE_EVENT(FOnRouteNodeClicked, OnNodeClicked)
 	SLATE_END_ARGS()

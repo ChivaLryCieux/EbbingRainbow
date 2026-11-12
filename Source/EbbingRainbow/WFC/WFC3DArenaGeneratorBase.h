@@ -4,9 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "WFC3DTypes.h"
-#include "WFC3DSolver.h"
-#include "WFCGenerationTypes.h"
+#include "WFC/WFC3DTypes.h"
+#include "WFC/WFC3DSolver.h"
+#include "WFC/WFCGenerationTypes.h"
 #include "WFC3DArenaGeneratorBase.generated.h"
 
 class UInstancedStaticMeshComponent;

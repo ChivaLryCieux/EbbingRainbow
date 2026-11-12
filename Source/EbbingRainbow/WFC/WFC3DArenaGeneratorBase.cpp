@@ -1,7 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "WFC3DArenaGeneratorBase.h"
-#include "WFC3DModuleLibrary.h"
+#include "WFC/WFC3DArenaGeneratorBase.h"
+#include "Core/ERLog.h"
+#include "WFC/WFC3DModuleLibrary.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -23,7 +24,7 @@ bool AWFC3DArenaGeneratorBase::Generate(const FWFCGenerationRequest& Request)
 
 	if (Request.Scale.X <= 0 || Request.Scale.Y <= 0 || Request.Scale.Z <= 0)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC] Generate aborted: invalid scale %s."), *Request.ToString());
+		UE_LOG(LogERWFC, Error, TEXT("[WFC] Generate aborted: invalid scale %s."), *Request.ToString());
 		return false;
 	}
 
@@ -35,7 +36,7 @@ bool AWFC3DArenaGeneratorBase::Generate(const FWFCGenerationRequest& Request)
 	TArray<TArray<TBitArray<>>> Compatibility;
 	if (!BuildModules(Modules, Compatibility) || Modules.Num() == 0)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC] Generate aborted: BuildModules failed (%s)."), *Request.ToString());
+		UE_LOG(LogERWFC, Error, TEXT("[WFC] Generate aborted: BuildModules failed (%s)."), *Request.ToString());
 		LastResult.UsedSeed = Seed;
 		LastResult.UsedScale = Request.Scale;
 		LastResult.CellWorldSize = GetCellWorldSize();
@@ -52,7 +53,7 @@ bool AWFC3DArenaGeneratorBase::Generate(const FWFCGenerationRequest& Request)
 	TMap<int32, int32> Clamps;
 	if (!BuildConstraints(Request.Scale, Seed, Clamps))
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC] Generate aborted: BuildConstraints failed (%s)."), *Request.ToString());
+		UE_LOG(LogERWFC, Error, TEXT("[WFC] Generate aborted: BuildConstraints failed (%s)."), *Request.ToString());
 		LastResult.UsedSeed = Seed;
 		LastResult.UsedScale = Request.Scale;
 		LastResult.CellWorldSize = GetCellWorldSize();
@@ -63,7 +64,7 @@ bool AWFC3DArenaGeneratorBase::Generate(const FWFCGenerationRequest& Request)
 	const bool bSolved = Solver.Solve(MaxRetryAttempts, Seed, Clamps);
 	if (!bSolved)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WFC] Generate failed: solver exhausted %d retries (%s, clamps=%d)."),
+		UE_LOG(LogERWFC, Warning, TEXT("[WFC] Generate failed: solver exhausted %d retries (%s, clamps=%d)."),
 			MaxRetryAttempts, *Request.ToString(), Clamps.Num());
 		LastResult.UsedSeed = Seed;
 		LastResult.UsedScale = Request.Scale;
@@ -87,7 +88,7 @@ bool AWFC3DArenaGeneratorBase::Generate(const FWFCGenerationRequest& Request)
 	LastResult.CellCount = Request.Scale.X * Request.Scale.Y * Request.Scale.Z;
 	LastResult.DurationMs = DurationMs;
 
-	UE_LOG(LogTemp, Log, TEXT("[WFC] Generated %s in %.2f ms (modules=%d, cells=%d)."),
+	UE_LOG(LogERWFC, Log, TEXT("[WFC] Generated %s in %.2f ms (modules=%d, cells=%d)."),
 		*Request.ToString(), DurationMs, LastResult.ModuleCount, LastResult.CellCount);
 	return true;
 }
@@ -168,9 +169,13 @@ void AWFC3DArenaGeneratorBase::RenderResult()
 
 	if (CellSize.IsNearlyZero())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC] RenderResult aborted: CellWorldSize is zero."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC] RenderResult aborted: CellWorldSize is zero."));
 		return;
 	}
+
+	// 先按组件收集变换再批量 AddInstances: 逐实例 AddInstance 每次都触发
+	// 实例树/包围盒增量更新, 批量提交只做一次最终重建
+	TMap<TObjectPtr<UInstancedStaticMeshComponent>, TArray<FTransform>> Batched;
 
 	for (int32 SlotIdx = 0; SlotIdx < Slots.Num(); ++SlotIdx)
 	{
@@ -199,7 +204,7 @@ void AWFC3DArenaGeneratorBase::RenderResult()
 			{
 				FTransform CellTransform = Mod.LocalTransform;
 				CellTransform.AddToTranslation(CellLocalPos);
-				Comp->AddInstance(CellTransform, /* bWorldSpace = */ false);
+				Batched.FindOrAdd(Comp).Add(CellTransform);
 			}
 		}
 
@@ -212,9 +217,17 @@ void AWFC3DArenaGeneratorBase::RenderResult()
 				{
 					FTransform PartTransform = Part.LocalTransform;
 					PartTransform.AddToTranslation(CellLocalPos);
-					Comp->AddInstance(PartTransform, /* bWorldSpace = */ false);
+					Batched.FindOrAdd(Comp).Add(PartTransform);
 				}
 			}
+		}
+	}
+
+	for (auto& Pair : Batched)
+	{
+		if (Pair.Key)
+		{
+			Pair.Key->AddInstances(Pair.Value, /* bShouldReturnIndices = */ false, /* bWorldSpace = */ false);
 		}
 	}
 }

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "WFC3DSolver.h"
+#include "WFC/WFC3DSolver.h"
+#include "Core/ERLog.h"
 
 FWFC3DSolver::FWFC3DSolver()
 {
@@ -240,7 +241,7 @@ bool FWFC3DSolver::Propagate()
 						|| !CompiledModules.IsValidIndex(NeighborModule)
 						|| !CompatibilityTable[CurrentModule][DirIdx][NeighborModule])
 					{
-						UE_LOG(LogTemp, Warning, TEXT("[WFC] Contradiction between collapsed cells (%d,%d,%d) dir %d."),
+						UE_LOG(LogERWFC, Warning, TEXT("[WFC] Contradiction between collapsed cells (%d,%d,%d) dir %d."),
 							CurrentCoord.X, CurrentCoord.Y, CurrentCoord.Z, DirIdx);
 						return false;
 					}
@@ -380,7 +381,7 @@ bool FWFC3DSolver::Solve(int32 MaxRetries, int32 Seed, const TMap<int32, int32>&
 {
 	if (TotalCells == 0 || TotalModules == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[WFC] Solve failed: Grid or Modules not initialized!"));
+		UE_LOG(LogERWFC, Warning, TEXT("[WFC] Solve failed: Grid or Modules not initialized!"));
 		return false;
 	}
 
@@ -423,7 +424,7 @@ bool FWFC3DSolver::Solve(int32 MaxRetries, int32 Seed, const TMap<int32, int32>&
 			if (!Propagate())
 			{
 				// 固定约束在一次 Solve 内是常量，换 seed 不可能解决冲突，直接失败。
-				UE_LOG(LogTemp, Warning, TEXT("[WFC] Initial clamp propagation contradiction (seed %d, clamps=%d)."),
+				UE_LOG(LogERWFC, Warning, TEXT("[WFC] Initial clamp propagation contradiction (seed %d, clamps=%d)."),
 					BaseSeed + Attempt * 1013, InitialClamps.Num());
 				return false;
 			}
@@ -435,7 +436,7 @@ bool FWFC3DSolver::Solve(int32 MaxRetries, int32 Seed, const TMap<int32, int32>&
 			const EWFCStepResult StepResult = Step();
 			if (StepResult == EWFCStepResult::Completed)
 			{
-				UE_LOG(LogTemp, Log, TEXT("[WFC] Solve succeeded on attempt %d with seed %d!"), Attempt + 1, BaseSeed + Attempt * 1013);
+				UE_LOG(LogERWFC, Log, TEXT("[WFC] Solve succeeded on attempt %d with seed %d!"), Attempt + 1, BaseSeed + Attempt * 1013);
 				return true;
 			}
 			else if (StepResult == EWFCStepResult::Contradiction)
@@ -446,6 +447,6 @@ bool FWFC3DSolver::Solve(int32 MaxRetries, int32 Seed, const TMap<int32, int32>&
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[WFC] Solve reached max retries (%d) without finding a valid solution."), MaxRetries);
+	UE_LOG(LogERWFC, Warning, TEXT("[WFC] Solve reached max retries (%d) without finding a valid solution."), MaxRetries);
 	return false;
 }

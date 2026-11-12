@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "WFC3DArenaHost.h"
+#include "WFC/WFC3DArenaHost.h"
+#include "Core/ERLog.h"
 #include "Engine/World.h"
 
 AWFC3DArenaHost::AWFC3DArenaHost()
@@ -36,14 +37,14 @@ bool AWFC3DArenaHost::Generate(const FWFCGenerationRequest& Request)
 		GeneratorClass = FallbackGeneratorClass;
 		if (GeneratorClass && StyleTable)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[WFC Host] StyleTable has no entry for style %d; falling back to '%s'."),
+			UE_LOG(LogERWFC, Warning, TEXT("[WFC Host] StyleTable has no entry for style %d; falling back to '%s'."),
 				static_cast<int32>(Request.Style), *GeneratorClass->GetName());
 		}
 	}
 
 	if (!GeneratorClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC Host] No generator class for %s (StyleTable=%s, Fallback=null)."),
+		UE_LOG(LogERWFC, Error, TEXT("[WFC Host] No generator class for %s (StyleTable=%s, Fallback=null)."),
 			*Request.ToString(), StyleTable ? TEXT("set") : TEXT("null"));
 		return false;
 	}
@@ -62,7 +63,7 @@ bool AWFC3DArenaHost::Generate(const FWFCGenerationRequest& Request)
 	const bool bOk = ActiveGenerator->Generate(Request);
 	LastResult = ActiveGenerator->GetLastResult();
 
-	UE_LOG(LogTemp, Log, TEXT("[WFC Host] %s -> %s (seed=%d, %.2f ms)."),
+	UE_LOG(LogERWFC, Log, TEXT("[WFC Host] %s -> %s (seed=%d, %.2f ms)."),
 		*Request.ToString(), bOk ? TEXT("OK") : TEXT("FAILED"),
 		LastResult.UsedSeed, LastResult.DurationMs);
 
@@ -99,7 +100,7 @@ bool AWFC3DArenaHost::EnsureActiveGenerator(TSubclassOf<AWFC3DArenaGeneratorBase
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC Host] EnsureActiveGenerator failed: no world."));
+		UE_LOG(LogERWFC, Error, TEXT("[WFC Host] EnsureActiveGenerator failed: no world."));
 		return false;
 	}
 
@@ -115,7 +116,7 @@ bool AWFC3DArenaHost::EnsureActiveGenerator(TSubclassOf<AWFC3DArenaGeneratorBase
 
 	if (!ActiveGenerator)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[WFC Host] Failed to spawn generator class '%s'."), *Class->GetName());
+		UE_LOG(LogERWFC, Error, TEXT("[WFC Host] Failed to spawn generator class '%s'."), *Class->GetName());
 		return false;
 	}
 

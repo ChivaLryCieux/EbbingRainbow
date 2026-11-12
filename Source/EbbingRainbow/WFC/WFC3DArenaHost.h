@@ -4,9 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "WFCGenerationTypes.h"
-#include "WFC3DArenaGeneratorBase.h"
-#include "WFC3DStyleTable.h"
+#include "WFC/WFCGenerationTypes.h"
+#include "WFC/WFC3DArenaGeneratorBase.h"
+#include "WFC/WFC3DStyleTable.h"
 #include "WFC3DArenaHost.generated.h"
 
 /**
