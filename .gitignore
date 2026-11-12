@@ -52,3 +52,7 @@ CrashReportClient/
 # Python cache
 __pycache__/
 *.pyc
+
+# SteerAgents moved to standalone repo D:/SteerAgents
+SteerAgents/
+Plugins/SteerAgents

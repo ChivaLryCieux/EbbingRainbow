@@ -1,0 +1,9 @@
+# SteerAgents client config for EbbingRainbow.
+# Client lives in the standalone repo D:\SteerAgents (see AGENTS.md).
+
+[mcp]
+url = "http://127.0.0.1:8000/mcp"
+
+[engine]
+editor_cmd = "D:/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe"
+build_bat = "D:/UE_5.8/Engine/Build/BatchFiles/Build.bat"
