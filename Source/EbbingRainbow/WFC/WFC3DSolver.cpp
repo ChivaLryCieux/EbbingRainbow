@@ -19,8 +19,16 @@ void FWFC3DSolver::Initialize(
 	Dimensions = InDimensions;
 	TotalCells = Dimensions.X * Dimensions.Y * Dimensions.Z;
 	CompiledModules = InCompiledModules;
-	CompatibilityTable = InCompatibilityTable;
+	CompatibilityTable = &InCompatibilityTable;
 	TotalModules = CompiledModules.Num();
+
+	// 预计算 w·ln w: 熵/坍缩每次按位查表, 不再现场 FMath::Loge
+	ModuleWeightLogWeight.SetNumUninitialized(TotalModules);
+	for (int32 ModIdx = 0; ModIdx < TotalModules; ++ModIdx)
+	{
+		const float W = CompiledModules[ModIdx].Weight;
+		ModuleWeightLogWeight[ModIdx] = (W > KINDA_SMALL_NUMBER) ? W * FMath::Loge(W) : 0.0f;
+	}
 
 	// 计算所有模块都在叠加态时的初始全集香农熵
 	TBitArray<> AllCandidates(true, TotalModules);
@@ -52,15 +60,12 @@ float FWFC3DSolver::CalculateEntropy(const TBitArray<>& Candidates) const
 	float WeightLogWeightSum = 0.0f;
 	int32 ActiveCount = 0;
 
-	for (int32 ModIdx = 0; ModIdx < TotalModules; ++ModIdx)
+	for (TConstSetBitIterator<> It(Candidates); It; ++It)
 	{
-		if (Candidates[ModIdx])
-		{
-			const float W = CompiledModules[ModIdx].Weight;
-			WeightSum += W;
-			WeightLogWeightSum += W * FMath::Loge(W);
-			ActiveCount++;
-		}
+		const int32 ModIdx = It.GetIndex();
+		WeightSum += CompiledModules[ModIdx].Weight;
+		WeightLogWeightSum += ModuleWeightLogWeight[ModIdx];
+		ActiveCount++;
 	}
 
 	if (ActiveCount <= 1 || WeightSum <= KINDA_SMALL_NUMBER)
@@ -136,12 +141,9 @@ bool FWFC3DSolver::CollapseSlot(int32 SlotIndex)
 
 	// 计算当前所有合法候选的权重和
 	float TotalCandidateWeight = 0.0f;
-	for (int32 ModIdx = 0; ModIdx < TotalModules; ++ModIdx)
+	for (TConstSetBitIterator<> It(Slot.Candidates); It; ++It)
 	{
-		if (Slot.Candidates[ModIdx])
-		{
-			TotalCandidateWeight += CompiledModules[ModIdx].Weight;
-		}
+		TotalCandidateWeight += CompiledModules[It.GetIndex()].Weight;
 	}
 
 	if (TotalCandidateWeight <= KINDA_SMALL_NUMBER)
@@ -153,30 +155,25 @@ bool FWFC3DSolver::CollapseSlot(int32 SlotIndex)
 	float Pick = RandomStream.FRandRange(0.0f, TotalCandidateWeight);
 	int32 ChosenIndex = INDEX_NONE;
 
-	for (int32 ModIdx = 0; ModIdx < TotalModules; ++ModIdx)
+	for (TConstSetBitIterator<> It(Slot.Candidates); It; ++It)
 	{
-		if (Slot.Candidates[ModIdx])
+		const int32 ModIdx = It.GetIndex();
+		const float W = CompiledModules[ModIdx].Weight;
+		if (Pick <= W)
 		{
-			const float W = CompiledModules[ModIdx].Weight;
-			if (Pick <= W)
-			{
-				ChosenIndex = ModIdx;
-				break;
-			}
-			Pick -= W;
+			ChosenIndex = ModIdx;
+			break;
 		}
+		Pick -= W;
 	}
 
 	if (ChosenIndex == INDEX_NONE)
 	{
 		// 备底保护
-		for (int32 ModIdx = 0; ModIdx < TotalModules; ++ModIdx)
+		for (TConstSetBitIterator<> It(Slot.Candidates); It; ++It)
 		{
-			if (Slot.Candidates[ModIdx])
-			{
-				ChosenIndex = ModIdx;
-				break;
-			}
+			ChosenIndex = It.GetIndex();
+			break;
 		}
 	}
 
@@ -239,7 +236,7 @@ bool FWFC3DSolver::Propagate()
 					const int32 NeighborModule = NeighborSlot.FinalModuleIndex;
 					if (!CompiledModules.IsValidIndex(CurrentModule)
 						|| !CompiledModules.IsValidIndex(NeighborModule)
-						|| !CompatibilityTable[CurrentModule][DirIdx][NeighborModule])
+						|| !(*CompatibilityTable)[CurrentModule][DirIdx][NeighborModule])
 					{
 						UE_LOG(LogERWFC, Warning, TEXT("[WFC] Contradiction between collapsed cells (%d,%d,%d) dir %d."),
 							CurrentCoord.X, CurrentCoord.Y, CurrentCoord.Z, DirIdx);
@@ -249,42 +246,18 @@ bool FWFC3DSolver::Propagate()
 				continue;
 			}
 
-			// 计算当前格子的所有有效候选允许邻居具备的模块合集 (Union)
+			// 计算当前格子的所有有效候选允许邻居具备的模块合集 (Union, 按字位 OR)
 			AllowedForNeighbor.Init(false, TotalModules);
-			for (int32 ModAIdx = 0; ModAIdx < TotalModules; ++ModAIdx)
+			for (TConstSetBitIterator<> It(CurrentSlot.Candidates); It; ++It)
 			{
-				if (CurrentSlot.Candidates[ModAIdx])
-				{
-					const TBitArray<>& CompatibleBits = CompatibilityTable[ModAIdx][DirIdx];
-					for (int32 BitIdx = 0; BitIdx < TotalModules; ++BitIdx)
-					{
-						if (CompatibleBits[BitIdx])
-						{
-							AllowedForNeighbor[BitIdx] = true;
-						}
-					}
-				}
+				const TBitArray<>& CompatibleBits = (*CompatibilityTable)[It.GetIndex()][DirIdx];
+				AllowedForNeighbor.CombineWithBitwiseOR(CompatibleBits, EBitwiseOperatorFlags::MaintainSize);
 			}
 
-			// 对邻居的候选集进行过滤剪枝 (Intersection)
-			bool bCandidatesReduced = false;
-			int32 RemainingCount = 0;
-
-			for (int32 BitIdx = 0; BitIdx < TotalModules; ++BitIdx)
-			{
-				if (NeighborSlot.Candidates[BitIdx])
-				{
-					if (!AllowedForNeighbor[BitIdx])
-					{
-						NeighborSlot.Candidates[BitIdx] = false;
-						bCandidatesReduced = true;
-					}
-					else
-					{
-						RemainingCount++;
-					}
-				}
-			}
+			// 对邻居的候选集进行过滤剪枝 (Intersection, 按字位 AND)
+			const int32 PrevRemainingCount = NeighborSlot.RemainingCandidatesCount;
+			NeighborSlot.Candidates.CombineWithBitwiseAND(AllowedForNeighbor, EBitwiseOperatorFlags::MaintainSize);
+			const int32 RemainingCount = NeighborSlot.Candidates.CountSetBits();
 
 			if (RemainingCount == 0)
 			{
@@ -292,7 +265,7 @@ bool FWFC3DSolver::Propagate()
 				return false;
 			}
 
-			if (bCandidatesReduced)
+			if (RemainingCount != PrevRemainingCount)
 			{
 				NeighborSlot.RemainingCandidatesCount = RemainingCount;
 				NeighborSlot.CachedEntropy = CalculateEntropy(NeighborSlot.Candidates);
@@ -301,13 +274,10 @@ bool FWFC3DSolver::Propagate()
 				if (RemainingCount == 1)
 				{
 					NeighborSlot.bCollapsed = true;
-					for (int32 BitIdx = 0; BitIdx < TotalModules; ++BitIdx)
+					for (TConstSetBitIterator<> It(NeighborSlot.Candidates); It; ++It)
 					{
-						if (NeighborSlot.Candidates[BitIdx])
-						{
-							NeighborSlot.FinalModuleIndex = BitIdx;
-							break;
-						}
+						NeighborSlot.FinalModuleIndex = It.GetIndex();
+						break;
 					}
 					RemoveUncollapsedSlot(NeighborIndex);
 				}

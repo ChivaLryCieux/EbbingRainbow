@@ -126,7 +126,11 @@ private:
 	int32 TotalModules = 0;
 
 	TArray<FCompiledWFC3DModule> CompiledModules;
-	TArray<TArray<TBitArray<>>> CompatibilityTable;
+	/** 非拥有指针: 相容表由调用方 (生成器) 持有, 避免 Initialize 深拷贝 O(M^2 bits) */
+	const TArray<TArray<TBitArray<>>>* CompatibilityTable = nullptr;
+
+	/** w·ln w 预计算 (香农熵/轮盘赌复用, 不再每次现场算 log) */
+	TArray<float> ModuleWeightLogWeight;
 
 	TArray<FWFCSlot3D> Slots;
 	TArray<int32> PropagationQueue;
