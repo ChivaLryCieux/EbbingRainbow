@@ -1,4 +1,4 @@
-# AGENTS.md — Ebbing Rainbow (退潮之虹)
+﻿# AGENTS.md — Ebbing Rainbow (虹不我与)
 
 科幻肉鸽回合制战棋（UE 5.8）：3D WFC 程序化战场 + 种子化 DAG 航线图 +
 卡牌/AP 战术博弈。先美后好玩；画风目标 = 绝境北地/控制/Blackshard：
@@ -68,11 +68,18 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
 
 ## 场景架构（当前）
 
-- `Lvl_Route`：`ARouteSceneBuilder` 在 `RouteGameMode::StartPlay` 生成，
-  把 Slate 虚拟画布节点坐标反投影到相机前 90 m 平面：每节点一座漂浮
-  平台（亮顶板+通道1无光剪影收分底），边沿 Slate 同一条三次贝塞尔铺
-  辉光梁，星点场+远景剪影方碑（lighting channel 隔离主光），三点光
-  +虚空雾。Slate 叠加层半透明保留全部交互逻辑。
+- `Lvl_Route`（空关卡，全部程序生成）：`ARouteSceneBuilder` 在
+  `RouteGameMode::StartPlay` 生成，纯自发光、不依赖关卡灯光。
+  布局常数/节点坐标/贝塞尔采样唯一来源 `Run/RouteLayout.h`（Slate 与 3D 共用）；
+  3D 对齐**读 Slate 实际布局**（`ARouteHUD::GetMapLayout`），不要自己用公式推
+  （Overlay 非对称 padding 会差十几像素），视口/布局变化自动重建；节点状态变化
+  （安全节点前进）HUD 里再调 `BuildScene` 刷新。
+  材质是程序化资产：`Scripts/route_make_materials.py`(Glow) + `route_make_materials2.py`(Nebula/Rainbow/Rays/Halo/Monolith，Python 搭材质图，`Power` 节点引脚叫 `Exp`、Noise 第一引脚叫 `World Position`，Power 底数为负会被钳 0) → `/Game/Run/Materials`（已在 `DirectoriesToAlwaysCook`）。**设计铁律（用户明确要求）：全场只有玩家当前所在节点发光，其余节点/连线一律不发光；不放零星粒子（试过 Niagara 星尘/火星，观感廉价，已删）；连线只用细实线；同层节点最小纵向间距见 `RouteLayout.h::MinLayerGap`。**BasicShapes/Plane 的 UV：u 沿局部 X、v 沿局部 Y。
+  Slate 层（节点印记 `SRouteNodeSigil`、连线辉光+流光、层级标尺、图例）全是自绘，
+  大范围辉光交给 3D 的 `M_Route_Halo`（Slate 叠圆会出台阶边）。
+  截图迭代：`powershell -ExecutionPolicy Bypass -File Scripts/route_shot.ps1 [-Seed N]`
+  （起 `-game` 进 Lvl_Route，等 `-RouteShot` 截图后关进程）。
+  关卡没有自带无界 PostProcessVolume 时，builder 才会生成固定曝光+bloom+暗角的体积。
 - **一场景一关卡**（战斗场景）：`Lvl_ConcreteArena` = 混凝土浮岛
   （默认体素生成器 `WFC3DArenaGenerator_Voxel`，Perlin 双频
   起伏+中块平台+破碎漂浮外壳，混凝土/大理石/玻璃三色+辉光渐变）；
@@ -130,6 +137,15 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   移动卡拿到野指针，在 `FSlateImageBrush`/`SImage::OnPaint` 里崩成
   "Array index out of bounds"）。崩溃栈指向 Slate 绘制时，先查这类问题，
   别先怀疑 GC/纹理资源。
+- **UMG 程序化控件库在 `Source/EbbingRainbow/UI/`**（`UER*` 前缀），
+  主题令牌唯一来源是 `UERUITheme`（`Content/UI/DA_ERUITheme`）。两个死坑：
+  建树必须放 `RebuildWidget()`（先于 NativeConstruct，`RootWidget` 要在
+  SWidget 实例化前挂好）；`UImage::SetDesiredSizeOverride` 在 `MyImage`
+  （SImage）实例化前调用会被**静默丢弃**——构建期定尺寸一律用
+  `ERUI::WhiteBrush(FVector2D Size)` 把尺寸写进 `FSlateBrush::ImageSize`，
+  运行时改尺寸才能用 SetDesiredSizeOverride。裸 `UFontFace` 不能当
+  `FSlateFontInfo` 的 FontObject（会掉 LastResort 豆腐块），
+  `UERUITheme::GetFont()` 运行时包了复合 `UFont`，直接用。
 
 ## 美术方向验收（当前画面问题清单）
 

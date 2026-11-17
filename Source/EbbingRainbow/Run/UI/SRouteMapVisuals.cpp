@@ -1,7 +1,10 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Run/UI/SRouteMapVisuals.h"
+#include "Run/RouteLayout.h"
 
+#include "Fonts/FontMeasure.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
 
@@ -12,54 +15,63 @@ namespace
 		return FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
 	}
 
-	/** 三次贝塞尔采样，用于把跨层连线画成柔和的 S 形（层级沿 X 轴推进，所以切向沿 X）。 */
-	void SampleBezier(const FVector2D& Start, const FVector2D& End, TArray<FVector2D>& OutPoints, int32 Segments = 18)
+	FPaintGeometry BoxGeo(const FGeometry& G, const FVector2D& Pos, const FVector2D& Size)
 	{
-		const double DeltaX = End.X - Start.X;
-		const FVector2D Control1(Start.X + DeltaX * 0.45, Start.Y);
-		const FVector2D Control2(End.X - DeltaX * 0.45, End.Y);
-
-		OutPoints.Reset(Segments + 1);
-		for (int32 Index = 0; Index <= Segments; ++Index)
-		{
-			const double T = static_cast<double>(Index) / static_cast<double>(Segments);
-			const double U = 1.0 - T;
-			const double W0 = U * U * U;
-			const double W1 = 3.0 * U * U * T;
-			const double W2 = 3.0 * U * T * T;
-			const double W3 = T * T * T;
-
-			OutPoints.Add(FVector2D(
-				Start.X * W0 + Control1.X * W1 + Control2.X * W2 + End.X * W3,
-				Start.Y * W0 + Control1.Y * W1 + Control2.Y * W2 + End.Y * W3));
-		}
-	}
-
-	void MakeCirclePoints(const FVector2D& Center, float Radius, TArray<FVector2D>& OutPoints, int32 Segments = 40)
-	{
-		OutPoints.Reset(Segments + 1);
-		for (int32 Index = 0; Index <= Segments; ++Index)
-		{
-			const float Angle = (2.0f * PI * static_cast<float>(Index)) / static_cast<float>(Segments);
-			OutPoints.Add(Center + FVector2D(FMath::Cos(Angle), FMath::Sin(Angle)) * Radius);
-		}
+		return G.ToPaintGeometry(Size, FSlateLayoutTransform(Pos));
 	}
 }
 
+namespace RouteVis
+{
+	void MakeCircle(TArray<FVector2D>& Out, const FVector2D& Center, float Radius, int32 Segments)
+	{
+		MakeArc(Out, Center, Radius, 0.0f, 2.0f * PI, Segments);
+	}
+
+	void MakeArc(TArray<FVector2D>& Out, const FVector2D& Center, float Radius, float A0, float A1, int32 Segments)
+	{
+		Out.Reset(Segments + 1);
+		for (int32 I = 0; I <= Segments; ++I)
+		{
+			const float A = FMath::Lerp(A0, A1, (float)I / (float)Segments);
+			Out.Add(Center + FVector2D(FMath::Cos(A), FMath::Sin(A)) * Radius);
+		}
+	}
+
+	void MakePolygon(TArray<FVector2D>& Out, const FVector2D& Center, float Radius, int32 Sides, float RotRad)
+	{
+		Out.Reset(Sides + 1);
+		for (int32 I = 0; I <= Sides; ++I)
+		{
+			const float A = RotRad + 2.0f * PI * (float)(I % Sides) / (float)Sides;
+			Out.Add(Center + FVector2D(FMath::Cos(A), FMath::Sin(A)) * Radius);
+		}
+	}
+
+	void MakeTypeShape(TArray<FVector2D>& Out, ERouteNodeType Type, const FVector2D& Center, float Radius)
+	{
+		switch (Type)
+		{
+		case ERouteNodeType::Battle:       MakePolygon(Out, Center, Radius * 1.12f, 4, -PI * 0.5f); break;
+		case ERouteNodeType::BattleNature: MakePolygon(Out, Center, Radius * 1.06f, 6, -PI * 0.5f); break;
+		default:                           MakeCircle(Out, Center, Radius, 56); break;
+		}
+	}
+
+	void ConfigureCircleBrush(FSlateBrush& Brush)
+	{
+		Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
+		Brush.TintColor = FSlateColor(FLinearColor::White);
+		Brush.OutlineSettings.RoundingType = ESlateBrushRoundingType::HalfHeightRadius;
+		Brush.OutlineSettings.Width = 0.0f;
+		Brush.OutlineSettings.Color = FSlateColor(FLinearColor(0, 0, 0, 0));
+	}
+}
+
+// ---------------------------------------------------------------- 背景
+
 void SRouteBackdrop::Construct(const FArguments& InArgs)
 {
-	const int32 Seed = InArgs._Seed != 0 ? InArgs._Seed : 12345;
-	FRandomStream Rng(Seed);
-
-	Stars.Reset(180);
-	for (int32 Index = 0; Index < 180; ++Index)
-	{
-		FStar Star;
-		Star.Position = FVector2D(Rng.FRand(), Rng.FRand());
-		Star.Radius = Rng.FRandRange(0.6f, 2.1f);
-		Star.Alpha = Rng.FRandRange(0.12f, 0.75f);
-		Stars.Add(Star);
-	}
 }
 
 FVector2D SRouteBackdrop::ComputeDesiredSize(float LayoutScaleMultiplier) const
@@ -77,64 +89,30 @@ int32 SRouteBackdrop::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedG
 		return LayerId;
 	}
 
-	// 单一半透明底色: 让 3D 航线场景透出来 (竖向色带会在像素网格上出莫尔条纹,
-	// 渐变已由 3D 雾提供)
-	FSlateDrawElement::MakeBox(
-		OutDrawElements,
-		LayerId,
-		AllottedGeometry.ToPaintGeometry(),
-		WhiteBrush,
-		ESlateDrawEffect::None,
-		FLinearColor(0.010f, 0.018f, 0.040f, 0.32f));
-
-	// 星点：位置由种子决定，同一局同一张图。
-	for (const FStar& Star : Stars)
+	// 顶/底渐隐暗带: 给标题与标尺垫底, 中部完全透出 3D 场景
+	const int32 Bands = 14;
+	for (int32 Band = 0; Band < Bands; ++Band)
 	{
-		const FVector2D Position = Star.Position * Size;
-		const float Radius = Star.Radius;
-		const FLinearColor Color(0.80f, 0.88f, 1.00f, Star.Alpha);
+		const float F = 1.0f - (float)Band / (float)Bands;
+		const float Alpha = 0.34f * F * F;
+		const float TopH = Size.Y * 0.16f / Bands;
+		const float BotH = Size.Y * 0.14f / Bands;
+		const FLinearColor Color(0.0f, 0.004f, 0.012f, Alpha);
 
-		FSlateDrawElement::MakeBox(
-			OutDrawElements,
-			LayerId + 1,
-			AllottedGeometry.ToPaintGeometry(FVector2D(Radius * 2.0f, Radius * 2.0f),
-				FSlateLayoutTransform(Position - FVector2D(Radius, Radius))),
-			WhiteBrush,
-			ESlateDrawEffect::None,
-			Color);
+		FSlateDrawElement::MakeBox(OutDrawElements, LayerId, BoxGeo(AllottedGeometry, FVector2D(0.0, TopH * Band), FVector2D(Size.X, TopH + 0.5f)),
+			WhiteBrush, ESlateDrawEffect::None, Color);
+		FSlateDrawElement::MakeBox(OutDrawElements, LayerId, BoxGeo(AllottedGeometry, FVector2D(0.0, Size.Y - BotH * (Band + 1)), FVector2D(Size.X, BotH + 0.5f)),
+			WhiteBrush, ESlateDrawEffect::None, Color);
 	}
-
-	// 顶部与底部的暗角，让中间的地图更聚焦。
-	const int32 VignetteBands = 12;
-	for (int32 Band = 0; Band < VignetteBands; ++Band)
-	{
-		const float Alpha = 0.30f * (1.0f - static_cast<float>(Band) / static_cast<float>(VignetteBands));
-		const float Height = Size.Y * 0.18f / static_cast<float>(VignetteBands);
-		const FLinearColor Color(0.0f, 0.0f, 0.0f, Alpha);
-
-		FSlateDrawElement::MakeBox(
-			OutDrawElements,
-			LayerId + 2,
-			AllottedGeometry.ToPaintGeometry(FVector2D(Size.X, Height), FSlateLayoutTransform(FVector2D(0.0, Height * Band))),
-			WhiteBrush,
-			ESlateDrawEffect::None,
-			Color);
-
-		FSlateDrawElement::MakeBox(
-			OutDrawElements,
-			LayerId + 2,
-			AllottedGeometry.ToPaintGeometry(FVector2D(Size.X, Height),
-				FSlateLayoutTransform(FVector2D(0.0, Size.Y - Height * (Band + 1)))),
-			WhiteBrush,
-			ESlateDrawEffect::None,
-			Color);
-	}
-
-	return LayerId + 2;
+	return LayerId;
 }
+
+// ---------------------------------------------------------------- 连线
 
 void SRouteEdgeLayer::Construct(const FArguments& InArgs)
 {
+	RouteVis::ConfigureCircleBrush(CircleBrush);
+	ForceVolatile(true);
 }
 
 FVector2D SRouteEdgeLayer::ComputeDesiredSize(float LayoutScaleMultiplier) const
@@ -142,69 +120,149 @@ FVector2D SRouteEdgeLayer::ComputeDesiredSize(float LayoutScaleMultiplier) const
 	return FVector2D(100.0f, 100.0f);
 }
 
-void SRouteEdgeLayer::SetDrawData(const TArray<FEdgeDraw>& InEdges, const TArray<FVector2D>& InHaloCenters)
+void SRouteEdgeLayer::SetDrawData(const TArray<FEdgeDraw>& InEdges)
 {
 	Edges = InEdges;
-	HaloCenters = InHaloCenters;
 }
 
 int32 SRouteEdgeLayer::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect,
 	FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
 {
-	TArray<FVector2D> Points;
+	const FPaintGeometry Geo = AllottedGeometry.ToPaintGeometry();
+	TArray<FVector2D> Pts;
 
-	// 先画锁定/已走的边，再画可选的边，保证高亮压在最上面。
-	for (int32 Pass = 0; Pass < 2; ++Pass)
+	// 克制: 连线一律细实线, 不做辉光/流光; 只靠明度和色相区分状态
+	// 先画远的/暗的, 再画已走, 最后画可选, 保证重要的压在上面
+	for (int32 Pass = 0; Pass < 4; ++Pass)
 	{
-		for (const FEdgeDraw& Edge : Edges)
+		for (const FEdgeDraw& E : Edges)
 		{
-			const bool bHighlight = Edge.bAvailable;
-			if (bHighlight != (Pass == 1))
-			{
-				continue;
-			}
+			const int32 Rank = E.bAvailable ? 3 : (E.bTaken ? 2 : (E.bReachable ? 1 : 0));
+			if (Rank != Pass) { continue; }
+
+			ERRouteLayout::SampleEdge(E.Start, E.End, Pts, 64);
+			if (Pts.Num() < 2) { continue; }
 
 			FLinearColor Color;
-			float Thickness = 1.4f;
-			if (Edge.bTaken)
+			float Thickness;
+			switch (Rank)
 			{
-				Color = FLinearColor(1.00f, 0.78f, 0.32f, 0.55f);
-				Thickness = 1.8f;
+			case 3:  Color = FLinearColor(0.78f, 0.90f, 1.00f, 0.80f); Thickness = 1.7f; break;
+			case 2:  Color = FLinearColor(1.00f, 0.82f, 0.46f, 0.70f); Thickness = 1.5f; break;
+			case 1:  Color = FLinearColor(0.62f, 0.74f, 0.95f, 0.30f); Thickness = 1.2f; break;
+			default: Color = FLinearColor(0.55f, 0.65f, 0.85f, 0.10f); Thickness = 1.0f; break;
 			}
-			else if (Edge.bAvailable)
-			{
-				Color = FLinearColor(0.42f, 0.85f, 1.00f, 0.90f);
-				Thickness = 2.4f;
-			}
-			else
-			{
-				Color = FLinearColor(0.55f, 0.66f, 0.82f, 0.30f);
-			}
-
-			SampleBezier(Edge.Start, Edge.End, Points);
-			FSlateDrawElement::MakeLines(
-				OutDrawElements,
-				LayerId + (bHighlight ? 1 : 0),
-				AllottedGeometry.ToPaintGeometry(),
-				Points,
-				ESlateDrawEffect::None,
-				Color,
-				true,
-				Thickness);
+			FSlateDrawElement::MakeLines(OutDrawElements, LayerId + Pass, Geo, Pts, ESlateDrawEffect::None, Color, true, Thickness);
 		}
 	}
 
-	// 当前节点光环
-	for (const FVector2D& Center : HaloCenters)
-	{
-		MakeCirclePoints(Center, 54.0f, Points);
-		FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 2, AllottedGeometry.ToPaintGeometry(), Points,
-			ESlateDrawEffect::None, FLinearColor(1.0f, 0.82f, 0.28f, 0.55f), true, 2.0f);
+	return LayerId + 4;
+}
+// ---------------------------------------------------------------- 层级标尺
 
-		MakeCirclePoints(Center, 64.0f, Points);
-		FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 2, AllottedGeometry.ToPaintGeometry(), Points,
-			ESlateDrawEffect::None, FLinearColor(1.0f, 0.82f, 0.28f, 0.16f), true, 6.0f);
+void SRouteLayerRuler::Construct(const FArguments& InArgs)
+{
+}
+
+FVector2D SRouteLayerRuler::ComputeDesiredSize(float LayoutScaleMultiplier) const
+{
+	return FVector2D(100.0f, 100.0f);
+}
+
+void SRouteLayerRuler::SetData(const TArray<float>& InLayerXs, int32 InCurrentLayer)
+{
+	LayerXs = InLayerXs;
+	CurrentLayer = InCurrentLayer;
+}
+
+int32 SRouteLayerRuler::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect,
+	FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
+{
+	const FSlateBrush* White = GetWhiteBrush();
+	if (!White || LayerXs.Num() < 2) { return LayerId; }
+
+	const float Y = ERRouteLayout::RulerY;
+	const float X0 = LayerXs[0] - 44.0f;
+	const float X1 = LayerXs.Last() + 44.0f;
+	const int32 Cur = FMath::Clamp(CurrentLayer, 0, LayerXs.Num() - 1);
+	const FLinearColor Gold = ERRouteLayout::GoldColor();
+
+	auto Rect = [&](float X, float YY, float W, float H, const FLinearColor& C)
+	{
+		FSlateDrawElement::MakeBox(OutDrawElements, LayerId, BoxGeo(AllottedGeometry, FVector2D(X, YY), FVector2D(W, H)),
+			White, ESlateDrawEffect::None, C);
+	};
+
+	Rect(X0, Y - 0.5f, X1 - X0, 1.0f, FLinearColor(0.60f, 0.72f, 0.92f, 0.20f));
+	const float XC = LayerXs[Cur];
+	Rect(X0, Y - 3.0f, XC - X0, 6.0f, FLinearColor(Gold.R, Gold.G, Gold.B, 0.07f));
+	Rect(X0, Y - 0.8f, XC - X0, 1.6f, FLinearColor(Gold.R, Gold.G, Gold.B, 0.80f));
+
+	const FSlateFontInfo Font = FCoreStyle::GetDefaultFontStyle("Regular", 9);
+	const FSlateFontInfo FontBold = FCoreStyle::GetDefaultFontStyle("Bold", 10);
+	TSharedRef<FSlateFontMeasure> Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+
+	for (int32 I = 0; I < LayerXs.Num(); ++I)
+	{
+		const float X = LayerXs[I];
+		const bool bPast = I < Cur, bNow = I == Cur;
+		const bool bLast = I == LayerXs.Num() - 1;
+		const FLinearColor TickC = bNow ? FLinearColor(1.0f, 0.90f, 0.60f, 1.0f)
+			: bPast ? FLinearColor(Gold.R, Gold.G, Gold.B, 0.65f)
+			: FLinearColor(0.62f, 0.74f, 0.94f, 0.34f);
+
+		if (bNow)
+		{
+			TArray<FVector2D> D;
+			RouteVis::MakePolygon(D, FVector2D(X, Y), 7.0f, 4, -PI * 0.5f);
+			FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 1, AllottedGeometry.ToPaintGeometry(), D,
+				ESlateDrawEffect::None, TickC, true, 1.6f);
+			Rect(X - 2.0f, Y - 2.0f, 4.0f, 4.0f, TickC);
+		}
+		else
+		{
+			Rect(X - 0.5f, Y - (bLast ? 6.0f : 4.0f), 1.0f, bLast ? 12.0f : 8.0f, TickC);
+		}
+
+		const FString Label = bLast ? FString(TEXT("终")) : FString::FromInt(I + 1);
+		const FSlateFontInfo& F = (bNow || bLast) ? FontBold : Font;
+		const FVector2D TS = Measure->Measure(Label, F);
+		FSlateDrawElement::MakeText(OutDrawElements, LayerId + 1,
+			BoxGeo(AllottedGeometry, FVector2D(X - TS.X * 0.5f, Y + 13.0f), TS),
+			Label, F, ESlateDrawEffect::None,
+			bNow ? FLinearColor(1.0f, 0.88f, 0.55f, 0.95f)
+			: bPast ? FLinearColor(Gold.R, Gold.G, Gold.B, 0.55f)
+			: bLast ? FLinearColor(0.85f, 0.92f, 1.0f, 0.55f)
+			: FLinearColor(0.70f, 0.80f, 0.95f, 0.38f));
 	}
 
 	return LayerId + 2;
 }
+
+// ---------------------------------------------------------------- 图例图标
+
+void SRouteTypeIcon::Construct(const FArguments& InArgs)
+{
+	Type = InArgs._Type;
+	Accent = InArgs._Accent;
+}
+
+FVector2D SRouteTypeIcon::ComputeDesiredSize(float LayoutScaleMultiplier) const
+{
+	return FVector2D(20.0f, 20.0f);
+}
+
+int32 SRouteTypeIcon::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect,
+	FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
+{
+	const FVector2D C = AllottedGeometry.GetLocalSize() * 0.5;
+	TArray<FVector2D> P;
+	RouteVis::MakeTypeShape(P, Type, C, 7.0f);
+	FSlateDrawElement::MakeLines(OutDrawElements, LayerId, AllottedGeometry.ToPaintGeometry(), P,
+		ESlateDrawEffect::None, FLinearColor(Accent.R, Accent.G, Accent.B, 0.95f), true, 1.6f);
+	RouteVis::MakeCircle(P, C, 2.2f, 12);
+	FSlateDrawElement::MakeLines(OutDrawElements, LayerId, AllottedGeometry.ToPaintGeometry(), P,
+		ESlateDrawEffect::None, FLinearColor(Accent.R, Accent.G, Accent.B, 0.75f), true, 2.4f);
+	return LayerId;
+}
+

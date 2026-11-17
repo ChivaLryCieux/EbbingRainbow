@@ -21,6 +21,9 @@ public:
 	/** 节点被点选（也供调试命令 RouteSelect 复用，保证与鼠标点击同一条路径）。 */
 	void HandleNodeClicked(int32 NodeId);
 
+	/** Slate 画布实际落在视口里的位置 (视口像素原点 + 画布单位->像素缩放); 3D 场景用它与节点对齐。首帧布局前返回 false。 */
+	bool GetMapLayout(FVector2D& OutOriginPx, float& OutScalePx) const;
+
 private:
 	TSharedPtr<SRouteMapOverlay> Overlay;
 };

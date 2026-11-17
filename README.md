@@ -1,4 +1,4 @@
-# Ebbing Rainbow (退潮之虹)
+# Ebbing Rainbow (虹不我与)
 
 > **科幻肉鸽回合制 CRPG (Sci-Fi Roguelike Turn-Based CRPG)**  
 > 结合 **3D 波函数坍缩算法 (WFC)** 程序化随机地形、**种子可复现的 DAG 航线图** 局内路线选择、**卡牌构筑 (Deckbuilder)** 与行动点 (AP) 策略博弈、以及 **明日方舟风格** 高科技宇宙大厅的战术角色扮演游戏。

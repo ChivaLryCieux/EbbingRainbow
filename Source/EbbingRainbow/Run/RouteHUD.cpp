@@ -5,7 +5,9 @@
 
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
+#include "Run/RouteSceneBuilder.h"
 #include "Run/RunSubsystem.h"
 #include "Run/UI/SRouteMapOverlay.h"
 
@@ -46,6 +48,11 @@ void ARouteHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Overlay.Reset();
 
 	Super::EndPlay(EndPlayReason);
+}
+
+bool ARouteHUD::GetMapLayout(FVector2D& OutOriginPx, float& OutScalePx) const
+{
+	return Overlay.IsValid() && Overlay->GetMapLayout(OutOriginPx, OutScalePx);
 }
 
 void ARouteHUD::HandleNodeClicked(int32 NodeId)
@@ -92,6 +99,10 @@ void ARouteHUD::HandleNodeClicked(int32 NodeId)
 		{
 			Overlay->Refresh();
 			Overlay->ShowNotification(FText::FromString(TEXT("安全节点 · 无事发生")));
+		}
+		for (TActorIterator<ARouteSceneBuilder> It(GetWorld()); It; ++It)
+		{
+			It->BuildScene(Run);
 		}
 	}
 }

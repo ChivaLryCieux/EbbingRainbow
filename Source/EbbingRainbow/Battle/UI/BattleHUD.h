@@ -9,7 +9,7 @@
 
 class UBattleManager;
 class ABattleUnit;
-class UBattleMainWidget;
+class UERBattleHUD;
 
 /**
  * 战术战斗 HUD:
@@ -37,13 +37,13 @@ public:
 	UFUNCTION()
 	void AddBattleLog(const FString& Message);
 
-	UBattleMainWidget* GetMainWidget() const { return MainWidget; }
+	UERBattleHUD* GetMainWidget() const { return MainWidget; }
 
 private:
 	UBattleManager* GetBattleManager() const;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UBattleMainWidget> MainWidget;
+	TObjectPtr<UERBattleHUD> MainWidget;
 
 	TArray<FString> RecentLogs;
 	bool bWidgetInitialized = false;

@@ -22,6 +22,8 @@ public class EbbingRainbow : ModuleRules
 			"SlateCore",
 			// ShaderCore.h (AddShaderSourceDirectoryMapping) lives in RenderCore in UE5.8
 			"RenderCore",
+			// UERUISettings (UDeveloperSettings)
+			"DeveloperSettings",
 			"ProceduralMeshComponent",
 			// 技能系统 2.0: 标签容器 (技能/状态/反应表的语义标识)
 			"GameplayTags"

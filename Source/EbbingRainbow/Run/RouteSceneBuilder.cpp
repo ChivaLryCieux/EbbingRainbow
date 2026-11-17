@@ -1,70 +1,54 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Run/RouteSceneBuilder.h"
 #include "Core/ERDebug.h"
 #include "Core/ERLog.h"
 
 #include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Engine/DirectionalLight.h"
-#include "Engine/Engine.h"
 #include "Engine/ExponentialHeightFog.h"
-#include "Engine/GameViewportClient.h"
+#include "Engine/PostProcessVolume.h"
 #include "Engine/SkyLight.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
-#include "Misc/CommandLine.h"
 #include "Run/RouteCameraPawn.h"
+#include "Run/RouteHUD.h"
+#include "Run/RouteLayout.h"
 #include "Run/RunSubsystem.h"
 #include "Run/RunTypes.h"
 
 namespace
 {
-	// 与 SRouteMapOverlay 同一份布局常数, 保证 3D 平台落在按钮正下方
-	constexpr float CanvasW = 2040.0f;
-	constexpr float CanvasH = 920.0f;
-	constexpr float MarginX = 150.0f;
-	constexpr float MarginY = 84.0f;
-	constexpr float PadTop = 88.0f;
-	constexpr float PadBottom = 58.0f;
-	constexpr float NodeW = 100.0f;
-	constexpr float NodeH = 112.0f;
-	constexpr float SceneDepth = 9000.0f;   // 平台平面到相机的垂直距离 (cm)
+	/** 节点/连线所在平面到相机的垂直距离 (cm) */
+	constexpr float SceneDepth = 9000.0f;
+
+	/** 平面实例朝 -X (面向相机); UDir 是平面局部 X(U) 轴在屏幕内 (Y,Z) 的方向 */
+	FQuat PlaneQuat(const FVector2D& UDirYZ)
+	{
+		const FVector2D U = UDirYZ.GetSafeNormal();
+		return FRotationMatrix::MakeFromZX(FVector(-1.0, 0.0, 0.0), FVector(0.0, U.X, U.Y)).ToQuat();
+	}
+
+	template <typename T>
+	T* LoadAsset(const TCHAR* Path) { return LoadObject<T>(nullptr, Path); }
 }
 
 ARouteSceneBuilder::ARouteSceneBuilder()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("Root")));
 }
 
-UMaterialInterface* ARouteSceneBuilder::LoadMat(const TCHAR* Path)
-{
-	UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, Path);
-	if (!M)
-	{
-		M = LoadObject<UMaterialInterface>(
-			nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	}
-	return M;
-}
-
-UMaterialInstanceDynamic* ARouteSceneBuilder::MakeGlowMID(const FLinearColor& Color, float EmissiveMul)
-{
-	UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(MatGlowBase, this);
-	MID->SetVectorParameterValue(TEXT("ColorA"), Color * EmissiveMul);
-	MID->SetVectorParameterValue(TEXT("ColorB"), Color * EmissiveMul);
-	// 材质自发光强度很高, 低亮度用途要显式压住
-	MID->SetScalarParameterValue(TEXT("EmissiveStrength"), EmissiveMul);
-	GlowMIDs.Add(MID);
-	return MID;
-}
+// ------------------------------------------------------------------ 基础设施
 
 UInstancedStaticMeshComponent* ARouteSceneBuilder::MakeISM(UStaticMesh* Mesh, UMaterialInterface* Mat)
 {
@@ -80,6 +64,57 @@ UInstancedStaticMeshComponent* ARouteSceneBuilder::MakeISM(UStaticMesh* Mesh, UM
 	return C;
 }
 
+UInstancedStaticMeshComponent* ARouteSceneBuilder::MatISM(UStaticMesh* Mesh, UMaterialInterface* Mat,
+	const TArray<FSP>& Scalars, const TArray<FVP>& Vectors, FName PulseParam, float PulseAmp)
+{
+	FString Key = FString::Printf(TEXT("%s|%s|%s|%.3f"), *GetNameSafe(Mesh), *GetNameSafe(Mat), *PulseParam.ToString(), PulseAmp);
+	for (const FSP& S : Scalars) { Key += FString::Printf(TEXT("|%s=%.4f"), *S.Name.ToString(), S.Value); }
+	for (const FVP& V : Vectors) { Key += FString::Printf(TEXT("|%s=%.3f,%.3f,%.3f"), *V.Name.ToString(), V.Value.R, V.Value.G, V.Value.B); }
+	if (const TObjectPtr<UInstancedStaticMeshComponent>* Found = ISMCache.Find(Key))
+	{
+		return *Found;
+	}
+
+	UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Mat, this);
+	for (const FSP& S : Scalars) { MID->SetScalarParameterValue(S.Name, S.Value); }
+	for (const FVP& V : Vectors) { MID->SetVectorParameterValue(V.Name, V.Value); }
+	MIDs.Add(MID);
+
+	if (!PulseParam.IsNone())
+	{
+		float Base = 1.0f;
+		for (const FSP& S : Scalars) { if (S.Name == PulseParam) { Base = S.Value; } }
+		FPulse P;
+		P.MID = MID;
+		P.Param = PulseParam;
+		P.Base = Base;
+		P.Amp = PulseAmp;
+		P.Speed = 1.5f + 0.37f * (Pulses.Num() % 5);
+		P.Phase = Pulses.Num() * 1.3f;
+		Pulses.Add(P);
+	}
+
+	UInstancedStaticMeshComponent* IS = MakeISM(Mesh, MID);
+	ISMCache.Add(Key, IS);
+	return IS;
+}
+
+UInstancedStaticMeshComponent* ARouteSceneBuilder::GlowISM(const FLinearColor& Color, float Intensity, float Power,
+	float ScaleU, float ScaleV, float EndFade, bool bPulse, float PulseAmp)
+{
+	return MatISM(PlaneMesh, MatGlow,
+		{ {"Intensity", Intensity}, {"Power", Power}, {"ScaleU", ScaleU}, {"ScaleV", ScaleV}, {"EndFade", EndFade} },
+		{ {"Color", Color} },
+		bPulse ? FName("Intensity") : NAME_None, PulseAmp);
+}
+
+void ARouteSceneBuilder::AddPlane(UInstancedStaticMeshComponent* IS, const FVector& Pos, const FVector2D& UDir,
+	float SizeU, float SizeV)
+{
+	if (!IS) { return; }
+	IS->AddInstance(FTransform(PlaneQuat(UDir), Pos, FVector(SizeU / 100.0f, SizeV / 100.0f, 1.0f)), true);
+}
+
 void ARouteSceneBuilder::ResetRouteCamera()
 {
 	for (TActorIterator<ARouteCameraPawn> It(GetWorld()); It; ++It)
@@ -89,18 +124,20 @@ void ARouteSceneBuilder::ResetRouteCamera()
 	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
 	{
 		PC->SetControlRotation(FRotator::ZeroRotator);
+		// 反投影读的是相机管理器缓存的视点 (上一帧 = PlayerStart 位置); 不立刻刷新, 所有屏幕对齐都会偏一个相机高度
+		if (PC->PlayerCameraManager) { PC->PlayerCameraManager->UpdateCamera(0.0f); }
 	}
 }
 
-FVector2D ARouteSceneBuilder::CanvasToScreen(const FVector2D& CanvasPos, const FVector2D& ViewSize) const
+FVector2D ARouteSceneBuilder::GetViewSize() const
 {
-	const float AvailW = ViewSize.X;
-	const float AvailH = ViewSize.Y - PadTop - PadBottom;
-	const float Scale = FMath::Min(AvailW / CanvasW, AvailH / CanvasH);
-	const float DrawW = CanvasW * Scale, DrawH = CanvasH * Scale;
-	const float OX = (AvailW - DrawW) * 0.5f;
-	const float OY = PadTop + (AvailH - DrawH) * 0.5f;
-	return FVector2D(OX + CanvasPos.X * Scale, OY + CanvasPos.Y * Scale);
+	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+	{
+		int32 VX = 0, VY = 0;
+		PC->GetViewportSize(VX, VY);
+		if (VX > 0 && VY > 0) { return FVector2D(VX, VY); }
+	}
+	return FVector2D(1600.0, 900.0);
 }
 
 bool ARouteSceneBuilder::ScreenToPlane(const FVector2D& ScreenPx, float Depth, FVector& OutPos) const
@@ -119,227 +156,262 @@ bool ARouteSceneBuilder::ScreenToPlane(const FVector2D& ScreenPx, float Depth, F
 	return true;
 }
 
+bool ARouteSceneBuilder::PollMapLayout(FVector2D& OutOrigin, float& OutScale) const
+{
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	const ARouteHUD* HUD = PC ? Cast<ARouteHUD>(PC->GetHUD()) : nullptr;
+	return HUD && HUD->GetMapLayout(OutOrigin, OutScale);
+}
+
+bool ARouteSceneBuilder::CanvasToWorld(const FVector2D& CanvasPos, float Depth, FVector& OutPos) const
+{
+	// 优先用 Slate 实际布局结果对齐 (公式推导的位置会和 Slate 的 Overlay 对齐规则差十几像素)
+	const FVector2D Screen = bHasMapLayout
+		? MapOriginPx + CanvasPos * MapScalePx
+		: ERRouteLayout::CanvasToScreen(CanvasPos, ViewSize);
+	if (ScreenToPlane(Screen, Depth, OutPos))
+	{
+		return true;
+	}
+	OutPos = FVector(Depth,
+		(CanvasPos.X - ERRouteLayout::MapW * 0.5f) * 8.0f,
+		-(CanvasPos.Y - ERRouteLayout::MapH * 0.5f) * 8.0f);
+	return false;
+}
+
+FVector2D ARouteSceneBuilder::FrustumHalf(float Depth) const
+{
+	FVector A, B;
+	if (ScreenToPlane(FVector2D(0.0, 0.0), Depth, A) && ScreenToPlane(ViewSize, Depth, B))
+	{
+		return FVector2D(FMath::Abs(B.Y - A.Y) * 0.5f, FMath::Abs(B.Z - A.Z) * 0.5f);
+	}
+	return FVector2D(Depth, Depth * 0.5625f);
+}
+
+float ARouteSceneBuilder::WorldPerPx(float Depth) const
+{
+	return FrustumHalf(Depth).X * 2.0f / FMath::Max(1.0f, (float)ViewSize.X);
+}
+
+float ARouteSceneBuilder::CanvasScalePx() const
+{
+	return bHasMapLayout ? MapScalePx : ERRouteLayout::CanvasScale(ViewSize);
+}
+
+void ARouteSceneBuilder::ClearScene()
+{
+	for (UInstancedStaticMeshComponent* C : ISMComps)
+	{
+		if (C) { C->DestroyComponent(); }
+	}
+	for (AActor* A : SpawnedActors)
+	{
+		if (A) { A->Destroy(); }
+	}
+	ISMComps.Reset();
+	SpawnedActors.Reset();
+	MIDs.Reset();
+	ISMCache.Reset();
+	Pulses.Reset();
+	NodeCenters.Reset();
+	Anchors.Reset();
+}
+
+// ------------------------------------------------------------------ 总装
+
 void ARouteSceneBuilder::BuildScene(URunSubsystem* Run)
 {
 	if (!Run || !Run->HasActiveRun()) { return; }
+	CachedRun = Run;
+	ClearScene();
 
-	// ---- 资产 ----
-	CubeMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
-	MatConcrete = LoadMat(TEXT("/Game/Materials/Architecture/MI_Concrete_1.MI_Concrete_1"));
-	MatMarble = LoadMat(TEXT("/Game/Materials/Architecture/MI_Marble_1.MI_Marble_1"));
-	MatGlowBase = LoadMat(TEXT("/Game/Voxel/Materials/M_Voxel_Glow.M_Voxel_Glow"));
-	if (!CubeMesh) { return; }
+	CubeMesh = LoadAsset<UStaticMesh>(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	PlaneMesh = LoadAsset<UStaticMesh>(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	MatGlow = LoadAsset<UMaterialInterface>(TEXT("/Game/Run/Materials/M_Route_Glow.M_Route_Glow"));
+	MatNebula = LoadAsset<UMaterialInterface>(TEXT("/Game/Run/Materials/M_Route_Nebula.M_Route_Nebula"));
+	MatRainbow = LoadAsset<UMaterialInterface>(TEXT("/Game/Run/Materials/M_Route_Rainbow.M_Route_Rainbow"));
+	MatRays = LoadAsset<UMaterialInterface>(TEXT("/Game/Run/Materials/M_Route_Rays.M_Route_Rays"));
+	MatHalo = LoadAsset<UMaterialInterface>(TEXT("/Game/Run/Materials/M_Route_Halo.M_Route_Halo"));
+	if (!CubeMesh || !PlaneMesh || !MatGlow || !MatNebula || !MatRainbow || !MatRays || !MatHalo)
+	{
+		UE_LOG(LogERRun, Warning, TEXT("[Route3D] 缺少 /Game/Run/Materials 资产 (Scripts/route_make_materials*.py 生成), 3D 航线场景跳过"));
+		return;
+	}
 
 	ResetRouteCamera();
-
-	APlayerController* PC = GetWorld()->GetFirstPlayerController();
-	FVector2D ViewSize(1600.0f, 900.0f);
-	if (PC) { int32 VX = 0, VY = 0; PC->GetViewportSize(VX, VY); ViewSize = FVector2D(VX, VY); }
+	ViewSize = GetViewSize();
+	BuiltViewSize = ViewSize;
+	ResizeStableTime = 0.0f;
+	bHasMapLayout = PollMapLayout(MapOriginPx, MapScalePx);
 
 	const FRouteGraph& Graph = Run->GetGraph();
-	const int32 CurrentId = Run->GetCurrentNodeId();
 
-	// ---- 每节点的画布中心与世界锚点 ----
-	const float DeltaX = (CanvasW - 2.0f * MarginX) / FMath::Max(1, Graph.NumLayers - 1);
-	const float DeltaY = (CanvasH - 2.0f * MarginY) / FMath::Max(1, Graph.NumSlots - 1);
-	TArray<FVector2D> CanvasCenters;
-	TArray<FVector> Anchors;
-	CanvasCenters.SetNum(Graph.Nodes.Num());
+	NodeCenters.SetNum(Graph.Nodes.Num());
 	Anchors.SetNum(Graph.Nodes.Num());
 	for (const FRouteNode& Node : Graph.Nodes)
 	{
-		const FVector2D Center(MarginX + Node.Layer * DeltaX, MarginY + Node.Slot * DeltaY);
-		CanvasCenters[Node.Id] = Center;
-
-		// 画布坐标取按钮底缘再往下 24px: 平台悬在按钮正下方
-		const FVector2D CanvasPos = Center + FVector2D(0.0f, NodeH * 0.5f + 24.0f);
-		const FVector2D ScreenPx = CanvasToScreen(CanvasPos, ViewSize);
-		FVector P;
-		if (!ScreenToPlane(ScreenPx, SceneDepth, P))
-		{
-			P = FVector(SceneDepth,
-				(CanvasPos.X - CanvasW * 0.5f) * 8.0f,
-				-(CanvasPos.Y - CanvasH * 0.5f) * 8.0f);
-		}
-		Anchors[Node.Id] = P;
+		NodeCenters[Node.Id] = ERRouteLayout::NodeCenter(Graph, Node);
+		CanvasToWorld(NodeCenters[Node.Id], SceneDepth + 60.0f, Anchors[Node.Id]);
 	}
 
-	// ---- 类型色辉光材质 (类型表 -> 同色 MID) ----
-	// 信标用类型色: 强度压到不 clip 的程度, 保持色相可读 (野=绿 / 战=橙红 / 安=青)
-	UMaterialInstanceDynamic* MIDSafe  = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::Safe).Color, 0.75f);
-	UMaterialInstanceDynamic* MIDVox   = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::Battle).Color, 0.85f);
-	UMaterialInstanceDynamic* MIDNat   = MakeGlowMID(GetRouteNodeTypeInfo(ERouteNodeType::BattleNature).Color, 0.9f);
-	UMaterialInstanceDynamic* MIDCur   = MakeGlowMID(FLinearColor(1.0f, 0.92f, 0.68f), 1.35f);
-	UMaterialInstanceDynamic* MIDBeam  = MakeGlowMID(FLinearColor(0.35f, 0.55f, 0.95f), 0.40f);
-	UMaterialInstanceDynamic* MIDStar  = MakeGlowMID(FLinearColor(0.75f, 0.85f, 1.0f), 0.7f);
-	UMaterialInstanceDynamic* MIDDark  = MakeGlowMID(FLinearColor(0.05f, 0.065f, 0.11f), 0.06f);
-
-	UInstancedStaticMeshComponent* ConIS  = MakeISM(CubeMesh, MatConcrete);
-	UInstancedStaticMeshComponent* MarIS  = MakeISM(CubeMesh, MatMarble);
-	UInstancedStaticMeshComponent* GlowS  = MakeISM(CubeMesh, MIDSafe);
-	UInstancedStaticMeshComponent* GlowV  = MakeISM(CubeMesh, MIDVox);
-	UInstancedStaticMeshComponent* GlowN  = MakeISM(CubeMesh, MIDNat);
-	UInstancedStaticMeshComponent* GlowC  = MakeISM(CubeMesh, MIDCur);
-	UInstancedStaticMeshComponent* BeamIS = MakeISM(CubeMesh, MIDBeam);
-	UInstancedStaticMeshComponent* StarIS = MakeISM(CubeMesh, MIDStar);
-	UInstancedStaticMeshComponent* DarkIS = MakeISM(CubeMesh, MIDDark);
-	// 剪影块走通道1: 主/补/天光都只打通道0 => 恒为无光剪影 (雾仍按像素生效)
-	DarkIS->SetLightingChannels(false, true, false);
-
-	// ---- 边: 沿 Slate 同一条三次贝塞尔布辉光小段 (画布空间采样 -> 世界) ----
-	for (const FRouteNode& Node : Graph.Nodes)
-	{
-		for (const int32 NextId : Node.Next)
-		{
-			if (!CanvasCenters.IsValidIndex(NextId)) { continue; }
-			const FVector2D S = CanvasCenters[Node.Id], E = CanvasCenters[NextId];
-			const double DX2 = E.X - S.X;
-			const FVector2D C1(S.X + DX2 * 0.45, S.Y);
-			const FVector2D C2(E.X - DX2 * 0.45, E.Y);
-			FVector Prev;
-			for (int32 Seg = 0; Seg <= 14; ++Seg)
-			{
-				const double T = (double)Seg / 14.0, U = 1.0 - T;
-				const double W0 = U * U * U, W1 = 3.0 * U * U * T,
-					W2 = 3.0 * U * T * T, W3 = T * T * T;
-				const FVector2D Pt(
-					S.X * W0 + C1.X * W1 + C2.X * W2 + E.X * W3,
-					S.Y * W0 + C1.Y * W1 + C2.Y * W2 + E.Y * W3);
-				FVector W;
-				if (!ScreenToPlane(CanvasToScreen(Pt, ViewSize), SceneDepth, W)) { break; }
-				W.Z -= 55.0f;   // 梁悬在按钮线下方, 与平台齐平
-				if (Seg > 0)
-				{
-					const FVector D = W - Prev;
-					const float Len = D.Size();
-					if (Len > 1.0f)
-					{
-						BeamIS->AddInstance(FTransform(
-							FRotationMatrix::MakeFromX(D.GetSafeNormal()).Rotator(),
-							(W + Prev) * 0.5f, FVector(Len / 100.0f, 0.16f, 0.16f)));
-					}
-				}
-				Prev = W;
-			}
-		}
-	}
-
-	// ---- 平台 ----
-	FRandomStream NRng(Graph.Seed ^ 0x5EED);
-	for (const FRouteNode& Node : Graph.Nodes)
-	{
-		const bool bCurrent = (Node.Id == CurrentId);
-		const FLinearColor TC = GetRouteNodeTypeInfo(Node.Type).Color;
-		UInstancedStaticMeshComponent* GlowIS =
-			bCurrent ? GlowC :
-			(Node.Type == ERouteNodeType::BattleNature) ? GlowN :
-			(Node.Type == ERouteNodeType::Battle) ? GlowV : GlowS;
-		BuildNodePlatform(Anchors[Node.Id], Node, bCurrent, Node.bVisited, TC);
-		const FVector P = Anchors[Node.Id];
-		const float S = (Node.Layer == Graph.NumLayers - 1) ? 1.5f : 1.0f;
-		const float Gy = bCurrent ? 1.5f : (Node.bVisited ? 0.7f : 1.0f);
-		GlowIS->AddInstance(FTransform(FRotator(0, NRng.FRand() * 20.0f - 10.0f, 0),
-			P + FVector(0, 0, 90.0f * S), FVector(1.5f * S * Gy)));
-	}
-	(void)ConIS; (void)MarIS; (void)StarIS;
-
-	BuildStarsAndMonoliths(Graph.Seed, FVector(SceneDepth * 0.5f, 0, 0));
+	BuildBackdrop(Graph.Seed);
+	BuildRainbow();
+	BuildBeacons(Run, Graph);
+	BuildPostProcess();
 	BuildLighting(Graph.Seed);
 
-	UE_LOG(LogERRun, Log, TEXT("[Route3D] scene built: nodes=%d edges drawn, stars ok"),
-		Graph.Nodes.Num());
+	UE_LOG(LogERRun, Log, TEXT("[Route3D] scene built: nodes=%d ism=%d view=%.0fx%.0f layout=%s"),
+		Graph.Nodes.Num(), ISMComps.Num(), ViewSize.X, ViewSize.Y, bHasMapLayout ? TEXT("slate") : TEXT("formula"));
 }
 
-void ARouteSceneBuilder::BuildNodePlatform(
-	const FVector& Pos, const FRouteNode& Node, bool bCurrent, bool bVisited,
-	const FLinearColor& TypeColor)
+void ARouteSceneBuilder::Tick(float DeltaSeconds)
 {
-	FRandomStream Rng(Node.Id * 7919 + 13);
-	const float S = (Node.Layer == 0) ? 1.35f : 1.0f;
+	Super::Tick(DeltaSeconds);
+	if (ISMComps.Num() == 0) { return; }
+	Time += DeltaSeconds;
 
-	// 顶板 (当前节点用大理石, 其余混凝土) —— 组件在 BuildScene 持有,
-	// 这里通过 GetComponentsByClass 取第一个具体/大理石 ISM 太绕;
-	// 改成直接在 ISMComps 中按材质区分: 0=concrete 1=marble (MakeISM 顺序约定)
-	UInstancedStaticMeshComponent* ConIS = ISMComps.Num() > 0 ? ISMComps[0] : nullptr;
-	UInstancedStaticMeshComponent* MarIS = ISMComps.Num() > 1 ? ISMComps[1] : nullptr;
-	UInstancedStaticMeshComponent* SlabIS = bCurrent ? MarIS : ConIS;
-	if (!SlabIS) { return; }
-
-	// 顶板: 沿视线方向薄、屏幕方向宽, 微仰角让顶面吃到主光
-	SlabIS->AddInstance(FTransform(
-		FRotator(10.0f + Rng.FRandRange(-3.0f, 3.0f), Rng.FRandRange(-5.0f, 5.0f), 0),
-		Pos, FVector(2.2f, 7.2f * S, 0.8f)));
-
-	// 收分两段, 向下悬出 "漂浮岛" 底 —— 无光剪影材质, 与远景方碑同一语言
-	UInstancedStaticMeshComponent* DarkIS =
-		ISMComps.IsValidIndex(8) ? ISMComps[8].Get() : ConIS;
-	DarkIS->AddInstance(FTransform(
-		FRotator(Rng.FRandRange(-4.0f, 4.0f), Rng.FRandRange(-7.0f, 7.0f), Rng.FRandRange(-3.0f, 3.0f)),
-		Pos - FVector(-60.0f, 0, 140.0f), FVector(1.7f, 5.0f * S, 1.3f)));
-	DarkIS->AddInstance(FTransform(
-		FRotator(Rng.FRandRange(-6.0f, 6.0f), Rng.FRandRange(-10.0f, 10.0f), Rng.FRandRange(-4.0f, 4.0f)),
-		Pos - FVector(-140.0f, 0, 330.0f), FVector(1.2f, 2.9f * S, 2.0f)));
-
-	// 已访问节点额外压暗顶板 (叠一层混凝土灰板)
-	if (bVisited)
+	// 视口尺寸/Slate 画布位置变了 (PIE 窗口缩放/全屏切换/首帧布局完成): 屏幕反投影对齐会失效, 稳定 0.3s 后整场重建
+	FVector2D PolledOrigin = FVector2D::ZeroVector;
+	float PolledScale = 1.0f;
+	const bool bPolled = PollMapLayout(PolledOrigin, PolledScale);
+	const bool bLayoutChanged = bPolled != bHasMapLayout
+		|| (bPolled && (!PolledOrigin.Equals(MapOriginPx, 0.5) || !FMath::IsNearlyEqual(PolledScale, MapScalePx, 0.0005f)));
+	if (!GetViewSize().Equals(BuiltViewSize, 1.0) || bLayoutChanged)
 	{
-		ConIS->AddInstance(FTransform(FRotator(10.0f, 0, 0),
-			Pos + FVector(0, 0, 16.0f), FVector(2.0f, 6.6f * S, 0.20f)));
-	}
-}
-
-void ARouteSceneBuilder::BuildEdge(const FVector& A, const FVector& B)
-{
-	(void)A; (void)B;   // 集中放置逻辑已内联到 BuildScene, 此函数保留签名备用
-}
-
-void ARouteSceneBuilder::BuildStarsAndMonoliths(int32 RunSeed, const FVector& ViewCenter)
-{
-	FRandomStream Rng(RunSeed ^ 0x57A2);
-
-	UInstancedStaticMeshComponent* StarIS =
-		ISMComps.IsValidIndex(7) ? ISMComps[7].Get() : nullptr;
-	UInstancedStaticMeshComponent* DarkIS =
-		ISMComps.IsValidIndex(8) ? ISMComps[8].Get() : nullptr;
-	UInstancedStaticMeshComponent* ConIS =
-		ISMComps.IsValidIndex(0) ? ISMComps[0].Get() : nullptr;
-
-	// 星点: 大范围壳层 (避开平台平面附近 ±3m)
-	if (StarIS)
-	{
-		for (int32 K = 0; K < 320; ++K)
+		ResizeStableTime += DeltaSeconds;
+		if (ResizeStableTime > 0.3f && CachedRun.IsValid())
 		{
-			const float X = SceneDepth + Rng.FRandRange(-3500.0f, 9000.0f);
-			const float Y = Rng.FRandRange(-16000.0f, 16000.0f);
-			const float Z = Rng.FRandRange(-9000.0f, 9000.0f);
-			StarIS->AddInstance(FTransform(FRotator::ZeroRotator,
-				FVector(X, Y, Z), FVector(Rng.FRandRange(0.05f, 0.22f))));
+			BuildScene(CachedRun.Get());
+		}
+		return;
+	}
+	ResizeStableTime = 0.0f;
+
+	for (const FPulse& P : Pulses)
+	{
+		if (UMaterialInstanceDynamic* M = P.MID.Get())
+		{
+			M->SetScalarParameterValue(P.Param, P.Base * (1.0f + P.Amp * FMath::Sin(Time * P.Speed + P.Phase)));
 		}
 	}
+}
 
-	// 远景剪影方碑: 暗色无光照材质, 不受灯光/雾影响 = 稳定的虚空剪影
-	if (DarkIS)
+// ------------------------------------------------------------------ 背景
+
+void ARouteSceneBuilder::BuildBackdrop(int32 Seed)
+{
+	const float D = 26000.0f;
+	const FVector2D H = FrustumHalf(D);
+	FRandomStream Rng(Seed ^ 0x9E3B);
+
+	auto Cloud = [&](float YF, float ZF, float SU, float SV, const FLinearColor& A, const FLinearColor& B,
+		float I, float Pow, float NoiseScale)
 	{
-		for (int32 K = 0; K < 12; ++K)
-		{
-			const float X = SceneDepth + Rng.FRandRange(4800.0f, 13000.0f);
-			const float Y = Rng.FRandRange(-14000.0f, 14000.0f);
-			const float Z = Rng.FRandRange(-5500.0f, 7000.0f);
-			const FRotator Rot(Rng.FRandRange(-6.0f, 6.0f),
-				Rng.FRandRange(-14.0f, 14.0f), Rng.FRandRange(-6.0f, 6.0f));
-			DarkIS->AddInstance(FTransform(Rot, FVector(X, Y, Z),
-				FVector(Rng.FRandRange(6.0f, 26.0f),
-					Rng.FRandRange(3.0f, 10.0f), Rng.FRandRange(4.0f, 24.0f))));
-		}
+		UInstancedStaticMeshComponent* IS = MatISM(PlaneMesh, MatNebula,
+			{ {"Intensity", I}, {"Power", Pow}, {"NoiseScale", NoiseScale}, {"Seed", (float)Rng.FRandRange(0.0f, 40.0f)},
+			  {"SpeedX", 0.006f}, {"SpeedY", 0.003f}, {"Contrast", 2.0f}, {"CloudAmount", 0.9f} },
+			{ {"ColorA", A}, {"ColorB", B} });
+		AddPlane(IS, FVector(D + YF * 3.0f, YF * H.X, ZF * H.Y), FVector2D(1.0, 0.0), SU * H.X * 2.0f, SV * H.Y * 2.0f);
+	};
+
+	// 底: 冷蓝 -> 靛紫的地平云海
+	Cloud(0.00f, -0.62f, 1.60f, 1.00f, FLinearColor(0.04f, 0.13f, 0.34f), FLinearColor(0.15f, 0.12f, 0.40f), 0.17f, 1.5f, 2.6f);
+	// 左上: 青绿冷雾 (起点侧偏冷)
+	Cloud(-0.70f, 0.55f, 1.10f, 0.95f, FLinearColor(0.04f, 0.26f, 0.38f), FLinearColor(0.12f, 0.18f, 0.48f), 0.09f, 1.8f, 3.2f);
+	// 右侧: 金色暖云 (终点侧偏暖, 神性)
+	Cloud(0.92f, 0.02f, 0.95f, 1.30f, FLinearColor(1.00f, 0.60f, 0.24f), FLinearColor(0.95f, 0.34f, 0.28f), 0.15f, 1.7f, 2.4f);
+	// 画面中心极淡的冷白云, 让节点区域有"光源"
+	Cloud(0.00f, 0.12f, 0.95f, 0.85f, FLinearColor(0.30f, 0.52f, 0.92f), FLinearColor(0.50f, 0.62f, 1.00f), 0.07f, 2.0f, 3.6f);
+}
+
+void ARouteSceneBuilder::BuildRainbow()
+{
+	const float D = 31000.0f;
+	const FVector2D H = FrustumHalf(D);
+	// 弧心在画面下方 1.35 个半高处; v 轴向下: v = 0.5 - Z/(2*Hz)
+	const float CenterV = 0.5f + 1.35f * 0.5f;
+	UInstancedStaticMeshComponent* IS = MatISM(PlaneMesh, MatRainbow,
+		{ {"Intensity", 0.15f}, {"Aspect", (float)(H.X / H.Y)}, {"CenterV", CenterV}, {"Radius", 1.075f},
+		  {"Width", 0.15f}, {"ArcHalf", 1.25f}, {"Pastel", 0.28f}, {"Softness", 1.3f} },
+		{ {"Tint", FLinearColor(1.0f, 0.97f, 0.9f)} });
+	AddPlane(IS, FVector(D, 0.0f, 0.0f), FVector2D(1.0, 0.0), H.X * 2.04f, H.Y * 2.04f);
+}
+
+// ------------------------------------------------------------------ 当前节点圣光 (全场唯一的发光源)
+
+void ARouteSceneBuilder::BuildBeacons(URunSubsystem* Run, const FRouteGraph& Graph)
+{
+	const FRouteNode* Current = Run->GetCurrentNode();
+	if (!Current || !Anchors.IsValidIndex(Current->Id)) { return; }
+
+	const float Px = WorldPerPx(SceneDepth);
+	const FLinearColor Gold = ERRouteLayout::GoldColor();
+	const FVector P = Anchors[Current->Id];
+	const bool bFinal = Current->Layer == Graph.NumLayers - 1;
+	const float SigilPx = 34.0f * (bFinal ? 1.22f : 1.0f) * CanvasScalePx();   // 屏幕像素里的徽章半径
+
+	// 神性光环: 柔光 + 细环 + 缓慢旋转的射线 (射线避开中心, 不压 Slate 徽章)
+	const float SizePx = 430.0f;
+	const float Half = SizePx * 0.5f;
+	// 旋转与呼吸都在 Shader 里用 GPU Time 驱动 (不再逐帧改 MID 参数), 射线宽而软, 避免细射线转动时的闪烁/爬行
+	UInstancedStaticMeshComponent* Halo = MatISM(PlaneMesh, MatHalo,
+		{ {"Intensity", 0.85f}, {"GlowPower", 3.4f}, {"RingRadius", SigilPx * 1.65f / Half}, {"RingWidth", 0.010f},
+		  {"RingIntensity", 0.45f}, {"RayCount", 10.0f}, {"RayIntensity", 0.50f},
+		  {"RayPower", 3.0f}, {"Spin", 0.10f}, {"BreathSpeed", 0.9f}, {"BreathAmount", 0.10f},
+		  {"HoleInner", SigilPx * 1.15f / Half}, {"HoleOuter", SigilPx * 2.0f / Half} },
+		{ {"Color", Gold} });	AddPlane(Halo, P, FVector2D(1, 0), SizePx * Px, SizePx * Px);
+
+	// 向上的一道金色圣光柱 (噪声条纹, 淡出两端)
+	const float Len = 900.0f * Px;
+	UInstancedStaticMeshComponent* Pillar = MatISM(PlaneMesh, MatRays,
+		{ {"Intensity", 0.10f}, {"Power", 1.6f}, {"StreakFreq", 0.8f}, {"Speed", 0.0f} },
+		{ {"Color", Gold} });
+	AddPlane(Pillar, P + FVector(10.0f, 0, Len * 0.48f), FVector2D(1, 0), 110.0f * Px, Len);
+}
+// ------------------------------------------------------------------ 后处理 / 灯光
+
+void ARouteSceneBuilder::BuildPostProcess()
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+
+	// 关卡自己摆了无界后处理就尊重它 (Painterly 风格体积是 Transient 的, 不算)
+	for (TActorIterator<APostProcessVolume> It(World); It; ++It)
+	{
+		if (!It->HasAnyFlags(RF_Transient) && It->bUnbound) { return; }
 	}
-	(void)ViewCenter;
+
+	FActorSpawnParameters P;
+	P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	P.ObjectFlags |= RF_Transient;
+	P.Owner = this;
+	APostProcessVolume* V = World->SpawnActor<APostProcessVolume>(APostProcessVolume::StaticClass(), FTransform::Identity, P);
+	if (!V) { return; }
+	SpawnedActors.Add(V);
+
+	V->bUnbound = true;
+	V->bEnabled = true;
+	V->Priority = 0.0f;
+	V->BlendWeight = 1.0f;
+
+	FPostProcessSettings& S = V->Settings;
+	// 固定曝光: 场景几乎全是自发光, 自动曝光会把虚空提亮成灰
+	S.bOverride_AutoExposureMinBrightness = true;  S.AutoExposureMinBrightness = 0.0f;
+	S.bOverride_AutoExposureMaxBrightness = true;  S.AutoExposureMaxBrightness = 0.0f;
+	S.bOverride_AutoExposureBias = true;           S.AutoExposureBias = 0.0f;
+	S.bOverride_LocalExposureHighlightContrastScale = true; S.LocalExposureHighlightContrastScale = 1.0f;
+	S.bOverride_LocalExposureShadowContrastScale = true;    S.LocalExposureShadowContrastScale = 1.0f;
+	S.bOverride_BloomIntensity = true;             S.BloomIntensity = 1.1f;
+	S.bOverride_BloomThreshold = true;             S.BloomThreshold = 0.4f;
+	S.bOverride_VignetteIntensity = true;          S.VignetteIntensity = 0.55f;
 }
 
 void ARouteSceneBuilder::BuildLighting(int32 RunSeed)
 {
 	UWorld* World = GetWorld();
 	if (!World) { return; }
-	// 默认不生成/不调氛围 (与竞技场一致): 关卡自摆光照归用户手调;
+	// 航线场景全部自发光, 默认不需要灯光 (与竞技场一致: 关卡自摆光照归用户手调);
 	// -Atmo 显式开启程序氛围
 	if (!ER::Debug::IsAtmoEnabled())
 	{
@@ -352,7 +424,6 @@ void ARouteSceneBuilder::BuildLighting(int32 RunSeed)
 	P.ObjectFlags |= RF_Transient;
 	P.Owner = this;
 
-	// 主光: 优先调谐关卡已有的平行光 (避免多主光告警), 没有再生成
 	ADirectionalLight* KeyLight = nullptr;
 	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
 	{
@@ -381,20 +452,6 @@ void ARouteSceneBuilder::BuildLighting(int32 RunSeed)
 		LC->ForwardShadingPriority = 1;
 		LC->SetLightingChannels(true, false, false);
 	}
-	// 补光: 从左后下方打, 阴影不死黑
-	if (ADirectionalLight* Fill = World->SpawnActor<ADirectionalLight>(
-		ADirectionalLight::StaticClass(), FVector::ZeroVector,
-		FRotator(-8.0f, 205.0f, 0.0f), P))
-	{
-		UDirectionalLightComponent* LC = Fill->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(0.7f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(105, 125, 165)));
-		LC->SetCastShadows(false);
-		LC->SetLightingChannels(true, false, false);
-		SpawnedActors.Add(Fill);
-	}
-	// 环境: 冷天光压暗
 	if (ASkyLight* Sky = World->SpawnActor<ASkyLight>(
 		ASkyLight::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, P))
 	{
@@ -405,7 +462,6 @@ void ARouteSceneBuilder::BuildLighting(int32 RunSeed)
 		SC->bLowerHemisphereIsBlack = true;
 		SpawnedActors.Add(Sky);
 	}
-	// 虚空雾: 近黑蓝, 远处融进虚空
 	if (AExponentialHeightFog* Fog = World->SpawnActor<AExponentialHeightFog>(
 		AExponentialHeightFog::StaticClass(), FVector::ZeroVector,
 		FRotator::ZeroRotator, P))
@@ -419,3 +475,6 @@ void ARouteSceneBuilder::BuildLighting(int32 RunSeed)
 		SpawnedActors.Add(Fog);
 	}
 }
+
+
+

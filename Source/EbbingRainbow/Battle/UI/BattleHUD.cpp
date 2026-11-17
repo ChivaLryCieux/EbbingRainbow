@@ -2,7 +2,8 @@
 
 #include "Battle/UI/BattleHUD.h"
 #include "Core/ERLog.h"
-#include "Battle/UI/BattleMainWidget.h"
+#include "UI/ERBattleHUD.h"
+#include "UI/ERUITheme.h"
 #include "Battle/Core/BattleGameMode.h"
 #include "Battle/Core/BattleManager.h"
 #include "Battle/Units/BattleUnit.h"
@@ -67,7 +68,19 @@ void ABattleHUD::TryInitWidget()
 
 	if (!MainWidget)
 	{
-		MainWidget = CreateWidget<UBattleMainWidget>(PC);
+		// WBP 子类可在 Project Settings -> ER UI 里指认; 缺省直接用 C++ 类
+		TSubclassOf<UUserWidget> WidgetClass = UERBattleHUD::StaticClass();
+		if (const UERUISettings* UISettings = UERUISettings::Get())
+		{
+			if (!UISettings->BattleHUDWidgetClass.IsNull())
+			{
+				if (UClass* Loaded = UISettings->BattleHUDWidgetClass.LoadSynchronous())
+				{
+					WidgetClass = Loaded;
+				}
+			}
+		}
+		MainWidget = CreateWidget<UERBattleHUD>(PC, WidgetClass);
 		if (MainWidget)
 		{
 			MainWidget->InitializeBattleUI(Mgr, Cast<ABattlePlayerController>(PC));
