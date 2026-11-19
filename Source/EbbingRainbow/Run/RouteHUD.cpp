@@ -2,14 +2,14 @@
 
 #include "Run/RouteHUD.h"
 #include "Core/ERLog.h"
+#include "UI/ERRouteHUD.h"
+#include "UI/ERUITheme.h"
 
-#include "Engine/Engine.h"
-#include "Engine/GameViewportClient.h"
 #include "EngineUtils.h"
+#include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Run/RouteSceneBuilder.h"
 #include "Run/RunSubsystem.h"
-#include "Run/UI/SRouteMapOverlay.h"
 
 void ARouteHUD::BeginPlay()
 {
@@ -23,36 +23,51 @@ void ARouteHUD::BeginPlay()
 		return;
 	}
 
-	if (!GEngine || !GEngine->GameViewport)
+	APlayerController* PC = GetOwningPlayerController();
+	if (!PC)
 	{
-		UE_LOG(LogERRun, Error, TEXT("[RouteHUD] 找不到 GameViewport。"));
+		UE_LOG(LogERRun, Error, TEXT("[RouteHUD] 找不到 PlayerController。"));
 		return;
 	}
 
-	SAssignNew(Overlay, SRouteMapOverlay)
-		.RunSubsystem(Run)
-		.OnNodeClicked(FOnRouteNodeClicked::CreateUObject(this, &ARouteHUD::HandleNodeClicked));
+	TSubclassOf<UUserWidget> WidgetClass = UERRouteHUD::StaticClass();
+	if (const UERUISettings* UISettings = UERUISettings::Get())
+	{
+		if (!UISettings->RouteHUDWidgetClass.IsNull())
+		{
+			if (UClass* Loaded = UISettings->RouteHUDWidgetClass.LoadSynchronous())
+			{
+				WidgetClass = Loaded;
+			}
+		}
+	}
 
-	GEngine->GameViewport->AddViewportWidgetContent(Overlay.ToSharedRef(), 10);
+	RouteWidget = CreateWidget<UERRouteHUD>(PC, WidgetClass);
+	if (RouteWidget)
+	{
+		RouteWidget->AddToViewport(10);
+		RouteWidget->InitializeRouteUI(Run);
+		RouteWidget->OnNodeSelected.AddUniqueDynamic(this, &ARouteHUD::HandleNodeClicked);
+	}
 
-	UE_LOG(LogERRun, Log, TEXT("[RouteHUD] 航线图已挂到视口：seed=%d 节点=%d 当前节点=%d"),
+	UE_LOG(LogERRun, Log, TEXT("[RouteHUD] 航线图蓝图已挂到视口：seed=%d 节点=%d 当前节点=%d"),
 		Run->GetRunSeed(), Run->GetGraph().Nodes.Num(), Run->GetCurrentNodeId());
 }
 
 void ARouteHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (Overlay.IsValid() && GEngine && GEngine->GameViewport)
+	if (RouteWidget)
 	{
-		GEngine->GameViewport->RemoveViewportWidgetContent(Overlay.ToSharedRef());
+		RouteWidget->RemoveFromParent();
+		RouteWidget = nullptr;
 	}
-	Overlay.Reset();
 
 	Super::EndPlay(EndPlayReason);
 }
 
 bool ARouteHUD::GetMapLayout(FVector2D& OutOriginPx, float& OutScalePx) const
 {
-	return Overlay.IsValid() && Overlay->GetMapLayout(OutOriginPx, OutScalePx);
+	return RouteWidget && RouteWidget->GetMapLayout(OutOriginPx, OutScalePx);
 }
 
 void ARouteHUD::HandleNodeClicked(int32 NodeId)
@@ -75,13 +90,12 @@ void ARouteHUD::HandleNodeClicked(int32 NodeId)
 		Run->SetPendingNode(NodeId);
 		UE_LOG(LogERRun, Log, TEXT("[Route] 进入战斗节点 %d (第 %d 层)"), Node->Id, Node->Layer + 1);
 
-		if (Overlay.IsValid())
+		if (RouteWidget)
 		{
-			Overlay->ShowNotification(FText::FromString(TEXT("进入战斗…")), 1.0f);
+			RouteWidget->ShowNotification(FText::FromString(TEXT("进入战斗…")), 1.0f);
 		}
 
 		// 一场景一关卡: 自然战斗开自然岛关卡, 其余开混凝土浮岛关卡
-		// (场景→生成器映射见 BattleArena 的地图场景档案, URL 只留 ?node/?gen)
 		const TCHAR* BattleMap = (Node->Type == ERouteNodeType::BattleNature)
 			? TEXT("/Game/Battle/Maps/Lvl_NatureArena")
 			: TEXT("/Game/Battle/Maps/Lvl_ConcreteArena");
@@ -95,10 +109,10 @@ void ARouteHUD::HandleNodeClicked(int32 NodeId)
 	if (Run->AdvanceToNode(NodeId))
 	{
 		UE_LOG(LogERRun, Log, TEXT("[Route] 安全节点 %d (第 %d 层)，无事发生"), Node->Id, Node->Layer + 1);
-		if (Overlay.IsValid())
+		if (RouteWidget)
 		{
-			Overlay->Refresh();
-			Overlay->ShowNotification(FText::FromString(TEXT("安全节点 · 无事发生")));
+			RouteWidget->Refresh();
+			RouteWidget->ShowNotification(FText::FromString(TEXT("安全节点 · 无事发生")));
 		}
 		for (TActorIterator<ARouteSceneBuilder> It(GetWorld()); It; ++It)
 		{

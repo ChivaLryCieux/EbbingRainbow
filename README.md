@@ -66,7 +66,8 @@
 * **主要功能**：
   * **3D 视界**：支持自由机位漫游与摄像机视差悬浮微倾斜（Parallax）；
   * **战术终端 (Terminal)**：清晰展示理智值与战况，底部居中提供 **`[ 人员管理 ]`** 与 **`[ 航线管理 ]`** 两个玻璃按钮，后者是进入航线图的唯一入口（没有进行中的远征时会先自动开新局，有则接着走）；
-  * **特勤编队 (Squads)**：展开 4 人先遣特勤小队属性面板（先锋、狙击、术师、医疗）；
+  * **人员管理 (Personnel)**：玻璃模态面板 —— 左侧四名先遣特勤的成员列表，右侧档案 = **左立绘 / 右名字·学派·基本属性**；名字与学派分开（磐·力学、燧·热学、霆·电学、蚀·化学），显示完整度/行动点/先攻/闪避/暴击/暴伤/命中、四学派抗性与战术技能；远征进行中时完整度显示当前值。立绘暂统一用根目录 `IMG.PNG` 占位（导入为 `/Game/UI/Textures/T_UI_HeroPortrait_Placeholder`），专属立绘到位后在 `FHallHeroProfile::Portrait` 逐个替换；
+  * **特勤编队 (Squads)**：展开 4 人先遣特勤小队属性面板（先锋、斥候、术师、秘术）；
   * **全屏观景模式 (Zen Mode)**：点击左下角 👁 或按 `Esc` 隐藏所有 UI，将大厅转化为宁静的宇宙沉浸观景台。
 
 ### 2. 航线图 (`Lvl_Route`)
@@ -173,6 +174,20 @@ ArenaHost->Generate(Request);
 | **UI 系统** | **Slate (C++) + UMG 混合架构** | 底层纯 Slate 保证零 GC 负担与高帧率动画，上层 UMG 方便视口挂载 |
 | **物理与动画** | Chaos Physics + Motion Warping | 真实死亡布娃娃物理模拟、平滑移动轨迹与动画打击同步 |
 | **寻路与 AI** | Navigation System (RecastNavMesh) | 战术网格多线程寻路，动态障碍物规避 |
+
+---
+
+## 🧪 实验性模块：AI 战术指令代理（毕业设计创新点）
+
+> **定位声明**：本模块**仅为毕业设计阶段的实验性技术探索与创新点展示，并非《虹不我与》正式版的核心玩法流程**。
+
+* **高度独立与一键剥离**：
+  * 核心代码全部隔离在 `Source/EbbingRainbow/Experimental/AITacticalCommand/`（`UBattleAICommandService`、`UERAICommandPanel`），不改动 `WBP_BattleHUD` 资产与核心战斗结算规则；
+  * 通过 `Source/EbbingRainbow/EbbingRainbow.Build.cs` 中的 `bEnableExperimentalAI`（控制 `ER_WITH_AI_COMMAND` 编译宏及 `HTTP`/`Json` 模块依赖）统一管理。**正式发布时只需将其设为 `false`**（或删除 `Experimental/AITacticalCommand/` 目录），即可彻底剥离该功能。
+* **实现机制**：
+  * 战斗 HUD 右上角挂载可折叠的 `AI 连接` 面板，玩家可输入自然语言战术指令（如“让第一个棋子去攻击序号为1的敌人”）；
+  * 内置战术提示词与多轮对话上下文管理，将实时战场状态（单位编号 `P1..Pn` / `E1..En`、HP/AP、技能表、3D 视线/掩体/高低差）连同 Function Calling 工具表发送至外部大模型 API（兼容 OpenAI `/v1/chat/completions` 与 Anthropic `/v1/messages` 格式），并异步驱动棋子寻路移动、技能施放、镜头聚焦与回合推进，同时在主 HUD 战报条与面板中输出中文战术播报；
+  * API 配置与 Key 仅保存在本地未跟踪目录 `Saved/ER_AIConfig.json`，不会进入 Git 仓库。
 
 ---
 

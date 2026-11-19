@@ -12,15 +12,6 @@
 class SButton;
 class STextBlock;
 
-/** 节点的四种表现状态。 */
-enum class ERouteNodeVisual : uint8
-{
-	Locked,
-	Available,
-	Current,
-	Visited
-};
-
 /**
  * 节点徽章的自绘部分 ("印记"): 辉光 + 暗盘 + 双环 + 类型轮廓 (圆/菱形/六边形)
  * + 状态装饰 (可选=旋转断环, 当前=双向旋转环, 已走=对勾, 终点=放射光芒)。

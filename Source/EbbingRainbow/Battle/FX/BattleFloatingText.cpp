@@ -2,7 +2,9 @@
 
 #include "Battle/FX/BattleFloatingText.h"
 #include "Battle/FX/UBattleFXPool.h"
+#include "UI/ERFloatingText.h"
 #include "Components/TextRenderComponent.h"
+#include "Components/WidgetComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
@@ -14,11 +16,22 @@ ABattleFloatingText::ABattleFloatingText()
 
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 
+	WidgetComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("WidgetComp"));
+	WidgetComp->SetupAttachment(RootComponent);
+	WidgetComp->SetWidgetSpace(EWidgetSpace::Screen);
+	WidgetComp->SetDrawAtDesiredSize(true);
+	WidgetComp->SetPivot(FVector2D(0.5f, 0.5f));
+	WidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	WidgetComp->SetCanEverAffectNavigation(false);
+
+	FloatingWidgetClass = UERFloatingText::StaticClass();
+
 	TextRender = CreateDefaultSubobject<UTextRenderComponent>(TEXT("TextRender"));
 	TextRender->SetupAttachment(RootComponent);
 	TextRender->SetHorizontalAlignment(EHTA_Center);
 	TextRender->SetVerticalAlignment(EVRTA_TextCenter);
 	TextRender->SetCanEverAffectNavigation(false);
+	TextRender->SetHiddenInGame(true);
 
 	SetActorEnableCollision(false);
 }
@@ -33,22 +46,44 @@ void ABattleFloatingText::PoolAcquire(const FVector& Location, const FString& Te
 	const FColor& InColor, float InWorldSize)
 {
 	BaseColor = InColor;
-	PopStartScale = InWorldSize >= 44.0f ? 1.6f : 1.4f;
+	PopStartScale = InWorldSize >= CritSizeThreshold ? CritPopScale : NormalPopScale;
 	LastWrittenAlpha = 255;
 
 	SetActorLocation(Location);
 	SetActorScale3D(FVector::OneVector);
 	SetActorRotation(FRotator::ZeroRotator);
 
-	if (TextRender)
+	const bool bUseUMG = (WidgetComp != nullptr && FloatingWidgetClass != nullptr);
+	if (bUseUMG)
 	{
+		if (WidgetComp->GetWidgetClass() != FloatingWidgetClass)
+		{
+			WidgetComp->SetWidgetClass(FloatingWidgetClass);
+		}
+		WidgetComp->InitWidget();
+		WidgetComp->SetHiddenInGame(false);
+		if (TextRender) { TextRender->SetHiddenInGame(true); }
+
+		if (UERFloatingText* FT = Cast<UERFloatingText>(WidgetComp->GetUserWidgetObject()))
+		{
+			FT->SetFloatingData(FText::FromString(Text), FLinearColor::FromSRGBColor(BaseColor), InWorldSize);
+			FT->SetPopupTransform(PopStartScale, 1.0f);
+		}
+	}
+	else if (TextRender)
+	{
+		if (WidgetComp) { WidgetComp->SetHiddenInGame(true); }
+		TextRender->SetHiddenInGame(false);
 		TextRender->SetText(FText::FromString(Text));
 		TextRender->SetTextRenderColor(BaseColor);
-		TextRender->SetWorldSize(InWorldSize); // 基础字号只在这里写, 之后用 ActorScale 做弹跳
+		TextRender->SetWorldSize(InWorldSize);
 	}
 
 	// 同一位置连冒多个跳字时错峰, 避免完全重叠
-	FVector Scatter(FMath::FRandRange(-70.0f, 70.0f), FMath::FRandRange(-70.0f, 70.0f), FMath::FRandRange(-18.0f, 18.0f));
+	FVector Scatter(
+		FMath::FRandRange(-ScatterXY, ScatterXY),
+		FMath::FRandRange(-ScatterXY, ScatterXY),
+		FMath::FRandRange(-ScatterZ, ScatterZ));
 
 	// 顺着摄像机右方向再扇开一点, 读感更接近主流 ARPG 跳字
 	if (const APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
@@ -56,15 +91,14 @@ void ABattleFloatingText::PoolAcquire(const FVector& Location, const FString& Te
 		if (PC->PlayerCameraManager)
 		{
 			const FVector CamRight = PC->PlayerCameraManager->GetCameraRotation().RotateVector(FVector::RightVector);
-			Scatter += CamRight * FMath::FRandRange(-60.0f, 60.0f);
+			Scatter += CamRight * FMath::FRandRange(-CameraRightScatter, CameraRightScatter);
 		}
 	}
 
-	const float UpSpeed = FMath::FRandRange(150.0f, 190.0f);
+	const float UpSpeed = FMath::FRandRange(UpSpeedMin, UpSpeedMax);
 	Velocity = FVector(Scatter.X, Scatter.Y, UpSpeed);
 
-	// 大数字 (重击/弱点) 多停留一会, 小数字快速退场
-	LifeTime = InWorldSize >= 44.0f ? 1.35f : 1.1f;
+	LifeTime = InWorldSize >= CritSizeThreshold ? CritLifeTime : NormalLifeTime;
 	ElapsedTime = 0.0f;
 
 	AddActorWorldOffset(Scatter * 0.15f);
@@ -75,6 +109,7 @@ void ABattleFloatingText::PoolAcquire(const FVector& Location, const FString& Te
 void ABattleFloatingText::PoolRelease()
 {
 	SetActorHiddenInGame(true);
+	if (WidgetComp) { WidgetComp->SetHiddenInGame(true); }
 	SetActorTickEnabled(false);
 	Velocity = FVector::ZeroVector;
 	ElapsedTime = 0.0f;
@@ -108,10 +143,32 @@ void ABattleFloatingText::Tick(float DeltaSeconds)
 	}
 
 	// 物理弹跳轨迹 (重力衰减)
-	Velocity.Z -= 130.0f * DeltaSeconds;
+	Velocity.Z -= Gravity * DeltaSeconds;
 	SetActorLocation(GetActorLocation() + Velocity * DeltaSeconds);
 
-	// 始终朝向玩家摄像机
+	// 弹跳缩放 + 淡出计算
+	const float PopDur = FMath::Max(0.01f, PopDuration);
+	const float ScaleFactor = (ElapsedTime < PopDur)
+		? FMath::Lerp(PopStartScale, 1.0f, ElapsedTime / PopDur)
+		: 1.0f;
+
+	float Alpha = 1.0f;
+	const float FadeStartTime = LifeTime * FadeStartFraction;
+	if (ElapsedTime > FadeStartTime)
+	{
+		Alpha = FMath::Clamp(1.0f - (ElapsedTime - FadeStartTime) / FMath::Max(0.01f, LifeTime - FadeStartTime), 0.0f, 1.0f);
+	}
+
+	if (WidgetComp && !WidgetComp->bHiddenInGame)
+	{
+		if (UERFloatingText* FT = Cast<UERFloatingText>(WidgetComp->GetUserWidgetObject()))
+		{
+			FT->SetPopupTransform(ScaleFactor, Alpha);
+		}
+		return;
+	}
+
+	// 兜底 TextRender: 始终朝向玩家摄像机
 	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
 	{
 		if (PC->PlayerCameraManager)
@@ -122,26 +179,8 @@ void ABattleFloatingText::Tick(float DeltaSeconds)
 		}
 	}
 
-	// 动态缩放冲击: 前 0.2 秒从 PopStartScale 弹回 1.0x。
-	// 用 ActorScale 代替每帧 SetWorldSize —— 后者每帧重建文字几何体
-	if (ElapsedTime < 0.2f)
-	{
-		const float ScaleFactor = FMath::Lerp(PopStartScale, 1.0f, ElapsedTime / 0.2f);
-		SetActorScale3D(FVector(ScaleFactor));
-	}
-	else if (!GetActorScale3D().Equals(FVector::OneVector))
-	{
-		SetActorScale3D(FVector::OneVector);
-	}
+	SetActorScale3D(FVector(ScaleFactor));
 
-	// 淡出透明度: 后半段平滑降低 Alpha; 量化到 1/16 档, 档位没变就跳过
-	// SetTextRenderColor (它每次调用都触发渲染状态重建)
-	float Alpha = 1.0f;
-	const float FadeStartTime = LifeTime * 0.55f;
-	if (ElapsedTime > FadeStartTime)
-	{
-		Alpha = FMath::Clamp(1.0f - (ElapsedTime - FadeStartTime) / (LifeTime - FadeStartTime), 0.0f, 1.0f);
-	}
 	const uint8 QuantAlpha = static_cast<uint8>(FMath::RoundToInt(Alpha * 16.0f)) * 16;
 	if (TextRender && QuantAlpha != LastWrittenAlpha)
 	{

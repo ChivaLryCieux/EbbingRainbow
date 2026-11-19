@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERSkillCard.h"
+#include "Animation/WidgetAnimation.h"
 #include "Blueprint/WidgetTree.h"
 #include "UI/ERUIStatics.h"
 
@@ -27,6 +28,32 @@ TSharedRef<SWidget> UERSkillCard::RebuildWidget()
 	return Super::RebuildWidget();
 }
 
+void UERSkillCard::NativePreConstruct()
+{
+	if (!bBuilt)
+	{
+		bBuilt = true;
+		if (!HitButton) { Build(); }
+	}
+	Super::NativePreConstruct();
+
+	SetRenderTransformPivot(FVector2D(0.5f, 1.0f));
+
+	if (IsDesignTime())
+	{
+		bAffordable = bPreviewAffordable;
+		bSelected = bPreviewSelected;
+		Setup(0, PreviewName, PreviewName, PreviewCooldown, PreviewHotkey, PreviewCost, false, PreviewAccent, PreviewIcon);
+		SetRenderOpacity(bPreviewAffordable ? 1.0f : UnaffordableOpacity);
+		if (bEnableProceduralHoverMotion)
+		{
+			const float PreviewLift = bPreviewSelected ? 1.0f : 0.0f;
+			SetRenderTranslation(FVector2D(0.0f, HoverLiftY * PreviewLift));
+			SetRenderScale(FVector2D(FMath::Lerp(1.0f, HoverScale, PreviewLift)));
+		}
+	}
+}
+
 void UERSkillCard::NativeConstruct()
 {
 	if (!bBuilt)
@@ -34,14 +61,28 @@ void UERSkillCard::NativeConstruct()
 		bBuilt = true;
 		if (!HitButton) { Build(); }
 	}
+	BindDelegates();
 	Super::NativeConstruct();
+}
+
+void UERSkillCard::BindDelegates()
+{
+	// 委托绑定独立于 Build(): WBP 提供 HitButton 时同样生效
+	if (bDelegatesBound) { return; }
+	bDelegatesBound = true;
+	if (HitButton)
+	{
+		HitButton->OnClicked.AddDynamic(this, &UERSkillCard::HandleClicked);
+		HitButton->OnHovered.AddDynamic(this, &UERSkillCard::HandleHoverBegin);
+		HitButton->OnUnhovered.AddDynamic(this, &UERSkillCard::HandleHoverEnd);
+	}
 }
 
 void UERSkillCard::Build()
 {
 	const UERUITheme* T = ERUI::Theme();
 
-	HitButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+	HitButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("HitButton"));
 	FButtonStyle BtnStyle;
 	const FSlateBrush Transparent = ERUI::TransparentBrush();
 	BtnStyle.SetNormal(Transparent);
@@ -49,30 +90,27 @@ void UERSkillCard::Build()
 	BtnStyle.SetPressed(Transparent);
 	BtnStyle.SetDisabled(Transparent);
 	HitButton->SetStyle(BtnStyle);
-	HitButton->OnClicked.AddDynamic(this, &UERSkillCard::HandleClicked);
-	HitButton->OnHovered.AddDynamic(this, &UERSkillCard::HandleHoverBegin);
-	HitButton->OnUnhovered.AddDynamic(this, &UERSkillCard::HandleHoverEnd);
 	WidgetTree->RootWidget = HitButton;
 
-	USizeBox* CardBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	USizeBox* CardBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("CardBox"));
 	CardBox->SetWidthOverride(T->CardSize.X);
 	CardBox->SetHeightOverride(T->CardSize.Y);
 	HitButton->SetContent(CardBox);
 
-	UOverlay* Ov = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+	UOverlay* Ov = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("Ov"));
 	CardBox->SetContent(Ov);
 
 	// 主列
-	UVerticalBox* Col = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	UVerticalBox* Col = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("Col"));
 	Ov->AddChildToOverlay(Col);
 
 	// 顶行: 费用 + 快捷键
 	{
-		UHorizontalBox* Top = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		UHorizontalBox* Top = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("Top"));
 		CostText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone, true);
 		Top->AddChildToHorizontalBox(CostText);
 
-		USpacer* Sp = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
+		USpacer* Sp = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass(), TEXT("Sp"));
 		Sp->SetSize(FVector2D(1.0f, 1.0f));
 		UHorizontalBoxSlot* SpSlot = Top->AddChildToHorizontalBox(Sp);
 		SpSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -86,13 +124,14 @@ void UERSkillCard::Build()
 
 	// 中部: 图标 / 字形
 	{
-		UOverlay* Mid = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		UOverlay* Mid = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("Mid"));
 
-		USizeBox* IconBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		USizeBox* IconBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("IconBox"));
 		IconBox->SetWidthOverride(30.0f);
 		IconBox->SetHeightOverride(30.0f);
-		IconImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		IconImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("IconImage"));
 		IconImage->SetBrushFromTexture(nullptr);
+		IconImage->SetDesiredSizeOverride(FVector2D(30.0f, 30.0f));
 		IconImage->SetVisibility(ESlateVisibility::Collapsed);
 		IconBox->SetContent(IconImage);
 		UOverlaySlot* IbSlot = Mid->AddChildToOverlay(IconBox);
@@ -111,7 +150,7 @@ void UERSkillCard::Build()
 
 	// 主题色底线
 	{
-		AccentLine = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		AccentLine = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("AccentLine"));
 		AccentLine->SetBrush(ERUI::WhiteBrush(FVector2D(T->CardSize.X - 16.0f, 2.0f)));
 		UVerticalBoxSlot* LineSlot = Col->AddChildToVerticalBox(AccentLine);
 		LineSlot->SetHorizontalAlignment(HAlign_Center);
@@ -120,7 +159,7 @@ void UERSkillCard::Build()
 
 	// 冷却角标: 右下墨底数字
 	{
-		CooldownBg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		CooldownBg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("CooldownBg"));
 		CooldownBg->SetBrush(ERUI::WhiteBrush(FVector2D(16.0f, 14.0f)));
 		CooldownBg->SetColorAndOpacity(FLinearColor(0.03f, 0.035f, 0.045f, 0.9f));
 		CooldownBg->SetVisibility(ESlateVisibility::Collapsed);
@@ -157,11 +196,15 @@ void UERSkillCard::Setup(int32 InIndex, const FText& Name, const FText& Tooltip,
 
 	if (CostText)
 	{
-		CostText->SetText(bIsMove ? FText::FromString(TEXT("移")) : FText::AsNumber(APCost));
+		CostText->SetText(bIsMove ? MoveCostLabel : FText::AsNumber(APCost));
 	}
 	if (HotkeyText)
 	{
 		HotkeyText->SetText(Hotkey);
+	}
+	if (NameText)
+	{
+		NameText->SetText(Name);
 	}
 	if (IconImage)
 	{
@@ -169,8 +212,10 @@ void UERSkillCard::Setup(int32 InIndex, const FText& Name, const FText& Tooltip,
 		IconImage->SetVisibility(bHasIcon ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 		if (bHasIcon)
 		{
-			IconImage->SetBrushFromTexture(Icon);
-			IconImage->SetDesiredSizeOverride(FVector2D(30.0f, 30.0f));
+			// 保留 Designer 在 Brush 上设置的 ImageSize, 不传 bMatchSize 覆盖
+			FSlateBrush Brush = IconImage->GetBrush();
+			Brush.SetResourceObject(Icon);
+			IconImage->SetBrush(Brush);
 		}
 	}
 	if (GlyphText)
@@ -184,25 +229,41 @@ void UERSkillCard::Setup(int32 InIndex, const FText& Name, const FText& Tooltip,
 	{
 		AccentLine->SetColorAndOpacity(InAccent);
 	}
+	const bool bHasCd = !InCooldownText.IsEmpty();
 	if (CooldownText)
 	{
-		const bool bHasCd = !InCooldownText.IsEmpty();
 		CooldownText->SetVisibility(bHasCd ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
-		CooldownBg->SetVisibility(bHasCd ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 		CooldownText->SetText(InCooldownText);
+	}
+	if (CooldownBg)
+	{
+		CooldownBg->SetVisibility(bHasCd ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	}
 
 	ApplyVisualState();
+	if (!IsDesignTime())
+	{
+		BP_OnCardSetup(CardIndex, bIsMove, APCost, Accent, Icon);
+	}
 }
 
 void UERSkillCard::SetAffordable(bool bInAffordable)
 {
 	bAffordable = bInAffordable;
+	ApplyVisualState();
 }
 
 void UERSkillCard::SetSelectedMode(bool bInSelected)
 {
-	bSelected = bInSelected;
+	if (bSelected != bInSelected)
+	{
+		bSelected = bInSelected;
+		if (Anim_Select && !IsDesignTime())
+		{
+			PlayAnimation(Anim_Select, 0.0f, 1, bSelected ? EUMGSequencePlayMode::Forward : EUMGSequencePlayMode::Reverse);
+		}
+	}
+	ApplyVisualState();
 }
 
 void UERSkillCard::ApplyVisualState()
@@ -212,21 +273,32 @@ void UERSkillCard::ApplyVisualState()
 	{
 		AccentLine->SetColorAndOpacity(bSelected ? T->Accent : (bAffordable ? Accent : T->BoneGhost));
 	}
+	if (SelectedFrame)
+	{
+		SelectedFrame->SetVisibility(bSelected ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (!IsDesignTime())
+	{
+		BP_OnVisualStateChanged(bHovered, bSelected, bAffordable);
+	}
 }
 
 void UERSkillCard::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	const float Speed = ERUI::Theme()->HoverInterpSpeed;
+	const float Speed = (HoverInterpSpeedOverride > 0.0f) ? HoverInterpSpeedOverride : ERUI::Theme()->HoverInterpSpeed;
 	const float TargetLift = (bHovered || bSelected) ? 1.0f : 0.0f;
-	const float TargetFade = bAffordable ? 1.0f : 0.35f;
+	const float TargetFade = bAffordable ? 1.0f : UnaffordableOpacity;
 
 	LiftT = FMath::FInterpTo(LiftT, TargetLift, InDeltaTime, Speed);
 	FadeT = FMath::FInterpTo(FadeT, TargetFade, InDeltaTime, Speed);
 
-	SetRenderTranslation(FVector2D(0.0f, -10.0f * LiftT));
-	SetRenderScale(FVector2D(1.0f + 0.05f * LiftT));
+	if (bEnableProceduralHoverMotion)
+	{
+		SetRenderTranslation(FVector2D(0.0f, HoverLiftY * LiftT));
+		SetRenderScale(FVector2D(FMath::Lerp(1.0f, HoverScale, LiftT)));
+	}
 	SetRenderOpacity(FadeT);
 
 	ApplyVisualState();
@@ -240,12 +312,20 @@ void UERSkillCard::HandleClicked()
 void UERSkillCard::HandleHoverBegin()
 {
 	bHovered = true;
+	if (Anim_Hover && !IsDesignTime())
+	{
+		PlayAnimationForward(Anim_Hover);
+	}
 	OnCardHover.Broadcast(this, true);
 }
 
 void UERSkillCard::HandleHoverEnd()
 {
 	bHovered = false;
+	if (Anim_Hover && !IsDesignTime())
+	{
+		PlayAnimationReverse(Anim_Hover);
+	}
 	OnCardHover.Broadcast(this, false);
 }
 

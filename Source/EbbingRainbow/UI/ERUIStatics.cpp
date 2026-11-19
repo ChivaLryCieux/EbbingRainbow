@@ -48,6 +48,10 @@ namespace ERUI
 
 	UTexture2D* GetWhiteTexture()
 	{
+		if (UTexture2D* Asset = Theme()->WhiteTextureAsset)
+		{
+			return Asset;
+		}
 		static UTexture2D* T = nullptr;
 		if (!T)
 		{
@@ -58,6 +62,10 @@ namespace ERUI
 
 	UTexture2D* GetRingTexture()
 	{
+		if (UTexture2D* Asset = Theme()->RingTextureAsset)
+		{
+			return Asset;
+		}
 		static UTexture2D* T = nullptr;
 		if (!T)
 		{
@@ -72,6 +80,10 @@ namespace ERUI
 
 	UTexture2D* GetScrimTexture()
 	{
+		if (UTexture2D* Asset = Theme()->ScrimTextureAsset)
+		{
+			return Asset;
+		}
 		static UTexture2D* T = nullptr;
 		if (!T)
 		{
@@ -121,6 +133,18 @@ namespace ERUI
 		B.SetResourceObject(GetScrimTexture());
 		B.TintColor = FSlateColor(FLinearColor::White);
 		return B;
+	}
+
+	FSlateBrush RoundedBrush(float Radius, FLinearColor Fill, float OutlineWidth, FLinearColor Outline)
+	{
+		FSlateBrush Brush;
+		Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
+		Brush.TintColor = FSlateColor(Fill);
+		Brush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
+		Brush.OutlineSettings.CornerRadii = FVector4(Radius, Radius, Radius, Radius);
+		Brush.OutlineSettings.Width = OutlineWidth;
+		Brush.OutlineSettings.Color = FSlateColor(Outline);
+		return Brush;
 	}
 
 	UTextBlock* MakeText(UUserWidget* Owner, const FText& Text, EERTypeScale Scale,

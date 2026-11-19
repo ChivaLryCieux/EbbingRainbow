@@ -29,6 +29,20 @@ public class EbbingRainbow : ModuleRules
 			"GameplayTags"
 		});
 
+		// =========================================================================
+		// 实验性 AI 战术指挥模块总开关 (毕业设计实验点; 正式上线改为 false 即可一键剥离)
+		// =========================================================================
+		bool bEnableExperimentalAI = true;
+		PublicDefinitions.Add("ER_WITH_AI_COMMAND=" + (bEnableExperimentalAI ? "1" : "0"));
+		if (bEnableExperimentalAI)
+		{
+			PublicDependencyModuleNames.AddRange(new string[] {
+				"HTTP",
+				"Json",
+				"JsonUtilities"
+			});
+		}
+
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 
 		// 单一包含根: 所有 #include 用模块相对路径 ("Battle/Units/BattleUnit.h"),

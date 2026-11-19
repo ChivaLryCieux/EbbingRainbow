@@ -4,6 +4,9 @@
 #include "Core/ERLog.h"
 #include "Battle/Arena/BattleArena.h"
 #include "Battle/Units/BattleUnit.h"
+#if ER_WITH_AI_COMMAND
+#include "Experimental/AITacticalCommand/ERAICommandPanel.h"
+#endif
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -418,11 +421,19 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 			}
 		}
 
+		bool bTypingInUI = false;
+#if ER_WITH_AI_COMMAND
+		bTypingInUI = UERAICommandPanel::IsAnyTextInputFocused();
+#endif
+
 		FVector2D Input = FVector2D::ZeroVector;
-		if (PC->IsInputKeyDown(EKeys::W)) Input.X += 1.0f;
-		if (PC->IsInputKeyDown(EKeys::S)) Input.X -= 1.0f;
-		if (PC->IsInputKeyDown(EKeys::D)) Input.Y += 1.0f;
-		if (PC->IsInputKeyDown(EKeys::A)) Input.Y -= 1.0f;
+		if (!bTypingInUI)
+		{
+			if (PC->IsInputKeyDown(EKeys::W)) Input.X += 1.0f;
+			if (PC->IsInputKeyDown(EKeys::S)) Input.X -= 1.0f;
+			if (PC->IsInputKeyDown(EKeys::D)) Input.Y += 1.0f;
+			if (PC->IsInputKeyDown(EKeys::A)) Input.Y -= 1.0f;
+		}
 
 		if (EdgeScrollMargin > 0.0f && !bOrbiting)
 		{
@@ -454,8 +465,11 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 			EnterFreeMode();
 		}
 
-		if (PC->IsInputKeyDown(EKeys::Q)) TargetYaw -= RotateSpeed * DeltaSeconds;
-		if (PC->IsInputKeyDown(EKeys::E)) TargetYaw += RotateSpeed * DeltaSeconds;
+		if (!bTypingInUI)
+		{
+			if (PC->IsInputKeyDown(EKeys::Q)) TargetYaw -= RotateSpeed * DeltaSeconds;
+			if (PC->IsInputKeyDown(EKeys::E)) TargetYaw += RotateSpeed * DeltaSeconds;
+		}
 	}
 
 	// 平滑聚焦 / 缩放 / 旋转

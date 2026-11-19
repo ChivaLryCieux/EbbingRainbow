@@ -27,6 +27,16 @@ enum class ERouteNodeType : uint8
 	Count  UMETA(Hidden)
 };
 
+/** 节点的四种视觉状态 (蓝图与 C++ 共用)。 */
+UENUM(BlueprintType)
+enum class ERouteNodeVisual : uint8
+{
+	Locked    UMETA(DisplayName = "未解锁"),
+	Available UMETA(DisplayName = "可前往"),
+	Current   UMETA(DisplayName = "当前所在"),
+	Visited   UMETA(DisplayName = "已途经")
+};
+
 /** 节点类型的元数据（表现 + 规则），单一真相源。 */
 struct FRouteNodeTypeInfo
 {

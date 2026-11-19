@@ -8,6 +8,7 @@
 #include "Fonts/SlateFontInfo.h"
 #include "ERUITheme.generated.h"
 
+class AActor;
 class UFont;
 class UFontFace;
 class UTexture2D;
@@ -156,10 +157,29 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Motion")
 	float NotifyDuration = 3.5f;
 
+	// ---------------- 持久化资产覆盖 (可选: 指向 Content/UI 资产供 WBP 与运行时共用) ----------------
+
+	/** 预制复合字体资产 (如 /Game/UI/Fonts/F_ERUI_Composite); 为空时运行时自动按 FontLatin+FontBody 组装 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Assets")
+	TObjectPtr<UFont> CompositeFontAsset = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Assets")
+	TObjectPtr<UTexture2D> WhiteTextureAsset = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Assets")
+	TObjectPtr<UTexture2D> RingTextureAsset = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Assets")
+	TObjectPtr<UTexture2D> ScrimTextureAsset = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Assets")
+	TObjectPtr<UTexture2D> DefaultPortraitAsset = nullptr;
+
 	// ---------------- 工具 ----------------
 
 	/** 档位字号。FontObject 始终是复合字体 UFont: FontLatin 为默认 typeface,
 	 *  FontBody(Noto) 挂在 Fallback typeface, 中文字形自动回落, bLatin 仅保留兼容签名 */
+	UFUNCTION(BlueprintPure, Category = "ERUI|Theme")
 	FSlateFontInfo GetFont(EERTypeScale Scale, bool bLatin = false) const;
 
 	/** 惰性构建的运行时复合字体 (UFont), FontFace 不能直接当 FontObject 用
@@ -167,6 +187,7 @@ public:
 	const UFont* GetRuntimeFont() const;
 
 	/** 当前主题: Settings 配置的 DA, 缺省回退 CDO 默认值 */
+	UFUNCTION(BlueprintPure, Category = "ERUI|Theme", meta = (DisplayName = "Get ER UI Theme"))
 	static const UERUITheme* Get();
 
 private:
@@ -175,21 +196,37 @@ private:
 };
 
 /**
- * UI 全局设置 (Project Settings -> Game):
+ * UI 全局设置 (Project Settings -> Game -> ER UI):
  *  - Theme: DA_ERUITheme 资产路径 (config 序列化, 打包自动依赖)
- *  - BattleHUDWidgetClass: 战斗 HUD 的 WBP 类 (可换任意 UERBattleHUD 子类)
+ *  - HallHUDWidgetClass: 空间站大厅主界面 WBP
+ *  - RouteHUDWidgetClass: 航线图主界面 WBP
+ *  - BattleHUDWidgetClass: 战斗 HUD 的 WBP 类
+ *  - BattleFloatingTextClass: 战场飘字 Actor 蓝图类
  */
-UCLASS(config = Game, defaultconfig)
+UCLASS(config = Game, defaultconfig, meta = (DisplayName = "ER UI"))
 class EBBINGRAINBOW_API UERUISettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(Config, EditAnywhere, Category = "UI")
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Theme")
 	TSoftObjectPtr<UERUITheme> Theme;
 
-	UPROPERTY(Config, EditAnywhere, Category = "UI")
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Screens")
+	TSoftClassPtr<UUserWidget> HallHUDWidgetClass;
+
+	/** 大厅「人员管理」面板 (WBP_PersonnelPanel); 为空时用 C++ 类 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Screens")
+	TSoftClassPtr<UUserWidget> PersonnelPanelWidgetClass;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Screens")
+	TSoftClassPtr<UUserWidget> RouteHUDWidgetClass;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Screens")
 	TSoftClassPtr<UUserWidget> BattleHUDWidgetClass;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Battle FX")
+	TSoftClassPtr<AActor> BattleFloatingTextClass;
 
 	static const UERUISettings* Get() { return GetDefault<UERUISettings>(); }
 };

@@ -6,6 +6,7 @@
 
 #include "Battle/Units/BattleUnit.h"
 #include "Components/Button.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
@@ -14,6 +15,7 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Engine/Texture2D.h"
 
 TSharedRef<SWidget> UERUnitToken::RebuildWidget()
 {
@@ -25,6 +27,21 @@ TSharedRef<SWidget> UERUnitToken::RebuildWidget()
 	return Super::RebuildWidget();
 }
 
+void UERUnitToken::NativePreConstruct()
+{
+	if (!bBuilt)
+	{
+		bBuilt = true;
+		if (!HitButton) { Build(ERUI::Theme()->SquadChipSize); }
+	}
+	Super::NativePreConstruct();
+
+	if (IsDesignTime())
+	{
+		ApplyPreview();
+	}
+}
+
 void UERUnitToken::NativeConstruct()
 {
 	if (!bBuilt)
@@ -32,7 +49,21 @@ void UERUnitToken::NativeConstruct()
 		bBuilt = true;
 		if (!HitButton) { Build(ERUI::Theme()->SquadChipSize); }
 	}
+	BindDelegates();
 	Super::NativeConstruct();
+}
+
+void UERUnitToken::BindDelegates()
+{
+	// 委托绑定独立于 Build(): WBP 提供 HitButton 时同样生效
+	if (bDelegatesBound) { return; }
+	bDelegatesBound = true;
+	if (HitButton)
+	{
+		HitButton->OnClicked.AddDynamic(this, &UERUnitToken::HandleClicked);
+		HitButton->OnHovered.AddDynamic(this, &UERUnitToken::HandleHoverBegin);
+		HitButton->OnUnhovered.AddDynamic(this, &UERUnitToken::HandleHoverEnd);
+	}
 }
 
 void UERUnitToken::NativeDestruct()
@@ -42,9 +73,10 @@ void UERUnitToken::NativeDestruct()
 
 void UERUnitToken::Build(float ChipSize)
 {
+	bBuiltInCode = true;
 	const UERUITheme* T = ERUI::Theme();
 
-	HitButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+	HitButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("HitButton"));
 	FButtonStyle BtnStyle;
 	const FSlateBrush Transparent = ERUI::TransparentBrush();
 	BtnStyle.SetNormal(Transparent);
@@ -52,26 +84,23 @@ void UERUnitToken::Build(float ChipSize)
 	BtnStyle.SetPressed(Transparent);
 	BtnStyle.SetDisabled(Transparent);
 	HitButton->SetStyle(BtnStyle);
-	HitButton->OnClicked.AddDynamic(this, &UERUnitToken::HandleClicked);
-	HitButton->OnHovered.AddDynamic(this, &UERUnitToken::HandleHoverBegin);
-	HitButton->OnUnhovered.AddDynamic(this, &UERUnitToken::HandleHoverEnd);
 	WidgetTree->RootWidget = HitButton;
 
-	UVerticalBox* Col = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	UVerticalBox* Col = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("Col"));
 	HitButton->SetContent(Col);
 
 	// 队伍色刻度
-	TeamTick = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+	TeamTick = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("TeamTick"));
 	TeamTick->SetBrush(ERUI::WhiteBrush(FVector2D(ChipSize, 3.0f)));
 	TeamTick->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	Col->AddChildToVerticalBox(TeamTick)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 3.0f));
 
 	// 方块主体: 首字符
-	ChipBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	ChipBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("ChipBox"));
 	ChipBox->SetWidthOverride(ChipSize);
 	ChipBox->SetHeightOverride(ChipSize);
 	{
-		UOverlay* Ov = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		UOverlay* Ov = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("Ov"));
 		GlyphText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone);
 		UOverlaySlot* S = Ov->AddChildToOverlay(GlyphText);
 		S->SetHorizontalAlignment(HAlign_Center);
@@ -81,7 +110,7 @@ void UERUnitToken::Build(float ChipSize)
 	Col->AddChildToVerticalBox(ChipBox);
 
 	// 2px 血线
-	HpLine = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass());
+	HpLine = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("HpLine"));
 	{
 		FProgressBarStyle PBStyle;
 		PBStyle.SetBackgroundImage(ERUI::WhiteBrush());
@@ -93,14 +122,14 @@ void UERUnitToken::Build(float ChipSize)
 		HpLine->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	}
 	{
-		USizeBox* LineBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		USizeBox* LineBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("LineBox"));
 		LineBox->SetHeightOverride(2.0f);
 		LineBox->SetContent(HpLine);
 		Col->AddChildToVerticalBox(LineBox)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
 	}
 
 	// 当前回合金线
-	ActiveRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+	ActiveRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("ActiveRule"));
 	ActiveRule->SetBrush(ERUI::WhiteBrush(FVector2D(ChipSize, 2.0f)));
 	ActiveRule->SetColorAndOpacity(T->Accent);
 	ActiveRule->SetVisibility(ESlateVisibility::Collapsed);
@@ -113,19 +142,71 @@ void UERUnitToken::Build(float ChipSize)
 	Col->AddChildToVerticalBox(NameText)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
 }
 
+void UERUnitToken::ApplyPreview()
+{
+	const UERUITheme* T = ERUI::Theme();
+	bActive = bPreviewActive;
+	bFocused = bPreviewFocused;
+	bShowName = true;
+
+	if (GlyphText)
+	{
+		GlyphText->SetText(PreviewGlyph);
+		GlyphText->SetColorAndOpacity(FSlateColor(bPreviewActive ? T->Accent : T->Bone));
+	}
+	if (NameText)
+	{
+		NameText->SetText(PreviewName);
+		NameText->SetColorAndOpacity(FSlateColor(bPreviewFocused ? T->Accent : T->BoneSecondary));
+	}
+	if (TeamTick)
+	{
+		TeamTick->SetColorAndOpacity(bPreviewIsPlayer ? T->AllyMark : T->EnemyMark);
+	}
+	const float Pct = FMath::Clamp(PreviewHpPercent, 0.0f, 1.0f);
+	if (HpLine)
+	{
+		HpLine->SetPercent(Pct);
+		HpLine->SetFillColorAndOpacity(Pct < LowHpThreshold ? T->DangerColor : T->Bone);
+	}
+	if (PortraitImage)
+	{
+		if (UMaterialInstanceDynamic* MID = PortraitImage->GetDynamicMaterial())
+		{
+			if (DefaultPortrait)
+			{
+				MID->SetTextureParameterValue(TEXT("Portrait"), DefaultPortrait);
+			}
+			MID->SetScalarParameterValue(TEXT("GrayFraction"), 1.0f - Pct);
+		}
+	}
+	if (ActiveRule)
+	{
+		ActiveRule->SetVisibility(bPreviewActive ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (FocusedFrame)
+	{
+		FocusedFrame->SetVisibility(bPreviewFocused ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	SetRenderOpacity(bPreviewAlive ? 1.0f : DeadOpacity);
+	UpdateNameVisibility();
+}
+
 void UERUnitToken::Setup(ABattleUnit* InUnit, bool bInIsSquad)
 {
 	Unit = InUnit;
 	bIsSquad = bInIsSquad;
-	bShowName = bInIsSquad;
+	bShowName = bInIsSquad || bAlwaysShowName;
 
-	const float ChipSize = bIsSquad ? ERUI::Theme()->SquadChipSize : ERUI::Theme()->ChipSize;
-
-	// 尺寸随用途切换: 重建布局太麻烦, 直接覆盖固定尺寸
-	if (TeamTick)  { TeamTick->SetDesiredSizeOverride(FVector2D(ChipSize, 3.0f)); }
-	if (ActiveRule){ ActiveRule->SetDesiredSizeOverride(FVector2D(ChipSize, 2.0f)); }
-	if (ChipBox)   { ChipBox->SetWidthOverride(ChipSize); ChipBox->SetHeightOverride(ChipSize); }
-	if (GlyphText)
+	// 默认尊重 WBP Designer 的宽高与字号; 仅纯 C++ 回退或显式勾选覆盖时才按 Theme 重设尺寸
+	if (bBuiltInCode || bOverrideSizeFromTheme)
+	{
+		const float ChipSize = bIsSquad ? ERUI::Theme()->SquadChipSize : ERUI::Theme()->ChipSize;
+		if (TeamTick)   { TeamTick->SetDesiredSizeOverride(FVector2D(ChipSize, 3.0f)); }
+		if (ActiveRule) { ActiveRule->SetDesiredSizeOverride(FVector2D(ChipSize, 2.0f)); }
+		if (ChipBox)    { ChipBox->SetWidthOverride(ChipSize); ChipBox->SetHeightOverride(ChipSize); }
+	}
+	if ((bBuiltInCode || bOverrideGlyphFontFromTheme) && GlyphText)
 	{
 		const UERUITheme* T = ERUI::Theme();
 		GlyphText->SetFont(T->GetFont(bIsSquad ? EERTypeScale::Title : EERTypeScale::Caption));
@@ -142,10 +223,8 @@ void UERUnitToken::RefreshFromUnit()
 		return;
 	}
 	const UERUITheme* T = ERUI::Theme();
-	const bool bAlive = Unit->IsAlive();
 	const bool bIsPlayer = (Unit->Team == EBattleTeam::Player);
 
-	// 首字符
 	if (GlyphText)
 	{
 		const FString& Name = Unit->Stats.DisplayName;
@@ -155,24 +234,33 @@ void UERUnitToken::RefreshFromUnit()
 	{
 		NameText->SetText(FText::FromString(Unit->Stats.DisplayName));
 	}
-
-	// 队伍刻度
 	if (TeamTick)
 	{
 		TeamTick->SetColorAndOpacity(bIsPlayer ? T->AllyMark : T->EnemyMark);
 	}
 
-	// 血线
+	const float MaxHp = Unit->GetSkillComponent() ? Unit->GetSkillComponent()->GetEffectiveMaxIntegrity() : Unit->Stats.MaxIntegrity;
+	const float Pct = (MaxHp > 0.0f) ? FMath::Clamp(Unit->Integrity / MaxHp, 0.0f, 1.0f) : 0.0f;
 	if (HpLine)
 	{
-		const float MaxHp = Unit->GetSkillComponent() ? Unit->GetSkillComponent()->GetEffectiveMaxIntegrity() : Unit->Stats.MaxIntegrity;
-		const float Pct = (MaxHp > 0.0f) ? FMath::Clamp(Unit->Integrity / MaxHp, 0.0f, 1.0f) : 0.0f;
 		HpLine->SetPercent(Pct);
-		HpLine->SetFillColorAndOpacity(Pct < 0.30f ? T->DangerColor : T->Bone);
+		HpLine->SetFillColorAndOpacity(Pct < LowHpThreshold ? T->DangerColor : T->Bone);
+	}
+	if (PortraitImage)
+	{
+		if (UMaterialInstanceDynamic* MID = PortraitImage->GetDynamicMaterial())
+		{
+			if (DefaultPortrait)
+			{
+				MID->SetTextureParameterValue(TEXT("Portrait"), DefaultPortrait);
+			}
+			MID->SetScalarParameterValue(TEXT("GrayFraction"), 1.0f - Pct);
+		}
 	}
 
 	ApplyDeadVisual();
 	UpdateNameVisibility();
+	BP_OnUnitRefreshed(Unit, Pct, bActive, bFocused);
 }
 
 void UERUnitToken::ApplyDeadVisual()
@@ -181,8 +269,7 @@ void UERUnitToken::ApplyDeadVisual()
 	{
 		return;
 	}
-	const bool bAlive = Unit->IsAlive();
-	SetRenderOpacity(bAlive ? 1.0f : 0.32f);
+	SetRenderOpacity(Unit->IsAlive() ? 1.0f : DeadOpacity);
 }
 
 void UERUnitToken::SetActiveFlag(bool bInActive)
@@ -202,6 +289,10 @@ void UERUnitToken::SetActiveFlag(bool bInActive)
 void UERUnitToken::SetFocusedFlag(bool bInFocused)
 {
 	bFocused = bInFocused;
+	if (FocusedFrame)
+	{
+		FocusedFrame->SetVisibility(bInFocused ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
 	if (NameText)
 	{
 		NameText->SetColorAndOpacity(FSlateColor(bInFocused ? ERUI::Theme()->Accent : ERUI::Theme()->BoneSecondary));
@@ -215,7 +306,7 @@ void UERUnitToken::UpdateNameVisibility()
 	{
 		return;
 	}
-	const bool bShow = bShowName && (bActive || bFocused || bHovered);
+	const bool bShow = bAlwaysShowName || (bShowName && (bActive || bFocused || bHovered || IsDesignTime()));
 	NameText->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 }
 

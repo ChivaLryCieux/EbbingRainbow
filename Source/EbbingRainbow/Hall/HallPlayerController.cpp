@@ -1,4 +1,4 @@
-﻿#include "Hall/HallPlayerController.h"
+#include "Hall/HallPlayerController.h"
 #include "Hall/HallHUD.h"
 #include "Hall/HallCameraPawn.h"
 #include "Hall/HallFPPawn.h"
@@ -53,6 +53,16 @@ void AHallPlayerController::SetupInputComponent()
 
 void AHallPlayerController::OnKeyEscape()
 {
+	// 人员管理面板优先吃掉 Esc: 先关面板, 再谈观景/光标
+	if (AHallHUD* HHUD = Cast<AHallHUD>(GetHUD()))
+	{
+		if (HHUD->IsPersonnelPanelOpen())
+		{
+			HHUD->ClosePersonnelPanel();
+			return;
+		}
+	}
+
 	if (Cast<AHallFPPawn>(GetPawn()))
 	{
 		// FP: Esc 释放光标回 UI 菜单 (可点底部 Dock 的航线管理)

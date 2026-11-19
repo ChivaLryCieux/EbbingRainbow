@@ -32,8 +32,8 @@ namespace ERRouteLayout
 
 	inline float LayerX(const FRouteGraph& Graph, int32 Layer)
 	{
-		const float DX = (MapW - 2.0f * MarginX) / FMath::Max(1, Graph.NumLayers - 1);
-		return MarginX + Layer * DX;
+		const float LayerDX = (MapW - 2.0f * MarginX) / FMath::Max(1, Graph.NumLayers - 1);
+		return MarginX + Layer * LayerDX;
 	}
 
 	/** 同层相邻节点的最小纵向间距 (画布像素): 徽章直径 + 类型名 + 呼吸空间 */
@@ -46,7 +46,7 @@ namespace ERRouteLayout
 	inline FVector2D NodeCenter(const FRouteGraph& Graph, const FRouteNode& Node)
 	{
 		const float Top = MarginTop, Bottom = MapH - MarginBottom;
-		const float DY = (Bottom - Top) / FMath::Max(1, Graph.NumSlots - 1);
+		const float SlotDY = (Bottom - Top) / FMath::Max(1, Graph.NumSlots - 1);
 
 		TArray<const FRouteNode*> Layer;
 		for (const FRouteNode& N : Graph.Nodes)
@@ -56,7 +56,7 @@ namespace ERRouteLayout
 		Layer.Sort([](const FRouteNode& A, const FRouteNode& B) { return A.Slot < B.Slot; });
 
 		TArray<float> Y;
-		for (const FRouteNode* N : Layer) { Y.Add(Top + N->Slot * DY); }
+		for (const FRouteNode* N : Layer) { Y.Add(Top + N->Slot * SlotDY); }
 		for (int32 Pass = 0; Pass < 12; ++Pass)
 		{
 			for (int32 I = 1; I < Y.Num(); ++I)
@@ -72,7 +72,7 @@ namespace ERRouteLayout
 			for (float& V : Y) { V = FMath::Clamp(V, Top, Bottom); }
 		}
 
-		float NodeY = Top + Node.Slot * DY;
+		float NodeY = Top + Node.Slot * SlotDY;
 		for (int32 I = 0; I < Layer.Num(); ++I)
 		{
 			if (Layer[I]->Id == Node.Id) { NodeY = Y[I]; }
@@ -104,11 +104,11 @@ namespace ERRouteLayout
 	/** 三次贝塞尔: 层级沿 X 推进, 切向沿 X (Slate 连线与 3D 光带共用同一条曲线) */
 	inline FVector2D EdgeBezier(const FVector2D& S, const FVector2D& E, double T)
 	{
-		const double DX = E.X - S.X;
+		const double SpanX = E.X - S.X;
 		const double U = 1.0 - T;
 		const double W0 = U * U * U, W1 = 3.0 * U * U * T, W2 = 3.0 * U * T * T, W3 = T * T * T;
 		return FVector2D(
-			S.X * W0 + (S.X + DX * 0.45) * W1 + (E.X - DX * 0.45) * W2 + E.X * W3,
+			S.X * W0 + (S.X + SpanX * 0.45) * W1 + (E.X - SpanX * 0.45) * W2 + E.X * W3,
 			S.Y * W0 + S.Y * W1 + E.Y * W2 + E.Y * W3);
 	}
 

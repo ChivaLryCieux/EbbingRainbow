@@ -7,6 +7,10 @@
 
 const UFont* UERUITheme::GetRuntimeFont() const
 {
+	if (CompositeFontAsset)
+	{
+		return CompositeFontAsset;
+	}
 	if (RuntimeFont)
 	{
 		return RuntimeFont;

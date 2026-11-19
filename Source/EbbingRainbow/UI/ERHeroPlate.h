@@ -19,27 +19,64 @@ class UTextBlock;
  *   [2px 血线]
  *   [AP 点阵]  [3/5]
  *   [状态摘要 Micro, 空则折叠]
- * 大数字做主角, 文字减到最少。
+ * 大数字做主角, 文字减到最少。支持设计期实时数值预览与格式覆盖。
  */
-UCLASS()
+UCLASS(BlueprintType, Blueprintable)
 class EBBINGRAINBOW_API UERHeroPlate : public UUserWidget
 {
 	GENERATED_BODY()
 
 public:
+	UFUNCTION(BlueprintCallable, Category = "ERUI|HeroPlate")
 	void BindUnit(ABattleUnit* InUnit);
+
+	UFUNCTION(BlueprintCallable, Category = "ERUI|HeroPlate")
 	void Refresh();
+
+	UFUNCTION(BlueprintCallable, Category = "ERUI|HeroPlate")
 	void ShowWaiting(bool bWaiting);
+
+	// ---- 可调参数 ----
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HeroPlate", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float LowHpThreshold = 0.30f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HeroPlate")
+	FText WaitingPlaceholder = INVTEXT("—");
+
+	// ---- 设计期预览 ----
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
+	FText PreviewName = INVTEXT("观测者 · 01");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
+	int32 PreviewHp = 84;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
+	int32 PreviewMaxHp = 100;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
+	int32 PreviewBarrier = 15;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
+	int32 PreviewAp = 3;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
+	int32 PreviewMaxAp = 5;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
+	FText PreviewStatus = INVTEXT("稳态 · 掩体");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
+	bool bPreviewIsPlayer = true;
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "ERUI|HeroPlate", meta = (DisplayName = "On Unit Bound"))
+	void BP_OnUnitBound(ABattleUnit* BoundUnit);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
+	virtual void NativePreConstruct() override;
 	virtual void NativeConstruct() override;
-
-private:
-	void Build();
-
-	UPROPERTY(Transient)
-	TObjectPtr<ABattleUnit> Unit;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NameText;
@@ -67,6 +104,16 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> TeamTick;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> PortraitImage;
+
+private:
+	void Build();
+	void ApplyValues(const FString& DisplayName, bool bIsPlayer, float CurHp, float MaxHp, float Barrier, int32 CurAp, int32 MaxAp, const FString& StatusSummary);
+
+	UPROPERTY(Transient)
+	TObjectPtr<ABattleUnit> Unit;
 
 	bool bBuilt = false;
 };

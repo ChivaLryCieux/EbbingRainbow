@@ -8,7 +8,7 @@
 #include "Battle/Core/BattleManager.h"
 #include "Battle/Units/BattleUnit.h"
 #include "Battle/Player/BattlePlayerController.h"
-#include "Hall/UI/HallMainWidget.h"
+#include "UI/ERHallHUD.h"
 #include "Engine/Canvas.h"
 
 ABattleHUD::ABattleHUD()
@@ -29,7 +29,18 @@ void ABattleHUD::BeginPlay()
 			PC->bEnableClickEvents = true;
 			PC->bEnableMouseOverEvents = true;
 
-			if (UHallMainWidget* HallWidget = CreateWidget<UHallMainWidget>(PC))
+			TSubclassOf<UUserWidget> HallClass = UERHallHUD::StaticClass();
+			if (const UERUISettings* UISettings = UERUISettings::Get())
+			{
+				if (!UISettings->HallHUDWidgetClass.IsNull())
+				{
+					if (UClass* Loaded = UISettings->HallHUDWidgetClass.LoadSynchronous())
+					{
+						HallClass = Loaded;
+					}
+				}
+			}
+			if (UUserWidget* HallWidget = CreateWidget<UUserWidget>(PC, HallClass))
 			{
 				HallWidget->AddToViewport(10);
 			}

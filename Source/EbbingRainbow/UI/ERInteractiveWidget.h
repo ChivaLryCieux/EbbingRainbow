@@ -25,6 +25,9 @@ public:
 	/** 命中检测目标: 默认用自身根控件; 子类可指向内部 UButton */
 	virtual UWidget* GetHoverCheckWidget() const { return const_cast<UERInteractiveWidget*>(this); }
 
+	/** 供容器型交互面板重载 (例如判断几何包含光标或子输入聚焦) */
+	virtual bool IsInteractiveHovered() const;
+
 	/** 任何已注册交互控件当前正被悬停 */
 	static bool IsAnyHovered();
 

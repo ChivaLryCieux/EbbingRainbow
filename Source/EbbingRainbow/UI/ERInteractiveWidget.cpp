@@ -18,6 +18,12 @@ void UERInteractiveWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+bool UERInteractiveWidget::IsInteractiveHovered() const
+{
+	const UWidget* Check = GetHoverCheckWidget();
+	return Check && Check->IsHovered();
+}
+
 bool UERInteractiveWidget::IsAnyHovered()
 {
 	bool bAny = false;
@@ -29,8 +35,7 @@ bool UERInteractiveWidget::IsAnyHovered()
 		{
 			continue;
 		}
-		UWidget* Check = IW->GetHoverCheckWidget();
-		if (Check && Check->IsHovered())
+		if (IW->IsInteractiveHovered())
 		{
 			bAny = true;
 			break;

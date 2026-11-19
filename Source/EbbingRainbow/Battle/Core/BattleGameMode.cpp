@@ -48,12 +48,18 @@ const TArray<FBattleUnitStats>& ABattleGameMode::GetDefaultPlayerRoster()
 {
 	static const TArray<FBattleUnitStats> Roster = []()
 	{
+		// 四名先遣特勤: DisplayName 是角色名, School 是学派 (两者不再混为一谈,
+		// 大厅人员管理面板同时显示名字与学派, 见 Hall/HallRoster.h)。
 		TArray<FBattleUnitStats> Units = {
-			FBattleUnitStats(TEXT("力学"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 重甲高力抗, 弱电导
-			FBattleUnitStats(TEXT("热学"), 38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 高先攻大跑动距离, 高闪避
-			FBattleUnitStats(TEXT("电学"), 32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 弱力学, 强元素抗性
-			FBattleUnitStats(TEXT("化学"), 45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 均衡, 高化学抗性
+			FBattleUnitStats(TEXT("磐"), 60.0f, 3, 8,  0.05f,  0.30f,  0.0f,  -0.20f,  0.10f), // 重甲高力抗, 弱电导
+			FBattleUnitStats(TEXT("燧"), 38.0f, 4, 14, 0.20f,  0.05f, -0.10f,  0.05f,  0.0f),  // 高先攻大跑动距离, 高闪避
+			FBattleUnitStats(TEXT("霆"), 32.0f, 3, 10, 0.05f, -0.15f,  0.35f,  0.25f,  0.10f), // 弱力学, 强元素抗性
+			FBattleUnitStats(TEXT("蚀"), 45.0f, 3, 9,  0.05f,  0.15f,  0.10f,  0.10f,  0.25f), // 均衡, 高化学抗性
 		};
+		Units[0].School = EDamageType::Kinetic;
+		Units[1].School = EDamageType::Thermal;
+		Units[2].School = EDamageType::Electric;
+		Units[3].School = EDamageType::Chemical;
 
 		// 技能构筑 (学派定位): 力学近战单体 / 热学周身新星 / 电学连锁 / 化学投掷 AoE
 		Units[0].SkillIds = { TEXT("Slash"),    TEXT("ShieldBash"),   TEXT("PowerStrike"),   TEXT("FieldBarrier") };

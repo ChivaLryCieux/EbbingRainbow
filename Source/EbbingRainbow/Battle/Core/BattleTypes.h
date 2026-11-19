@@ -79,6 +79,13 @@ struct FBattleUnitStats
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
 	FString DisplayName = TEXT("Unit");
 
+	/**
+	 * 所属学派 (四大学科)。决定伤害/反应表入口与角色档案的学派标识;
+	 * 立绘、徽记、抗性条配色都从这里派生, 不在 UI 里重复写死。
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
+	EDamageType School = EDamageType::Kinetic;
+
 	// 1. 完整度 (生命值, Float)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|Integrity", meta = (ClampMin = "1.0"))
 	float MaxIntegrity = 50.0f;

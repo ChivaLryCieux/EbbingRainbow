@@ -9,6 +9,9 @@
 #include "Battle/Terrain/BattleTerrainQuery.h"
 #include "Battle/Player/TacticalCameraPawn.h"
 #include "Battle/UI/BattleHUD.h"
+#if ER_WITH_AI_COMMAND
+#include "Experimental/AITacticalCommand/ERAICommandPanel.h"
+#endif
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 
@@ -190,6 +193,9 @@ void ABattlePlayerController::StartSkillTargeting(int32 SkillIndex)
 
 void ABattlePlayerController::CancelCurrentAction()
 {
+#if ER_WITH_AI_COMMAND
+	if (UERAICommandPanel::IsAnyTextInputFocused()) return;
+#endif
 	SetInteractionMode(EPlayerInteractionMode::Idle);
 }
 
@@ -367,26 +373,41 @@ void ABattlePlayerController::OnRightClick()
 
 void ABattlePlayerController::OnKey1()
 {
+#if ER_WITH_AI_COMMAND
+	if (UERAICommandPanel::IsAnyTextInputFocused()) return;
+#endif
 	StartSkillTargeting(0);
 }
 
 void ABattlePlayerController::OnKey2()
 {
+#if ER_WITH_AI_COMMAND
+	if (UERAICommandPanel::IsAnyTextInputFocused()) return;
+#endif
 	StartSkillTargeting(1);
 }
 
 void ABattlePlayerController::OnKeyM()
 {
+#if ER_WITH_AI_COMMAND
+	if (UERAICommandPanel::IsAnyTextInputFocused()) return;
+#endif
 	ToggleMoveMode();
 }
 
 void ABattlePlayerController::OnKeySpace()
 {
+#if ER_WITH_AI_COMMAND
+	if (UERAICommandPanel::IsAnyTextInputFocused()) return;
+#endif
 	RequestEndTurn();
 }
 
 void ABattlePlayerController::OnKeyF()
 {
+#if ER_WITH_AI_COMMAND
+	if (UERAICommandPanel::IsAnyTextInputFocused()) return;
+#endif
 	FocusOnActiveUnit();
 }
 

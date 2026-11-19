@@ -1,15 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERBattleHUD.h"
+#include "Animation/WidgetAnimation.h"
 #include "Blueprint/WidgetTree.h"
 
 #include "Core/ERLog.h"
 #include "UI/ERUIStatics.h"
 #include "UI/ERUnitToken.h"
 #include "UI/ERSkillCard.h"
+#include "UI/ERSkillTooltip.h"
 #include "UI/ERHeroPlate.h"
 #include "UI/ERActionButton.h"
 #include "UI/ERInteractiveWidget.h"
+#if ER_WITH_AI_COMMAND
+#include "Experimental/AITacticalCommand/ERAICommandPanel.h"
+#endif
 
 #include "Battle/Core/BattleManager.h"
 #include "Battle/Core/BattleGameMode.h"
@@ -43,6 +48,26 @@ TSharedRef<SWidget> UERBattleHUD::RebuildWidget()
 	return Super::RebuildWidget();
 }
 
+void UERBattleHUD::NativePreConstruct()
+{
+	if (!bLayoutBuilt)
+	{
+		bLayoutBuilt = true;
+		BuildLayout();
+	}
+	Super::NativePreConstruct();
+
+	if (EndTurnButton && !EndTurnLabel.IsEmpty())
+	{
+		EndTurnButton->SetLabel(EndTurnLabel);
+	}
+
+	if (IsDesignTime())
+	{
+		BuildDesignPreview();
+	}
+}
+
 void UERBattleHUD::NativeConstruct()
 {
 	if (!bLayoutBuilt)
@@ -51,6 +76,46 @@ void UERBattleHUD::NativeConstruct()
 		BuildLayout();
 	}
 	Super::NativeConstruct();
+
+	CacheDesignerBaseTransforms();
+
+	// 清理任何设计期占位子项, 交给运行时对象池管理
+	InitiativeTokens.Reset();
+	SquadTokens.Reset();
+	Cards.Reset();
+	if (InitiativeBox) { InitiativeBox->ClearChildren(); }
+	if (SquadBox)      { SquadBox->ClearChildren(); }
+	if (HandBox)       { HandBox->ClearChildren(); }
+
+	if (NotifyText)    { NotifyText->SetVisibility(ESlateVisibility::Hidden); }
+	if (SkillTooltip)  { SkillTooltip->SetVisibility(ESlateVisibility::Collapsed); }
+	if (TooltipRoot)   { TooltipRoot->SetVisibility(ESlateVisibility::Collapsed); }
+	if (ResultPanel)   { ResultPanel->SetVisibility(ESlateVisibility::Collapsed); }
+
+	if (EndTurnButton)
+	{
+		if (!EndTurnLabel.IsEmpty())
+		{
+			EndTurnButton->SetLabel(EndTurnLabel);
+		}
+		EndTurnButton->OnActionClicked.AddUniqueDynamic(this, &UERBattleHUD::HandleEndTurnClicked);
+	}
+#if ER_WITH_AI_COMMAND
+	if (!IsDesignTime())
+	{
+		UERAICommandPanel::InstallOnBattleHUD(this, RootCanvas, ERUI::Theme()->ScreenMargin);
+	}
+#endif
+	if (ResultPanel)
+	{
+		ResultPanel->OnPrimaryClicked.AddUniqueDynamic(this, &UERBattleHUD::HandleResultPrimary);
+	}
+
+	EntranceT = bEnableEntranceAnimation ? 0.0f : 1.0f;
+	if (Anim_Intro)
+	{
+		PlayAnimationForward(Anim_Intro);
+	}
 }
 
 void UERBattleHUD::NativeDestruct()
@@ -63,8 +128,22 @@ void UERBattleHUD::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+void UERBattleHUD::CacheDesignerBaseTransforms()
+{
+	if (bBaseTransformsCached)
+	{
+		return;
+	}
+	bBaseTransformsCached = true;
+	if (InitiativeBox) { BaseInitiativeTranslation = InitiativeBox->GetRenderTransform().Translation; }
+	if (HandBox)       { BaseHandTranslation = HandBox->GetRenderTransform().Translation; }
+	if (SquadBox)      { BaseSquadTranslation = SquadBox->GetRenderTransform().Translation; }
+	if (HeroPlate)     { BaseHeroOpacity = HeroPlate->GetRenderOpacity(); }
+	if (EndTurnButton) { BaseEndTurnOpacity = EndTurnButton->GetRenderOpacity(); }
+}
+
 // ============================================================
-// 布局
+// 布局与设计期预览
 // ============================================================
 
 void UERBattleHUD::BuildLayout()
@@ -74,8 +153,19 @@ void UERBattleHUD::BuildLayout()
 
 	if (!RootCanvas)
 	{
-		RootCanvas = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass());
-		WidgetTree->RootWidget = RootCanvas;
+		if (UCanvasPanel* ExistingCanvas = Cast<UCanvasPanel>(WidgetTree->RootWidget))
+		{
+			RootCanvas = ExistingCanvas;
+		}
+		else if (!WidgetTree->RootWidget)
+		{
+			RootCanvas = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("RootCanvas"));
+			WidgetTree->RootWidget = RootCanvas;
+		}
+	}
+	if (!RootCanvas)
+	{
+		return;
 	}
 	RootCanvas->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
@@ -89,10 +179,9 @@ void UERBattleHUD::BuildLayout()
 		return S;
 	};
 
-	// ---- 压边 scrim ----
 	if (!TopScrim)
 	{
-		TopScrim = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		TopScrim = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("TopScrim"));
 		TopScrim->SetBrush(ERUI::ScrimBrush());
 		TopScrim->SetColorAndOpacity(ERUI::Fade(T->InkScrim, 0.85f));
 		TopScrim->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
@@ -102,7 +191,7 @@ void UERBattleHUD::BuildLayout()
 	}
 	if (!BottomScrim)
 	{
-		BottomScrim = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		BottomScrim = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("BottomScrim"));
 		BottomScrim->SetBrush(ERUI::ScrimBrush());
 		BottomScrim->SetColorAndOpacity(ERUI::Fade(T->InkScrim, 0.9f));
 		BottomScrim->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
@@ -114,13 +203,12 @@ void UERBattleHUD::BuildLayout()
 		S->SetAlignment(FVector2D(0.0f, 1.0f));
 	}
 
-	// ---- 先攻条: 细线 + 标记行 ----
 	if (!InitiativeBox)
 	{
-		UVerticalBox* Strip = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		UVerticalBox* Strip = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("InitiativeStrip"));
 		Strip->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
-		InitiativeRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		InitiativeRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("InitiativeRule"));
 		InitiativeRule->SetBrush(ERUI::WhiteBrush(FVector2D(400.0f, T->RuleThickness)));
 		InitiativeRule->SetColorAndOpacity(T->BoneGhost);
 		InitiativeRule->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
@@ -128,7 +216,7 @@ void UERBattleHUD::BuildLayout()
 		RuleSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
 		RuleSlot->SetHorizontalAlignment(HAlign_Center);
 
-		InitiativeBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		InitiativeBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("InitiativeBox"));
 		InitiativeBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		UVerticalBoxSlot* BxSlot = Strip->AddChildToVerticalBox(InitiativeBox);
 		BxSlot->SetHorizontalAlignment(HAlign_Center);
@@ -136,82 +224,168 @@ void UERBattleHUD::BuildLayout()
 		AddAnchored(Strip, FVector2D(0.5f, 0.0f), FVector2D(0.5f, 0.0f), FVector2D(0.0f, 30.0f));
 	}
 
-	// ---- 战报 (无框一行) ----
 	if (!NotifyText)
 	{
 		NotifyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->Accent);
 		AddAnchored(NotifyText, FVector2D(0.5f, 0.0f), FVector2D(0.5f, 0.0f), FVector2D(0.0f, 96.0f));
 	}
-	NotifyText->SetVisibility(ESlateVisibility::Hidden);
 
-	// ---- 左侧编队方块列 ----
 	if (!SquadBox)
 	{
-		SquadBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		SquadBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SquadBox"));
 		SquadBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		AddAnchored(SquadBox, FVector2D(0.0f, 0.5f), FVector2D(0.0f, 0.5f), FVector2D(M, 0.0f));
 	}
 
-	// ---- 左下状态牌 ----
 	if (!HeroPlate)
 	{
-		HeroPlate = WidgetTree->ConstructWidget<UERHeroPlate>(UERHeroPlate::StaticClass());
+		HeroPlate = WidgetTree->ConstructWidget<UERHeroPlate>(UERHeroPlate::StaticClass(), TEXT("HeroPlate"));
 		AddAnchored(HeroPlate, FVector2D(0.0f, 1.0f), FVector2D(0.0f, 1.0f), FVector2D(M, -44.0f));
 	}
 	HeroPlate->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
-	// ---- 底中手牌 ----
 	if (!HandBox)
 	{
-		HandBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		HandBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("HandBox"));
 		HandBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		AddAnchored(HandBox, FVector2D(0.5f, 1.0f), FVector2D(0.5f, 1.0f), FVector2D(0.0f, -40.0f));
 	}
 
-	// ---- 悬停详情 (手牌上方一行) ----
-	if (!TooltipRoot)
+	if (!SkillTooltip && !TooltipRoot)
 	{
-		UOverlay* TipWrap = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
-		TooltipBg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-		TooltipBg->SetBrush(ERUI::WhiteBrush());
-		TooltipBg->SetColorAndOpacity(T->InkPanel);
-		TooltipBg->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-		TipWrap->AddChildToOverlay(TooltipBg);
-
-		UVerticalBox* TipCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		{
-			UOverlaySlot* S = TipWrap->AddChildToOverlay(TipCol);
-			S->SetPadding(FMargin(14.0f, 8.0f));
-		}
-		TooltipTitle = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, T->Bone);
-		TipCol->AddChildToVerticalBox(TooltipTitle);
-		TooltipMeta = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneTertiary, true);
-		TipCol->AddChildToVerticalBox(TooltipMeta)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
-
-		AddAnchored(TipWrap, FVector2D(0.5f, 1.0f), FVector2D(0.5f, 1.0f), FVector2D(0.0f, -160.0f));
-		TooltipRoot = TipWrap;
+		SkillTooltip = WidgetTree->ConstructWidget<UERSkillTooltip>(UERSkillTooltip::StaticClass(), TEXT("SkillTooltip"));
+		AddAnchored(SkillTooltip, FVector2D(0.5f, 1.0f), FVector2D(0.5f, 1.0f), FVector2D(0.0f, -180.0f));
 	}
-	TooltipRoot->SetVisibility(ESlateVisibility::Collapsed);
 
-	// ---- 右下结束回合 (委托总是要绑) ----
 	if (!EndTurnButton)
 	{
-		EndTurnButton = WidgetTree->ConstructWidget<UERActionButton>(UERActionButton::StaticClass());
+		EndTurnButton = WidgetTree->ConstructWidget<UERActionButton>(UERActionButton::StaticClass(), TEXT("EndTurnButton"));
 		AddAnchored(EndTurnButton, FVector2D(1.0f, 1.0f), FVector2D(1.0f, 1.0f), FVector2D(-M, -52.0f));
 	}
-	EndTurnButton->SetLabel(FText::FromString(TEXT("结束回合")));
-	EndTurnButton->OnActionClicked.AddUniqueDynamic(this, &UERBattleHUD::HandleEndTurnClicked);
 
-	// ---- 结算 (委托总是要绑) ----
 	if (!ResultPanel)
 	{
-		ResultPanel = WidgetTree->ConstructWidget<UERBattleResult>(UERBattleResult::StaticClass());
+		ResultPanel = WidgetTree->ConstructWidget<UERBattleResult>(UERBattleResult::StaticClass(), TEXT("ResultPanel"));
 		UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(ResultPanel);
 		S->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
 		S->SetOffsets(FMargin(0.0f));
 	}
-	ResultPanel->OnPrimaryClicked.AddUniqueDynamic(this, &UERBattleHUD::HandleResultPrimary);
-	ResultPanel->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void UERBattleHUD::BuildDesignPreview()
+{
+	if (!WidgetTree)
+	{
+		return;
+	}
+	const UERUITheme* T = ERUI::Theme();
+
+	if (NotifyText)
+	{
+		NotifyText->SetText(PreviewNotificationText);
+		NotifyText->SetVisibility(bPreviewNotification ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Hidden);
+	}
+	if (SkillTooltip)
+	{
+		SkillTooltip->SetVisibility(bPreviewTooltip ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (TooltipRoot)
+	{
+		if (TooltipTitle) { TooltipTitle->SetText(INVTEXT("相位斩击\n突进劈砍单体目标")); }
+		if (TooltipMeta)  { TooltipMeta->SetText(INVTEXT("射 300 · 伤 35 · 2 AP")); }
+		TooltipRoot->SetVisibility(bPreviewTooltip ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (ResultPanel)
+	{
+		ResultPanel->SetVisibility(bPreviewResultPanel ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	if (!bPreviewPopulateContainers)
+	{
+		if (InitiativeBox) { InitiativeBox->ClearChildren(); }
+		if (SquadBox)      { SquadBox->ClearChildren(); }
+		if (HandBox)       { HandBox->ClearChildren(); }
+		return;
+	}
+
+	// 先攻条预览
+	if (InitiativeBox)
+	{
+		InitiativeBox->ClearChildren();
+		const TSubclassOf<UERUnitToken> TokCls = InitiativeTokenClass
+			? InitiativeTokenClass
+			: TSubclassOf<UERUnitToken>(UERUnitToken::StaticClass());
+		static const TCHAR* Glyphs[] = { TEXT("锋"), TEXT("敌"), TEXT("观测"), TEXT("卫"), TEXT("猎") };
+		for (int32 i = 0; i < PreviewInitiativeCount; ++i)
+		{
+			UERUnitToken* Tok = WidgetTree->ConstructWidget<UERUnitToken>(TokCls);
+			if (!Tok) { continue; }
+			Tok->PreviewGlyph = FText::FromString(FString(Glyphs[i % 5]).Left(1));
+			Tok->bPreviewIsPlayer = (i % 2 == 0);
+			Tok->bPreviewActive = (i == 0);
+			Tok->PreviewHpPercent = 1.0f - 0.12f * i;
+			Tok->bAlwaysShowName = false;
+			UHorizontalBoxSlot* S = InitiativeBox->AddChildToHorizontalBox(Tok);
+			S->SetPadding(FMargin(0.0f, 0.0f, (i == PreviewInitiativeCount - 1) ? 0.0f : InitiativeTokenGap, 0.0f));
+		}
+	}
+
+	// 左侧编队预览
+	if (SquadBox)
+	{
+		SquadBox->ClearChildren();
+		const TSubclassOf<UERUnitToken> SqCls = SquadTokenClass
+			? SquadTokenClass
+			: TSubclassOf<UERUnitToken>(UERUnitToken::StaticClass());
+		static const TCHAR* Names[] = { TEXT("观测者"), TEXT("铁卫"), TEXT("棱镜") };
+		for (int32 i = 0; i < PreviewSquadCount; ++i)
+		{
+			UERUnitToken* Tok = WidgetTree->ConstructWidget<UERUnitToken>(SqCls);
+			if (!Tok) { continue; }
+			Tok->PreviewName = FText::FromString(Names[i % 3]);
+			Tok->PreviewGlyph = FText::FromString(FString(Names[i % 3]).Left(1));
+			Tok->bPreviewIsPlayer = true;
+			Tok->bPreviewActive = (i == 0);
+			Tok->bPreviewFocused = (i == 0);
+			Tok->PreviewHpPercent = (i == 1) ? 0.65f : 0.92f;
+			UVerticalBoxSlot* S = SquadBox->AddChildToVerticalBox(Tok);
+			S->SetPadding(FMargin(0.0f, 0.0f, 0.0f, (i == PreviewSquadCount - 1) ? 0.0f : SquadTokenGap));
+		}
+	}
+
+	// 底部手牌预览
+	if (HandBox)
+	{
+		HandBox->ClearChildren();
+		const TSubclassOf<UERSkillCard> CardCls = SkillCardClass
+			? SkillCardClass
+			: TSubclassOf<UERSkillCard>(UERSkillCard::StaticClass());
+		static const TCHAR* CardNames[] = { TEXT("相位斩击"), TEXT("棱镜护盾"), TEXT("电弧跳跃"), TEXT("机动") };
+		const FLinearColor CardColors[] = {
+			T->Accent,
+			T->AllyMark,
+			FLinearColor(0.68f, 0.45f, 0.95f, 1.0f),
+			MoveCardAccent
+		};
+		for (int32 i = 0; i < PreviewHandCount; ++i)
+		{
+			UERSkillCard* Card = WidgetTree->ConstructWidget<UERSkillCard>(CardCls);
+			if (!Card) { continue; }
+			const bool bMove = bShowMoveCard && (i == PreviewHandCount - 1);
+			UTexture2D* Icon = bMove ? MoveCardIcon.Get()
+				: (PreviewSkillIcons.IsValidIndex(i) ? PreviewSkillIcons[i].Get() : Card->PreviewIcon.Get());
+			const FText Hk = bMove ? MoveCardHotkey : FText::AsNumber(i + 1);
+			Card->PreviewIcon = Icon;
+			Card->PreviewName = FText::FromString(CardNames[i % 4]);
+			Card->PreviewHotkey = Hk;
+			Card->PreviewCost = bMove ? 0 : (i % 2 + 1);
+			Card->PreviewAccent = CardColors[i % 4];
+			Card->Setup(bMove ? -1 : i, Card->PreviewName, FText::GetEmpty(),
+				FText::GetEmpty(), Hk, Card->PreviewCost, bMove, CardColors[i % 4], Icon);
+			UHorizontalBoxSlot* S = HandBox->AddChildToHorizontalBox(Card);
+			S->SetPadding(FMargin(HandCardGap, 0.0f));
+		}
+	}
 }
 
 // ============================================================
@@ -232,6 +406,9 @@ void UERBattleHUD::InitializeBattleUI(UBattleManager* InManager, ABattlePlayerCo
 		Mgr->OnTurnStarted.AddDynamic(this, &UERBattleHUD::HandleTurnStarted);
 		Mgr->OnBattleFinished.AddDynamic(this, &UERBattleHUD::HandleBattleFinished);
 	}
+#if ER_WITH_AI_COMMAND
+	UERAICommandPanel::InstallOnBattleHUD(this, RootCanvas, ERUI::Theme()->ScreenMargin);
+#endif
 	RefreshAll();
 }
 
@@ -253,23 +430,29 @@ void UERBattleHUD::PostNotification(const FString& Message)
 		NotifyText->SetRenderOpacity(1.0f);
 		NotifyTimer = ERUI::Theme()->NotifyDuration;
 	}
+	if (Anim_Notify)
+	{
+		PlayAnimationForward(Anim_Notify);
+	}
+	BP_OnNotificationPosted(Message);
 }
 
 void UERBattleHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	// 入场: 各组轻微滑入
-	if (EntranceT < 1.0f)
+	// 入场: 相对 Designer 基准坐标轻微滑入, 不覆盖用户手调位置
+	if (bEnableEntranceAnimation && EntranceT < 1.0f)
 	{
-		EntranceT = FMath::Min(EntranceT + InDeltaTime / ERUI::Theme()->EntranceDuration, 1.0f);
+		const float Dur = FMath::Max(0.05f, ERUI::Theme()->EntranceDuration);
+		EntranceT = FMath::Min(EntranceT + InDeltaTime / Dur, 1.0f);
 		const float C = 1.0f - EntranceT;
 		const float E = 1.0f - C * C * C;
-		if (InitiativeBox) { InitiativeBox->SetRenderTranslation(FVector2D(0.0f, -14.0f * (1.0f - E))); }
-		if (HandBox)       { HandBox->SetRenderTranslation(FVector2D(0.0f, 18.0f * (1.0f - E))); }
-		if (SquadBox)      { SquadBox->SetRenderTranslation(FVector2D(-14.0f * (1.0f - E), 0.0f)); }
-		if (HeroPlate)     { HeroPlate->SetRenderOpacity(E); }
-		if (EndTurnButton) { EndTurnButton->SetRenderOpacity(E); }
+		if (InitiativeBox) { InitiativeBox->SetRenderTranslation(BaseInitiativeTranslation + InitiativeEntranceOffset * (1.0f - E)); }
+		if (HandBox)       { HandBox->SetRenderTranslation(BaseHandTranslation + HandEntranceOffset * (1.0f - E)); }
+		if (SquadBox)      { SquadBox->SetRenderTranslation(BaseSquadTranslation + SquadEntranceOffset * (1.0f - E)); }
+		if (HeroPlate)     { HeroPlate->SetRenderOpacity(BaseHeroOpacity * E); }
+		if (EndTurnButton) { EndTurnButton->SetRenderOpacity(BaseEndTurnOpacity * E); }
 	}
 
 	// 通知淡出
@@ -313,7 +496,6 @@ void UERBattleHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	}
 	else
 	{
-		// 血线平滑刷新 (阵亡由修订号兜底)
 		for (UERUnitToken* Tok : InitiativeTokens)
 		{
 			if (Tok) { Tok->RefreshFromUnit(); }
@@ -378,7 +560,7 @@ void UERBattleHUD::RefreshAll()
 	CachedAP = -1.0f;
 	CachedHP = -1;
 	CachedSkillSignature = -1;
-	CachedMode = EPlayerInteractionMode::TargetingSkill; // 强制刷新
+	CachedMode = EPlayerInteractionMode::TargetingSkill;
 	CachedActiveUnit = nullptr;
 }
 
@@ -401,15 +583,16 @@ void UERBattleHUD::RebuildInitiative()
 	const TArray<ABattleUnit*>& Queue = Mgr->GetInitiativeQueue();
 	ABattleUnit* Active = Mgr->GetActiveUnit();
 
-	// 池化: 补建或清多余
-	const TSubclassOf<UERUnitToken> TokCls = (UClass*)(InitiativeTokenClass ? InitiativeTokenClass.Get() : UERUnitToken::StaticClass());
+	const TSubclassOf<UERUnitToken> TokCls = InitiativeTokenClass
+		? InitiativeTokenClass
+		: TSubclassOf<UERUnitToken>(UERUnitToken::StaticClass());
 	while (InitiativeTokens.Num() < Queue.Num())
 	{
 		UERUnitToken* Tok = WidgetTree->ConstructWidget<UERUnitToken>(TokCls);
 		Tok->OnTokenClicked.AddDynamic(this, &UERBattleHUD::HandleTokenClicked);
 		InitiativeTokens.Add(Tok);
 		UHorizontalBoxSlot* S = InitiativeBox->AddChildToHorizontalBox(Tok);
-		S->SetPadding(FMargin(0.0f, 0.0f, ERUI::Theme()->TokenGap, 0.0f));
+		S->SetPadding(FMargin(0.0f, 0.0f, InitiativeTokenGap, 0.0f));
 	}
 	while (InitiativeTokens.Num() > Queue.Num())
 	{
@@ -451,14 +634,16 @@ void UERBattleHUD::RebuildSquad()
 		}
 	}
 
-	const TSubclassOf<UERUnitToken> TokCls = (UClass*)(SquadTokenClass ? SquadTokenClass.Get() : UERUnitToken::StaticClass());
+	const TSubclassOf<UERUnitToken> TokCls = SquadTokenClass
+		? SquadTokenClass
+		: TSubclassOf<UERUnitToken>(UERUnitToken::StaticClass());
 	while (SquadTokens.Num() < Players.Num())
 	{
 		UERUnitToken* Tok = WidgetTree->ConstructWidget<UERUnitToken>(TokCls);
 		Tok->OnTokenClicked.AddDynamic(this, &UERBattleHUD::HandleTokenClicked);
 		SquadTokens.Add(Tok);
 		UVerticalBoxSlot* S = SquadBox->AddChildToVerticalBox(Tok);
-		S->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		S->SetPadding(FMargin(0.0f, 0.0f, 0.0f, SquadTokenGap));
 	}
 	while (SquadTokens.Num() > Players.Num())
 	{
@@ -499,9 +684,11 @@ void UERBattleHUD::RefreshHand(ABattleUnit* Unit)
 	const bool bShowHand = IsValid(Unit) && Unit->IsAlive() && Unit->Team == EBattleTeam::Player;
 	static const TArray<FBattleSkillSpec> EmptySkills;
 	const TArray<FBattleSkillSpec>& Skills = bShowHand ? Unit->GetSkillSpecs() : EmptySkills;
-	const int32 Wanted = bShowHand ? Skills.Num() + 1 : 0;
+	const int32 Wanted = bShowHand ? (Skills.Num() + (bShowMoveCard ? 1 : 0)) : 0;
 
-	const TSubclassOf<UERSkillCard> CardCls = (UClass*)(SkillCardClass ? SkillCardClass.Get() : UERSkillCard::StaticClass());
+	const TSubclassOf<UERSkillCard> CardCls = SkillCardClass
+		? SkillCardClass
+		: TSubclassOf<UERSkillCard>(UERSkillCard::StaticClass());
 	while (Cards.Num() < Wanted)
 	{
 		UERSkillCard* Card = WidgetTree->ConstructWidget<UERSkillCard>(CardCls);
@@ -509,7 +696,7 @@ void UERBattleHUD::RefreshHand(ABattleUnit* Unit)
 		Card->OnCardHover.AddDynamic(this, &UERBattleHUD::HandleCardHover);
 		Cards.Add(Card);
 		UHorizontalBoxSlot* S = HandBox->AddChildToHorizontalBox(Card);
-		S->SetPadding(FMargin(ERUI::Theme()->TokenGap * 0.5f, 0.0f));
+		S->SetPadding(FMargin(HandCardGap, 0.0f));
 	}
 	while (Cards.Num() > Wanted)
 	{
@@ -527,7 +714,6 @@ void UERBattleHUD::RefreshHand(ABattleUnit* Unit)
 		}
 		UERSkillCard* Card = Cards[i];
 
-		// 悬停详情: 名字 + 元信息行 (射程/伤害/费用/冷却)
 		FString RangeStr;
 		if (Skill->TargetFilter == ESkillTargetFilter::SelfOnly && Skill->AoE.IsArea())
 		{
@@ -569,19 +755,20 @@ void UERBattleHUD::RefreshHand(ABattleUnit* Unit)
 		Card->Setup(i, Skill->DisplayName, FText::FromString(TipStr), CooldownBadge,
 			FText::FromString(FString::Printf(TEXT("%d"), i + 1)),
 			Skill->APCost, false, Skill->ThemeColor, Skill->Icon);
+		Card->SetCardDescription(Skill->Description);
 		Card->SetCardMeta(FText::FromString(MetaStr));
 		Card->SetAffordable((Unit->AP >= Skill->APCost) && !Spec.IsOnCooldown());
 		Card->SetSelectedMode(Mode == EPlayerInteractionMode::TargetingSkill && SelectedSkill == i);
 	}
 
 	// 移动卡 (末位)
-	if (Wanted > 0)
+	if (Wanted > 0 && bShowMoveCard)
 	{
 		UERSkillCard* MoveCard = Cards.Last();
-		MoveCard->Setup(-1, FText::FromString(TEXT("机动")),
-			FText::FromString(FString::Printf(TEXT("战术机动\n消耗 AP 沿地面寻路。\n1 AP = %.0f cm"), Unit->GetCmPerAP())),
-			FText::GetEmpty(), FText::FromString(TEXT("M")), 0, true,
-			FLinearColor(0.55f, 0.62f, 0.55f, 1.0f), nullptr);
+		const FText MoveDesc = FText::FromString(FString::Printf(TEXT("消耗 AP 沿地面寻路 (1 AP = %.0f cm)"), Unit->GetCmPerAP()));
+		const FText MoveTip = FText::FromString(FString::Printf(TEXT("%s\n%s"), *MoveCardName.ToString(), *MoveDesc.ToString()));
+		MoveCard->Setup(-1, MoveCardName, MoveTip, FText::GetEmpty(), MoveCardHotkey, 0, true, MoveCardAccent, MoveCardIcon);
+		MoveCard->SetCardDescription(MoveDesc);
 		MoveCard->SetCardMeta(FText::FromString(FString::Printf(TEXT("1 AP = %.0f cm"), Unit->GetCmPerAP())));
 		MoveCard->SetAffordable(Unit->AP >= 1);
 		MoveCard->SetSelectedMode(Mode == EPlayerInteractionMode::Moving);
@@ -598,14 +785,13 @@ void UERBattleHUD::RefreshEndTurn(ABattleUnit* Unit, EBattleState State)
 	const bool bMyTurn = !bOver && IsValid(Unit) && Unit->IsAlive() && Unit->Team == EBattleTeam::Player;
 	EndTurnButton->SetButtonEnabled(bMyTurn);
 
-	// 紧急态: 我方回合且没有可用手牌 -> 金色呼吸提示该结束了
 	bool bUrgent = false;
 	if (bMyTurn)
 	{
 		bUrgent = (Unit->AP <= 0);
 		if (!bUrgent)
 		{
-			bool bAnyAffordable = (Unit->AP >= 1);
+			bool bAnyAffordable = bShowMoveCard && (Unit->AP >= 1);
 			for (const FBattleSkillSpec& Spec : Unit->GetSkillSpecs())
 			{
 				if (Spec.SkillData && Unit->AP >= Spec.SkillData->APCost && !Spec.IsOnCooldown())
@@ -703,12 +889,10 @@ void UERBattleHUD::RefreshResult(EBattleState State)
 	}
 
 	const FText BtnText = (GM && GM->ShouldReturnToRoute())
-		? FText::FromString(TEXT("返回航线图"))
-		: FText::FromString(TEXT("返回空间站"));
+		? ReturnToRouteLabel
+		: ReturnToHallLabel;
 
-	ResultPanel->SetResult(bPlayerWon,
-		bPlayerWon ? FText::FromString(TEXT("胜  利")) : FText::FromString(TEXT("败  北")),
-		Subtitle, Rows, BtnText);
+	ResultPanel->SetResult(bPlayerWon, bPlayerWon ? VictoryTitle : DefeatTitle, Subtitle, Rows, BtnText);
 }
 
 // ============================================================
@@ -718,11 +902,7 @@ void UERBattleHUD::RefreshResult(EBattleState State)
 void UERBattleHUD::HandleTokenClicked(ABattleUnit* Unit)
 {
 	ABattlePlayerController* PC = PlayerController.Get();
-	if (!PC || !Unit)
-	{
-		return;
-	}
-	if (!Unit->IsAlive())
+	if (!PC || !Unit || !Unit->IsAlive())
 	{
 		return;
 	}
@@ -746,19 +926,30 @@ void UERBattleHUD::HandleCardClicked(int32 Index, bool bIsMove)
 
 void UERBattleHUD::HandleCardHover(UERSkillCard* Card, bool bHovered)
 {
-	if (!TooltipRoot)
+	if (SkillTooltip)
 	{
-		return;
+		if (bHovered && Card)
+		{
+			SkillTooltip->SetTooltipContent(Card->GetCardName(), Card->GetCardDescription(), Card->GetCardMeta(), Card->GetCardAccent());
+			SkillTooltip->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+		else
+		{
+			SkillTooltip->SetVisibility(ESlateVisibility::Collapsed);
+		}
 	}
-	if (bHovered && Card)
+	if (TooltipRoot)
 	{
-		TooltipTitle->SetText(Card->GetCardTooltip());
-		TooltipMeta->SetText(Card->GetCardMeta());
-		TooltipRoot->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	}
-	else
-	{
-		TooltipRoot->SetVisibility(ESlateVisibility::Collapsed);
+		if (bHovered && Card)
+		{
+			if (TooltipTitle) { TooltipTitle->SetText(Card->GetCardTooltip()); }
+			if (TooltipMeta)  { TooltipMeta->SetText(Card->GetCardMeta()); }
+			TooltipRoot->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+		else
+		{
+			TooltipRoot->SetVisibility(ESlateVisibility::Collapsed);
+		}
 	}
 }
 
@@ -788,6 +979,7 @@ void UERBattleHUD::HandleResultPrimary()
 void UERBattleHUD::HandleTurnStarted(ABattleUnit* Unit)
 {
 	RefreshAll();
+	BP_OnTurnChanged(Unit);
 }
 
 void UERBattleHUD::HandleBattleFinished(bool bPlayerWon)

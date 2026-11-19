@@ -54,6 +54,10 @@ namespace ERUI
 	/** 渐压画刷 */
 	FSlateBrush ScrimBrush();
 
+	/** 圆角玻璃底画刷 (面板/胶囊/芯片共用同一套描边语义) */
+	FSlateBrush RoundedBrush(float Radius, FLinearColor Fill,
+		float OutlineWidth = 0.0f, FLinearColor Outline = FLinearColor::Transparent);
+
 	/** 建一个已调好字体/颜色的文本块 (默认 SelfHitTestInvisible) */
 	UTextBlock* MakeText(UUserWidget* Owner, const FText& Text, EERTypeScale Scale,
 		FLinearColor Color, bool bLatin = false);

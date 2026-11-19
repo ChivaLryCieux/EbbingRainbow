@@ -2,6 +2,7 @@
 
 #include "Battle/FX/UBattleFXPool.h"
 #include "Battle/FX/BattleFloatingText.h"
+#include "UI/ERUITheme.h"
 #include "Engine/World.h"
 
 UBattleFXPool* UBattleFXPool::Get(const UWorld* World)
@@ -42,10 +43,24 @@ ABattleFloatingText* UBattleFXPool::SpawnFloatingText(const FVector& Location, c
 
 	if (!Instance)
 	{
+		UClass* SpawnCls = ABattleFloatingText::StaticClass();
+		if (const UERUISettings* UISettings = UERUISettings::Get())
+		{
+			if (!UISettings->BattleFloatingTextClass.IsNull())
+			{
+				if (UClass* Loaded = UISettings->BattleFloatingTextClass.LoadSynchronous())
+				{
+					if (Loaded->IsChildOf(ABattleFloatingText::StaticClass()))
+					{
+						SpawnCls = Loaded;
+					}
+				}
+			}
+		}
+
 		FActorSpawnParameters Params;
 		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		Instance = World->SpawnActor<ABattleFloatingText>(
-			ABattleFloatingText::StaticClass(), Location, FRotator::ZeroRotator, Params);
+		Instance = World->SpawnActor<ABattleFloatingText>(SpawnCls, Location, FRotator::ZeroRotator, Params);
 		if (Instance)
 		{
 			AllTexts.Add(Instance);

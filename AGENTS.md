@@ -1,4 +1,4 @@
-﻿# AGENTS.md — Ebbing Rainbow (虹不我与)
+# AGENTS.md — Ebbing Rainbow (虹不我与)
 
 科幻肉鸽回合制战棋（UE 5.8）：3D WFC 程序化战场 + 种子化 DAG 航线图 +
 卡牌/AP 战术博弈。先美后好玩；画风目标 = 绝境北地/控制/Blackshard：
@@ -137,15 +137,29 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   移动卡拿到野指针，在 `FSlateImageBrush`/`SImage::OnPaint` 里崩成
   "Array index out of bounds"）。崩溃栈指向 Slate 绘制时，先查这类问题，
   别先怀疑 GC/纹理资源。
-- **UMG 程序化控件库在 `Source/EbbingRainbow/UI/`**（`UER*` 前缀），
-  主题令牌唯一来源是 `UERUITheme`（`Content/UI/DA_ERUITheme`）。两个死坑：
-  建树必须放 `RebuildWidget()`（先于 NativeConstruct，`RootWidget` 要在
-  SWidget 实例化前挂好）；`UImage::SetDesiredSizeOverride` 在 `MyImage`
-  （SImage）实例化前调用会被**静默丢弃**——构建期定尺寸一律用
-  `ERUI::WhiteBrush(FVector2D Size)` 把尺寸写进 `FSlateBrush::ImageSize`，
-  运行时改尺寸才能用 SetDesiredSizeOverride。裸 `UFontFace` 不能当
-  `FSlateFontInfo` 的 FontObject（会掉 LastResort 豆腐块），
-  `UERUITheme::GetFont()` 运行时包了复合 `UFont`，直接用。
+- **全场景 UMG 蓝图套件在 `Content/UI/`（C++ 基类在 `Source/EbbingRainbow/UI/`，`UER*` 前缀）**：
+  所有界面均已落地为可直接在 UMG Designer 手调的可视化蓝图，全局入口统一在
+  `Project Settings -> Game -> ER UI`（`UERUISettings` / `DefaultGame.ini`）：
+  - 大厅 `Content/UI/Hall/`：`WBP_HallHUD` + `WBP_HallButton`（`AHallHUD` 挂载）；人员管理面板
+    `WBP_PersonnelPanel` / `WBP_PersonnelMemberRow` / `WBP_PersonnelStatCell`（`AHallHUD::OpenPersonnelPanel`
+    按需创建，入口在 `Project Settings -> Game -> ER UI -> PersonnelPanelWidgetClass`；生成脚本
+    `Scripts/setup_personnel_panel.py`。四人档案数值唯一真相源仍是
+    `ABattleGameMode::GetDefaultPlayerRoster()`，表现层在 `Hall/HallRoster.h`。立绘占位统一用根目录
+    `IMG.PNG` → `/Game/UI/Textures/T_UI_HeroPortrait_Placeholder`，`UERPersonnelPanel::PlaceholderPortrait`
+    是兜底软引用，专属立绘按 `FHallHeroProfile::Portrait` 覆盖）；
+  - 航线图 `Content/UI/Route/`：`WBP_RouteHUD` + `WBP_RouteNode` + `WBP_RouteLegendItem`
+    （矢量印记/贝塞尔连线/层级标尺封装为 Palette `"ER UI|Route"` 下的 `UWidget` 原子控件
+    `UERRouteNodeSigil / UERRouteEdgeLayer / UERRouteLayerRuler / UERRouteTypeIcon`；
+    `UERRouteHUD::GetMapLayout` 读 `NodeCanvas` 的真实几何与 3D `ARouteSceneBuilder` 对齐）；
+  - 战斗 `Content/UI/Battle/`：`WBP_BattleHUD`、`WBP_UnitToken`（编队）、`WBP_InitiativeToken`（先攻）、
+    `WBP_SkillCard`、`WBP_SkillTooltip`、`WBP_HeroPlate`、`WBP_PipBar`、`WBP_ActionButton`、
+    `WBP_BattleResult`、`WBP_BattleResultRow`、`WBP_FloatingText` + `BP_BattleFloatingText`（跳字池）；
+  - 主题与公共资产：`Content/UI/DA_ERUITheme`、`F_ERUI_Composite`、`T_UI_{White,Scrim,Ring}`；
+  - 自动化构建/修复脚本：`Scripts/setup_ui_assets.py`（注意会重置新建子蓝图的默认树，手调后勿盲跑覆盖）。
+  - UMG 已知死坑：C++ 兜底建树放 `RebuildWidget()`；构建期图片定尺寸写 `FSlateBrush::ImageSize`
+    （UE5.8 Python 侧为 `unreal.DeprecateSlateVector2D`）；运行时不覆盖 Designer 手调的
+    `ChipBox` 宽高与 `RenderTransform` 基准偏移；裸 `UFontFace` 不能直接赋给 `FontObject`，统一用
+    `F_ERUI_Composite` 或 `UERUITheme::GetFont()`。
 
 ## 美术方向验收（当前画面问题清单）
 
