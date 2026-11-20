@@ -65,8 +65,8 @@
 * **主要职责**：玩家的大本营、战术整备中心与远征入口。
 * **主要功能**：
   * **3D 视界**：支持自由机位漫游与摄像机视差悬浮微倾斜（Parallax）；
-  * **战术终端 (Terminal)**：清晰展示理智值与战况，底部居中提供 **`[ 人员管理 ]`** 与 **`[ 航线管理 ]`** 两个玻璃按钮，后者是进入航线图的唯一入口（没有进行中的远征时会先自动开新局，有则接着走）；
-  * **人员管理 (Personnel)**：玻璃模态面板 —— 左侧四名先遣特勤的成员列表，右侧档案 = **左立绘 / 右名字·学派·基本属性**；名字与学派分开（磐·力学、燧·热学、霆·电学、蚀·化学），显示完整度/行动点/先攻/闪避/暴击/暴伤/命中、四学派抗性与战术技能；远征进行中时完整度显示当前值。立绘暂统一用根目录 `IMG.PNG` 占位（导入为 `/Game/UI/Textures/T_UI_HeroPortrait_Placeholder`），专属立绘到位后在 `FHallHeroProfile::Portrait` 逐个替换；
+  * **战术终端 (Terminal)**：左上角黑曜石 45° 切角主标题碑（配左侧虹彩光谱条与《控制：共振》巨细对比排印），底部居中提供 **`[ 01 人员管理 ]`**（黑曜石）与 **`[ 02 航线管理 ]`**（高反差反白石膏主按钮），后者是进入航线图的唯一入口（没有进行中的远征时会先自动开新局，有则接着走）；
+  * **人员管理 (Personnel)**：全屏干员档案终端 —— 顶部 3px 通栏虹彩窄条 + 左侧 2K 无损透明人物原画顶天立地铺满左半屏 + 左下横向 4 干员反白切页坞（支持 `1-4` / `A/D` / 方向键与 `Esc`）+ 右侧 92pt 巨型粗体姓名、148pt 背景代号水印、基本属性、四学派抗性与战术技能；远征进行中时完整度显示当前值。立绘暂统一用根目录 `IMG.PNG` 占位（无损 `TC_EDITOR_ICON` 导入为 `/Game/UI/Textures/T_UI_HeroPortrait_Placeholder`），专属立绘到位后在 `FHallHeroProfile::Portrait` 逐个替换；
   * **特勤编队 (Squads)**：展开 4 人先遣特勤小队属性面板（先锋、斥候、术师、秘术）；
   * **全屏观景模式 (Zen Mode)**：点击左下角 👁 或按 `Esc` 隐藏所有 UI，将大厅转化为宁静的宇宙沉浸观景台。
 
@@ -161,6 +161,75 @@ ArenaHost->Generate(Request);
 ```
 
 > 注意：`Content/WFCKit/Materials` 下的 `.uasset` 如果被标记为只读，保存会静默失败；`wfc_apply_futuristic_materials.py` 会先清掉只读位再保存，两个脚本都是幂等的，可以反复跑。
+
+---
+
+## 🎨 UI 美学与动效规范（Arknights × Control: Resonant）
+
+《虹不我与》全场景 UI 采用 **明日方舟式机能未来主义平面设计** 融合 **《控制：共振》式粗细巨幅排印对比**，整体气质服务于 **静谧、庄严、有神性** 的视觉目标，并以纯 C++ Slate GPU 矢量绘制 + 零分配物理弹簧动效追求性能与平面精度的上限。
+
+### 1. 色彩铁律：黑 — 白 — 点睛彩（`DA_ERUITheme`）
+
+严格控制画面色相面积：**90%+ 面积为哑光黑曜石、纯正石膏白与中性灰阶，高饱和彩色仅作为焦点标尺、虹彩窄条、阵营/学派色点与危险态点睛**；拒绝廉价的均匀霓虹发光与软萌圆角渐变。
+
+| 语义角色 | `DA_ERUITheme` 属性 | 线性空间参考值 (Linear RGBA) | 使用场景 |
+| :--- | :--- | :--- | :--- |
+| **哑光黑曜石底板** | `InkPanel` / `ObsidianElevated` | `(0.008, 0.009, 0.012, 0.92)` / `(0.018, 0.020, 0.026, 0.94)` | 切角面板、主碑、手牌、铭牌、AI 终端底板 |
+| **极深纯墨 / 全屏底幕** | `PureInk` / `InkScrim` | `(0.006, 0.007, 0.009, 1.00)` / `(0.004, 0.005, 0.007, 1.00)` | 反白按钮文字、全屏人员档案与结算底幕 |
+| **石膏白四阶层次** | `Bone` / `Secondary` / `Tertiary` / `Ghost` | `(0.92, 0.92, 0.90)` @ `1.00 / 0.62 / 0.36 / 0.16` | 主标题、反白主 CTA、正文、微标、1px 发丝线 |
+| **折射暖金（主点睛）** | `Accent` | `(0.96, 0.56, 0.04, 1.00)` | 当前焦点、分割线锚块、状态高亮 |
+| **冷青 / 控制朱红** | `AllyMark` / `EnemyMark` (`DangerColor`) | `(0.05, 0.56, 0.94)` / `(0.84, 0.05, 0.03)` | 我方/敌方 3px 阵营色条、扣血尾迹、中止/警报 |
+| **三段虹彩窄光谱** | `PrismStart` → `PrismMid` → `PrismEnd` | 冷青 → 折射暖金 → 控制朱红 | 3–4px 极细主碑/终端/全屏顶边虹彩标线（呼应片名《虹不我与》） |
+
+### 2. 双字体排印与《控制：共振》巨细对比
+
+通过复合字体资产 `/Game/UI/Fonts/F_ERUI_Composite` 自动分流，**禁止在蓝图中裸绑单一 `UFontFace`**：
+- **英文与全部数字**：统一使用 **Linux Biolinum Bold**（`FF_LinBiolinum_Bold`，源文件 `Content/UI/Fonts/Source/LinBiolinum_RB.ttf`），赋予古典人文碑铭与精密仪器并存的锐利气质；
+- **中文正文与标题**：统一使用 **Noto Sans SC** 双字重（`FF_NotoSC_Regular` / `FF_NotoSC_Bold`）；
+- **夸张字阶对比规范**：在所有文字主导的场面，必须将 **巨幅粗体主标题/关键数值** 与 **极小宽字距英文微标** 成组配对：
+
+| 字阶 | 典型字号 | 字重与字距 (Tracking) | 典型落点 |
+| :--- | :--- | :--- | :--- |
+| **Micro 微标** | `8–9 pt` | Regular，`+200 ~ +360` | 英文遥测码（`OPERATOR DOSSIER // SQUAD MANIFEST`、`PRTS // NEURAL TACTICAL LINK`）、属性小标、四角坐标 |
+| **Caption / Body** | `10–13 pt` | Regular / Bold，`+20 ~ +160` | 技能说明、战报日志流、图例、按钮副标 |
+| **Title / Metric** | `18–32 pt` | Bold，`+10 ~ +80` | 面板标题、人员档案属性数字（`30 pt`）、按钮主字与编号 |
+| **Display 碑文** | `38–54 pt` | Bold，`+40 ~ +80` | 大厅 `虹不我与`（`48 pt`）、航线图 `航线图`（`42 pt`）与 `01 / 10`（`38 pt`）、战斗 `HP` 巨字（`52 pt`） |
+| **Hero / Watermark** | `92–148 pt` | Bold，`+20 ~ +120` | 人员档案干员姓名（`92 pt`）、战斗结算 `胜 利 / 败 北`（`96 pt`）、人员背景代号水印（`148 pt` @ 4.5% 透明度） |
+
+### 3. 纯 C++ Slate GPU 矢量图元库（`Source/EbbingRainbow/UI/Primitives/ERTechPrimitives.*`）
+
+所有硬朗几何与机能装饰均由 `SLeafWidget::OnPaint` 直接提交 GPU 顶点，**零贴图拉伸模糊、零额外材质开销**，并在 UMG Palette `"ER UI|Tech"` 中暴露为可拖拽控件：
+- **`UERTechFrame`**：支持四角独立 45° 切角（`FSlateDrawElement::MakeCustomVerts` 三角扇填充）、1px 锐利轮廓、顶部微高光发丝线、四角精密 L 形对准刻度（自动避让切角处改为 45° 加强斜杠）、单色或三段虹彩边条，以及悬停/入场斜向扫光；
+- **`UERTechDivider`**：左侧实体锚块 + 1px 发丝延伸线 + 末端微型菱形，带 `0→1` 动态展开进度；
+- **`UERPrismBar`**：3 段 6 顶点 GPU 线性光谱渐变条（水平/垂直通用）；
+- **`UERCornerReticle`**：全屏四角精密光学刻度标尺与追踪英文编解码。
+
+> **工程铁律**：`FSlateDrawElement::MakeCustomVerts` **禁止**传入无底层纹理的 `FCoreStyle::WhiteBrush`（`GetResourceHandle` 会返回无效句柄并静默跳过渲染），统一经 `ERUI::GetWhiteTexture()`（进程级纯白 `UTexture2D`）获取有效资源句柄。
+
+### 4. 纯 C++ 零分配 UI 动效引擎（`Source/EbbingRainbow/UI/Motion/ERUIMotion.h`）
+
+不依赖第三方插件，全套动效以零 `UObject`、零堆分配的值类型结构实现，确保高帧率与 UE 5.8 原生稳定：
+- **非线性缓动 (`ERMotion::Ease`)**：`ExpoOut`（快出慢落，机能面板/入场主曲线）、`QuintOut`、`CubicOut`、`QuartInOut`、`CrispSettle`、`SolemnPulse`（克制庄严呼吸）；
+- **子步进二阶阻尼弹簧 (`FERFloatSpring` / `FERVec2Spring`)**：120Hz 内部子步进防帧率抖动，内置 `Snappy`（按键反馈）、`Tactile`（卡牌悬停上浮 `-14px` & `1.06x` 缩放）、`Monumental`（庄严落位）、`Silky`（血条缓冲与扣血红尾迹）四套调校预设；
+- **错峰序贯入场 (`FERRevealTrack`)**：按 `(Delay, Duration)` 编排顶栏、主体、按钮坞与分割线的建筑式逐级显影；
+- **遥测译码 (`FERCipherReveal`)**：英文大写编号/代号专用，从左向右高速收敛并在 90% 进度处全部锁定（杜绝尾字停留乱码），收敛后零计算开销。
+
+### 5. 四大场景界面布局规范
+
+1. **空间站大厅 (`WBP_HallHUD` / `WBP_HallButton`)**：左上黑曜石切角 `虹不我与` 碑体 + 左侧 4px 虹彩条；底部居中「黑曜石次操作 `01 人员管理`」与「反白石膏主操作 `02 航线管理`」双切角按钮坞；四角光学标尺，保留大片建筑留白。
+2. **全屏人员档案 (`WBP_PersonnelPanel` / `WBP_PersonnelMemberRow` / `WBP_PersonnelStatCell`)**：100% 全屏黑曜石底幕 + 顶部通栏 3px 虹彩窄条；**左半屏（0%–56%）全高立绘舞台**采用 `TC_EDITOR_ICON` 无压缩 2K 透明底原画（`IMG.PNG`），通过微负边距吃掉透明留白使人物与机甲顶天立地铺满左半屏且与背景零接缝；左下悬浮横向 4 干员切页坞（选中项反白高对比）；右半屏为 `92 pt` 姓名 + `148 pt` 淡水印 + `30 pt` 属性数字 + 四学派抗性色标与技能芯片。
+3. **航线图 (`WBP_RouteHUD` / `WBP_RouteNode` / `WBP_RouteLegendItem`)**：严格执行航线图铁律——**全场仅玩家当前所在节点发光**（大范围辉光交由 3D `M_Route_Halo` 与 Slate 几何像素对齐），其余节点与连线一律不发光，连线只用细实线，不放零星粒子；左上 `42 pt` 粗体 `航线图` 配虹彩竖条，右上 `38 pt` Linux Biolinum 层级计数 `01 / 10`，底部建筑刻度标尺。
+4. **战斗 HUD 与 AI 战术终端 (`WBP_BattleHUD` / `UERAICommandPanel`)**：所有前景控件采用高对比哑光黑曜石切角底板，确保在明亮混凝土/自然岛战场上清晰锐利；左下 `HeroPlate` 呈现 `52 pt` 巨型 HP + 双层弹簧扣血条 + `18×5px` 细长 AP 格；底部 `98×132px` 切角战术手牌配反白费用章与底部学派色条；右上可折叠 **PRTS 风格 AI 战术终端**（`508px` 宽黑曜石切角框 + 左侧 3.5px 虹彩光谱条 + `TELEMETRY // UNIT INDEX` 单位索引 + `CMD/TOOL/RET/PRTS/ERR/SYS` 结构化标签日志 + 反白石膏主 `执行` 按钮）。
+
+### 6. UI 资产自动化重建脚本
+
+全套字体、主题资产、2K 原画与 18 个 WBP 蓝图均由幂等脚本 [Scripts/upgrade_ui_arknights.py](Scripts/upgrade_ui_arknights.py) 一键生成与校验（自动清除 `Content/UI/` 只读位并对 `EAL.save_asset` 返回值做强断言，防止静默保存失败）：
+
+```powershell
+# 确保已编译最新 C++ 且 UnrealEditor 处于运行状态（SteerAgents MCP 就绪）
+$env:PYTHONPATH = "D:\SteerAgents\client\src"
+& "D:\UE_5.8\Engine\Binaries\ThirdParty\Python3\Win64\python.exe" Scripts/upgrade_ui_arknights.py
+```
 
 ---
 
