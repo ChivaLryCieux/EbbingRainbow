@@ -92,7 +92,8 @@ void UERPersonnelMemberRow::Build()
 	WidgetTree->RootWidget = HitButton;
 
 	USizeBox* RowSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("RowSize"));
-	RowSize->SetHeightOverride(84.0f);
+	RowSize->SetWidthOverride(198.0f);
+	RowSize->SetHeightOverride(72.0f);
 	HitButton->SetContent(RowSize);
 
 	UOverlay* Ov = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("RowOverlay"));
@@ -336,8 +337,8 @@ void UERPersonnelMemberRow::RefreshVisuals(float DeltaTime, bool bDesignPreview)
 	if (MemberSchool)    { MemberSchool->SetColorAndOpacity(FSlateColor(SubCol)); }
 	if (MemberIntegrity) { MemberIntegrity->SetColorAndOpacity(FSlateColor(IntCol)); }
 
-	// 弹簧横向微推 (+7px 选中 / +3px 悬停)
-	SetRenderTranslation(FVector2D(7.0f * SelA + 3.0f * HoverA * (1.0f - S01), 0.0f));
+	// 弹簧微抬 (-6px 选中 / -3px 悬停, 适配全屏左下横向浮动编队切换条)
+	SetRenderTranslation(FVector2D(0.0f, -6.0f * SelA - 3.0f * HoverA * (1.0f - S01)));
 }
 
 void UERPersonnelMemberRow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)

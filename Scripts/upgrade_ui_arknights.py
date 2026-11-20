@@ -18,9 +18,29 @@
 import json
 import os
 import shutil
+import stat
 
 from steeragents.console import exec_py
 from steeragents.toolsets import call, connect
+
+UI_CONTENT_DIR = r"D:\EbbingRainbow\Content\UI"
+
+
+def clear_readonly_ui_assets():
+    cleared = 0
+    for root_dir, _, files in os.walk(UI_CONTENT_DIR):
+        for fn in files:
+            if fn.endswith(".uasset") or fn.endswith(".uexp"):
+                fp = os.path.join(root_dir, fn)
+                try:
+                    st = os.stat(fp)
+                    if not (st.st_mode & stat.S_IWRITE):
+                        os.chmod(fp, st.st_mode | stat.S_IWRITE)
+                        cleared += 1
+                except OSError:
+                    pass
+    if cleared:
+        print(f"  Cleared read-only flag on {cleared} UI asset files.")
 
 UMG = "UMGToolSet.UMGToolSet"
 ASSET = "editor_toolset.toolsets.asset.AssetTools"
@@ -156,7 +176,11 @@ def compile_and_save(m, wbp_ref: str):
     if not ok:
         raise RuntimeError(f"Failed to compile {wbp_ref}")
     pkg = wbp_ref.split(".")[0]
-    py(m, f"EAL.save_asset('{pkg}', False)")
+    py(m, f"""
+saved = EAL.save_asset('{pkg}', False)
+if not saved:
+    raise RuntimeError('EAL.save_asset FAILED for {pkg} (check read-only bit!)')
+""")
 
 
 def step_fonts_and_theme(m):
@@ -465,6 +489,31 @@ zt.set_editor_property('visibility', SELF)
 
 def step_personnel(m):
     print("=== [3] Upgrading Personnel Dossier Blueprints ===")
+    # 3.0 重导高清 2K 透明底原画 IMG.PNG -> T_UI_HeroPortrait_Placeholder (去 DXT 蓝边与纯黑方框接缝)
+    if os.path.isfile(r"D:\EbbingRainbow\IMG.PNG"):
+        py(m, r"""
+tools = unreal.AssetToolsHelpers.get_asset_tools()
+task = unreal.AssetImportTask()
+task.set_editor_property('filename', r'D:\EbbingRainbow\IMG.PNG')
+task.set_editor_property('destination_path', '/Game/UI/Textures')
+task.set_editor_property('destination_name', 'T_UI_HeroPortrait_Placeholder')
+task.set_editor_property('automated', True)
+task.set_editor_property('replace_existing', True)
+task.set_editor_property('save', True)
+tools.import_asset_tasks([task])
+ptex = EAL.load_asset('/Game/UI/Textures/T_UI_HeroPortrait_Placeholder')
+if ptex:
+    ptex.set_editor_property('compression_settings', unreal.TextureCompressionSettings.TC_EDITOR_ICON)
+    ptex.set_editor_property('lod_group', unreal.TextureGroup.TEXTUREGROUP_UI)
+    ptex.set_editor_property('mip_gen_settings', unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS)
+    ptex.set_editor_property('srgb', True)
+    ptex.set_editor_property('compression_no_alpha', False)
+    ptex.set_editor_property('max_texture_size', 2048)
+    ptex.update_resource() if hasattr(ptex, 'update_resource') else None
+    EAL.save_asset('/Game/UI/Textures/T_UI_HeroPortrait_Placeholder', False)
+    print('  Re-imported clean 2K RGBA T_UI_HeroPortrait_Placeholder:', ptex.blueprint_get_size_x(), ptex.blueprint_get_size_y())
+""")
+
     # StatCell
     wbp_cell = recreate_wbp(m, "/Game/UI/Hall", "WBP_PersonnelStatCell", "/Script/EbbingRainbow.ERStatCell")
     col, _ = node(m, wbp_cell, "/Script/UMG.VerticalBox", "CellColumn")
@@ -479,11 +528,11 @@ obj('{col}').set_editor_property('visibility', SELF)
 l = obj('{lbl}')
 l.set_editor_property('text', '完整度')
 l.set_editor_property('font', mk_font(fnt, 8, False, 220))
-l.set_editor_property('color_and_opacity', unreal.SlateColor(unreal.LinearColor(0.92, 0.92, 0.90, 0.38)))
+l.set_editor_property('color_and_opacity', unreal.SlateColor(unreal.LinearColor(0.92, 0.92, 0.90, 0.40)))
 l.set_editor_property('visibility', SELF)
 v = obj('{val}')
 v.set_editor_property('text', '60')
-v.set_editor_property('font', mk_font(fnt, 26, True, 10))
+v.set_editor_property('font', mk_font(fnt, 30, True, 10))
 v.set_editor_property('color_and_opacity', unreal.SlateColor(unreal.LinearColor(0.92, 0.92, 0.90, 1.0)))
 v.set_editor_property('visibility', SELF)
 obj('{val_s}').set_editor_property('padding', unreal.Margin(0.0, 2.0, 0.0, 4.0))
@@ -527,7 +576,8 @@ BONE3 = unreal.LinearColor(0.92, 0.92, 0.90, 0.38)
 btn = obj('{hit}')
 btn.set_editor_property('widget_style', transparent_btn_style())
 btn.set_editor_property('cursor', unreal.MouseCursor.HAND)
-obj('{rsz}').set_height_override(84.0)
+obj('{rsz}').set_width_override(198.0)
+obj('{rsz}').set_height_override(72.0)
 obj('{ov}').set_editor_property('visibility', SELF)
 
 rf = obj('{rfr}')
@@ -612,54 +662,43 @@ obj('{mint_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignme
 """)
     compile_and_save(m, wbp_row)
 
-    # PersonnelPanel
+    # PersonnelPanel (全屏干员档案: 左侧 58% x 100% 全高人物原画 + 右侧 Control:共振巨构档案)
     wbp_panel = recreate_wbp(m, "/Game/UI/Hall", "WBP_PersonnelPanel", "/Script/EbbingRainbow.ERPersonnelPanel")
     root, _ = node(m, wbp_panel, "/Script/UMG.CanvasPanel", "RootCanvas")
     scrim, scrim_s = node(m, wbp_panel, "/Script/UMG.Image", "ScrimImage", root)
-    pborder, pborder_s = node(m, wbp_panel, "/Script/UMG.Border", "PanelBorder", root)
-    pov, _ = node(m, wbp_panel, "/Script/UMG.Overlay", "PanelRootOverlay", pborder, var=False)
-    pfr, pfr_s = node(m, wbp_panel, "/Script/EbbingRainbow.ERTechFrame", "PanelFrame", pov)
-    col, col_s = node(m, wbp_panel, "/Script/UMG.VerticalBox", "PanelColumn", pov, var=False)
+    topprism, topprism_s = node(m, wbp_panel, "/Script/EbbingRainbow.ERPrismBar", "TopEdgePrism", root)
+    wmark, wmark_s = node(m, wbp_panel, "/Script/UMG.TextBlock", "WatermarkCallsignText", root)
 
-    hdr, hdr_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "HeaderRow", col, var=False)
+    pstage, pstage_s = node(m, wbp_panel, "/Script/UMG.Overlay", "PortraitStage", root)
+    pscale, pscale_s = node(m, wbp_panel, "/Script/UMG.ScaleBox", "PortraitScaleBox", pstage, var=False)
+    pimg, _ = node(m, wbp_panel, "/Script/UMG.Image", "PortraitImage", pscale)
+
+    pscrim, pscrim_s = node(m, wbp_panel, "/Script/UMG.Image", "PortraitScrim", root)
+    ret, ret_s = node(m, wbp_panel, "/Script/EbbingRainbow.ERCornerReticle", "CornerReticle", root)
+
+    hdr, hdr_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "HeaderRow", root, var=False)
     hprism, hprism_s = node(m, wbp_panel, "/Script/EbbingRainbow.ERPrismBar", "HeaderPrismBar", hdr)
     tcol, tcol_s = node(m, wbp_panel, "/Script/UMG.VerticalBox", "TitleCol", hdr, var=False)
     hcap, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "HeaderCaption", tcol)
-    httl, httl_s = node(m, wbp_panel, "/Script/UMG.TextBlock", "HeaderTitle", tcol)
-    hsp, hsp_s = node(m, wbp_panel, "/Script/UMG.Spacer", "HeaderSpacer", hdr, var=False)
-    scol, scol_s = node(m, wbp_panel, "/Script/UMG.VerticalBox", "StatusCol", hdr, var=False)
+    httl, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "HeaderTitle", tcol)
+
+    trrow, trrow_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "TopRightRow", root, var=False)
+    scol, scol_s = node(m, wbp_panel, "/Script/UMG.VerticalBox", "StatusCol", trrow, var=False)
     ssum, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "SquadSummaryText", scol)
     ssta, ssta_s = node(m, wbp_panel, "/Script/UMG.TextBlock", "SquadStateText", scol)
-    cbtn, cbtn_s = node(m, wbp_panel, "/Script/UMG.Button", "CloseButton", hdr)
-    csz, _ = node(m, wbp_panel, "/Script/UMG.SizeBox", "CloseSize", cbtn, var=False)
-    cring, _ = node(m, wbp_panel, "/Script/UMG.Border", "CloseRing", csz, var=False)
+    cbtn, cbtn_s = node(m, wbp_panel, "/Script/UMG.Button", "CloseButton", trrow)
+    cring, _ = node(m, wbp_panel, "/Script/UMG.Border", "CloseRing", cbtn, var=False)
     cgly, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "CloseGlyphText", cring)
 
-    hdiv, hdiv_s = node(m, wbp_panel, "/Script/EbbingRainbow.ERTechDivider", "HeaderDivider", col)
-
-    body, body_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "BodyRow", col, var=False)
-    railsz, railsz_s = node(m, wbp_panel, "/Script/UMG.SizeBox", "RailSize", body, var=False)
-    rail, _ = node(m, wbp_panel, "/Script/UMG.VerticalBox", "MemberRail", railsz, var=False)
-    rttl, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "RailTitleText", rail)
-    mlist, mlist_s = node(m, wbp_panel, "/Script/UMG.VerticalBox", "MemberListBox", rail)
-    rsp, rsp_s = node(m, wbp_panel, "/Script/UMG.Spacer", "RailSpacer", rail, var=False)
-    rhint, rhint_s = node(m, wbp_panel, "/Script/UMG.TextBlock", "RailHintText", rail)
-
-    rrule, rrule_s = node(m, wbp_panel, "/Script/UMG.Image", "RailRule", body)
-
-    det, det_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "DetailContainer", body)
-    pcol, pcol_s = node(m, wbp_panel, "/Script/UMG.SizeBox", "PortraitCol", det, var=False)
-    pcolumn, _ = node(m, wbp_panel, "/Script/UMG.VerticalBox", "PortraitColumn", pcol, var=False)
-    pfsz, _ = node(m, wbp_panel, "/Script/UMG.SizeBox", "PortraitFrameSize", pcolumn, var=False)
-    pframe, _ = node(m, wbp_panel, "/Script/UMG.Border", "PortraitFrame", pfsz)
-    poverlay, _ = node(m, wbp_panel, "/Script/UMG.Overlay", "PortraitOverlay", pframe, var=False)
-    pimg, _ = node(m, wbp_panel, "/Script/UMG.Image", "PortraitImage", poverlay)
-    pscrim, _ = node(m, wbp_panel, "/Script/UMG.Image", "PortraitScrim", poverlay)
-    pitag, pitag_s = node(m, wbp_panel, "/Script/UMG.Border", "PortraitIndexTag", poverlay, var=False)
+    dcol, dcol_s = node(m, wbp_panel, "/Script/UMG.VerticalBox", "OperatorDockCol", root, var=False)
+    drow, drow_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "DockHeaderRow", dcol, var=False)
+    pitag, pitag_s = node(m, wbp_panel, "/Script/UMG.Border", "PortraitIndexTag", drow, var=False)
     pidx, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "PortraitIndexText", pitag)
-    pcap, pcap_s = node(m, wbp_panel, "/Script/UMG.TextBlock", "PortraitCaptionText", pcolumn)
+    pcap, pcap_s = node(m, wbp_panel, "/Script/UMG.TextBlock", "PortraitCaptionText", drow)
+    mlist, _ = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "MemberListBox", dcol)
 
-    info, info_s = node(m, wbp_panel, "/Script/UMG.VerticalBox", "InfoCol", det, var=False)
+    pborder, pborder_s = node(m, wbp_panel, "/Script/UMG.Border", "PanelBorder", root)
+    info, _ = node(m, wbp_panel, "/Script/UMG.VerticalBox", "DetailContainer", pborder)
     nm, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "NameText", info)
     cs, cs_s = node(m, wbp_panel, "/Script/UMG.TextBlock", "CallsignText", info)
     schrow, schrow_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "SchoolRow", info, var=False)
@@ -675,16 +714,14 @@ obj('{mint_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignme
     rbox, rbox_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "ResistBox", info)
     kttl, kttl_s = node(m, wbp_panel, "/Script/UMG.TextBlock", "SkillsTitleText", info)
     kbox, kbox_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "SkillsBox", info)
-
-    ftr, ftr_s = node(m, wbp_panel, "/Script/UMG.HorizontalBox", "FooterRow", col, var=False)
-    fhint, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "FooterHintText", ftr)
-    fsp, fsp_s = node(m, wbp_panel, "/Script/UMG.Spacer", "FooterSpacer", ftr, var=False)
-    fmark, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "FooterMark", ftr, var=False)
+    bsp, bsp_s = node(m, wbp_panel, "/Script/UMG.Spacer", "DetailBottomSpacer", info, var=False)
+    fhint, _ = node(m, wbp_panel, "/Script/UMG.TextBlock", "FooterHintText", info)
 
     py(m, f"""
 fnt = EAL.load_asset('{FONT}')
 white = EAL.load_asset('{WHITE}')
 scrim_tex = EAL.load_asset('{SCRIM}')
+portrait_tex = EAL.load_asset('{PORTRAIT_PLACEHOLDER}')
 SELF = unreal.SlateVisibility.SELF_HIT_TEST_INVISIBLE
 BONE = unreal.LinearColor(0.92, 0.92, 0.90, 1.0)
 BONE2 = unreal.LinearColor(0.92, 0.92, 0.90, 0.62)
@@ -705,190 +742,146 @@ def pad(slot_ref, top=0.0, bottom=0.0, left=0.0, right=0.0):
     obj(slot_ref).set_editor_property('padding', unreal.Margin(left, top, right, bottom))
 
 obj('{root}').set_editor_property('visibility', unreal.SlateVisibility.VISIBLE)
+
+# 1. 全屏黑曜石底幕
 ss = obj('{scrim_s}')
 ss.set_anchors(unreal.Anchors(unreal.Vector2D(0, 0), unreal.Vector2D(1, 1)))
 ss.set_offsets(unreal.Margin(0, 0, 0, 0))
 sc = obj('{scrim}')
 sb = unreal.SlateBrush(); sb.set_editor_property('resource_object', white); sb.image_size = mk_sz(4, 4)
 sc.set_editor_property('brush', sb)
-sc.set_editor_property('color_and_opacity', unreal.LinearColor(0.004, 0.005, 0.007, 0.72))
-sc.set_editor_property('visibility', SELF)
+sc.set_editor_property('color_and_opacity', unreal.LinearColor(0.005, 0.006, 0.009, 0.985))
+sc.set_editor_property('visibility', unreal.SlateVisibility.VISIBLE)
 
-pb = obj('{pborder}')
-eb = unreal.SlateBrush(); eb.draw_as = unreal.SlateBrushDrawType.NO_DRAW_TYPE
-pb.set_editor_property('background', eb)
-pb.set_editor_property('padding', unreal.Margin(0, 0, 0, 0))
-pb.set_editor_property('horizontal_alignment', unreal.HorizontalAlignment.H_ALIGN_FILL)
-pb.set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_FILL)
-pbs = obj('{pborder_s}')
-pbs.set_anchors(unreal.Anchors(unreal.Vector2D(0.5, 0.5), unreal.Vector2D(0.5, 0.5)))
-pbs.set_alignment(unreal.Vector2D(0.5, 0.5))
-pbs.set_offsets(unreal.Margin(0.0, 0.0, 1360.0, 820.0))
-pbs.set_auto_size(False)
+# 2. 顶部 3px 全屏虹彩窄条
+tp = obj('{topprism}'); tp.set_editor_property('vertical', False); tp.set_editor_property('bar_size', unreal.Vector2D(1920.0, 3.0)); tp.set_editor_property('visibility', SELF)
+tps = obj('{topprism_s}'); tps.set_anchors(unreal.Anchors(unreal.Vector2D(0, 0), unreal.Vector2D(1, 0))); tps.set_offsets(unreal.Margin(0, 0, 0, 3.0))
 
-obj('{pov}').set_editor_property('visibility', SELF)
-pf = obj('{pfr}')
-pf.set_editor_property('chamfer', unreal.Vector4(20.0, 0.0, 20.0, 0.0))
-pf.set_editor_property('fill_color', unreal.LinearColor(0.006, 0.007, 0.010, 0.96))
-pf.set_editor_property('border_color', unreal.LinearColor(0.92, 0.92, 0.90, 0.18))
-pf.set_editor_property('draw_corner_brackets', True)
-pf.set_editor_property('bracket_length', 16.0)
-pf.set_editor_property('bracket_thickness', 1.6)
-pf.set_editor_property('bracket_color', unreal.LinearColor(0.92, 0.92, 0.90, 0.80))
-pf.set_editor_property('accent_edge', unreal.ERAccentEdge.TOP)
-pf.set_editor_property('use_prism_accent', True)
-pf.set_editor_property('accent_thickness', 3.0)
-pf.set_editor_property('visibility', SELF)
-for sref in ['{pfr_s}', '{col_s}']:
-    sl = obj(sref)
-    sl.set_editor_property('horizontal_alignment', unreal.HorizontalAlignment.H_ALIGN_FILL)
-    sl.set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_FILL)
-obj('{col}').set_editor_property('visibility', SELF)
+# 3. 148pt 巨幅背景代号水印
+txt('{wmark}', 'BASALT', 148, unreal.LinearColor(0.92, 0.92, 0.90, 0.045), True, 120, unreal.TextJustify.RIGHT)
+wms = obj('{wmark_s}')
+wms.set_anchors(unreal.Anchors(unreal.Vector2D(1.0, 0.5), unreal.Vector2D(1.0, 0.5)))
+wms.set_alignment(unreal.Vector2D(1.0, 0.5))
+wms.set_offsets(unreal.Margin(-28.0, -140.0, 0.0, 0.0))
+wms.set_auto_size(True)
 
-pad('{hdr_s}', top=26.0, left=40.0, right=34.0)
-hp = obj('{hprism}')
-hp.set_editor_property('vertical', True)
-hp.set_editor_property('bar_size', unreal.Vector2D(4.0, 42.0))
-hp.set_editor_property('visibility', SELF)
-obj('{hprism_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
+# 4. 左侧全高人物原画舞台 (吃掉原画上下左右透明留白，让人物+机甲顶天立地铺满整个左半屏!)
+obj('{pstage}').set_editor_property('visibility', SELF)
+pst = obj('{pstage_s}')
+pst.set_anchors(unreal.Anchors(unreal.Vector2D(0.0, 0.0), unreal.Vector2D(0.56, 1.0)))
+pst.set_offsets(unreal.Margin(-76.0, -80.0, -40.0, -92.0))
 
-pad('{tcol_s}', left=16.0)
-obj('{tcol_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
-txt('{hcap}', 'OPERATOR DOSSIER // SQUAD MANIFEST', 8, BONE3, False, 280)
-txt('{httl}', '人员档案', 30, BONE, True, 80)
-pad('{httl_s}', top=1.0)
-
-obj('{hsp_s}').set_editor_property('size', fill_size())
-pad('{scol_s}', right=22.0)
-obj('{scol_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
-txt('{ssum}', '编队 4 / 4', 18, BONE, True, 80, unreal.TextJustify.RIGHT)
-txt('{ssta}', '待命中 · 尚未启程', 8, BONE3, False, 180, unreal.TextJustify.RIGHT)
-pad('{ssta_s}', top=3.0)
-
-cb = obj('{cbtn}')
-cb.set_editor_property('widget_style', transparent_btn_style())
-cb.set_editor_property('cursor', unreal.MouseCursor.HAND)
-obj('{cbtn_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
-obj('{csz}').set_width_override(38.0)
-obj('{csz}').set_height_override(38.0)
-cr = obj('{cring}')
-cr.set_editor_property('padding', unreal.Margin(0, 0, 0, 0))
-cr.set_editor_property('horizontal_alignment', unreal.HorizontalAlignment.H_ALIGN_CENTER)
-cr.set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
-cr.set_editor_property('background', rect_brush(unreal.LinearColor(0.02, 0.022, 0.028, 0.85), 1.0, unreal.LinearColor(0.92, 0.92, 0.90, 0.28)))
-txt('{cgly}', '×', 20, BONE, True, 0, unreal.TextJustify.CENTER)
-
-hd = obj('{hdiv}')
-hd.set_editor_property('anchor_length', 42.0)
-hd.set_editor_property('anchor_color', BONE)
-hd.set_editor_property('line_color', GHOST)
-hd.set_editor_property('visibility', SELF)
-pad('{hdiv_s}', top=16.0, left=40.0, right=34.0)
-
-pad('{body_s}', top=20.0, left=40.0, right=34.0)
-obj('{body_s}').set_editor_property('size', fill_size())
-
-obj('{railsz}').set_width_override(272.0)
-obj('{railsz_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_FILL)
-txt('{rttl}', '特勤编队 // SQUAD ROSTER', 8, BONE3, False, 200)
-pad('{mlist_s}', top=12.0)
-obj('{rsp_s}').set_editor_property('size', fill_size())
-txt('{rhint}', 'SELECT OPERATOR // 点击切换档案', 8, BONE3, False, 120)
-pad('{rhint_s}', top=12.0)
-
-rr = obj('{rrule}')
-rb = unreal.SlateBrush(); rb.set_editor_property('resource_object', white); rb.image_size = mk_sz(1, 1)
-rr.set_editor_property('brush', rb)
-rr.set_editor_property('color_and_opacity', GHOST)
-rrs = obj('{rrule_s}')
-rrs.set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_FILL)
-rrs.set_editor_property('padding', unreal.Margin(26.0, 2.0, 28.0, 2.0))
-
-obj('{det}').set_editor_property('visibility', SELF)
-obj('{det_s}').set_editor_property('size', fill_size())
-
-obj('{pcol}').set_width_override(384.0)
-obj('{pcol_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_FILL)
-obj('{pfsz}').set_width_override(384.0)
-obj('{pfsz}').set_height_override(516.0)
-pfr_w = obj('{pframe}')
-pfr_w.set_editor_property('padding', unreal.Margin(0, 0, 0, 0))
-pfr_w.set_editor_property('horizontal_alignment', unreal.HorizontalAlignment.H_ALIGN_FILL)
-pfr_w.set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_FILL)
-pfr_w.set_editor_property('background', rect_brush(unreal.LinearColor(0.008, 0.009, 0.012, 0.96), 1.0, unreal.LinearColor(0.92, 0.92, 0.90, 0.24)))
+psc = obj('{pscale}')
+psc.set_editor_property('stretch', unreal.Stretch.SCALE_TO_FIT)
+psc.set_editor_property('stretch_direction', unreal.StretchDirection.BOTH)
+psc.set_editor_property('visibility', SELF)
+pscs = obj('{pscale_s}')
+pscs.set_editor_property('horizontal_alignment', unreal.HorizontalAlignment.H_ALIGN_CENTER)
+pscs.set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_FILL)
 
 pi = obj('{pimg}')
-pib = unreal.SlateBrush(); pib.set_editor_property('resource_object', white); pib.image_size = mk_sz(384, 516)
+pib = unreal.SlateBrush()
+if portrait_tex:
+    pib.set_editor_property('resource_object', portrait_tex)
+    pib.image_size = mk_sz(1024, 1360)
+else:
+    pib.set_editor_property('resource_object', white)
+    pib.image_size = mk_sz(1024, 1360)
 pi.set_editor_property('brush', pib)
-pi.set_editor_property('color_and_opacity', unreal.LinearColor(0.05, 0.06, 0.08, 1.0))
+pi.set_editor_property('color_and_opacity', unreal.LinearColor(1, 1, 1, 1))
 pi.set_editor_property('visibility', SELF)
 
+# 底部渐压遮罩
 ps = obj('{pscrim}')
 psb = unreal.SlateBrush(); psb.set_editor_property('resource_object', scrim_tex); psb.image_size = mk_sz(4, 64)
 ps.set_editor_property('brush', psb)
-ps.set_editor_property('color_and_opacity', unreal.LinearColor(0.004, 0.005, 0.007, 0.78))
+ps.set_editor_property('color_and_opacity', unreal.LinearColor(0.005, 0.006, 0.009, 0.96))
 ps.set_editor_property('visibility', SELF)
 ps.set_editor_property('render_transform_pivot', unreal.Vector2D(0.5, 0.5))
 wt = unreal.WidgetTransform(); wt.scale = unreal.Vector2D(1.0, -1.0)
 ps.set_editor_property('render_transform', wt)
+pss = obj('{pscrim_s}')
+pss.set_anchors(unreal.Anchors(unreal.Vector2D(0.0, 1.0), unreal.Vector2D(0.62, 1.0)))
+pss.set_alignment(unreal.Vector2D(0.0, 1.0))
+pss.set_offsets(unreal.Margin(0.0, 0.0, 0.0, 260.0))
 
-ptg = obj('{pitag}')
-ptg.set_editor_property('background', rect_brush(BONE))
-ptg.set_editor_property('padding', unreal.Margin(10.0, 3.0, 10.0, 3.0))
-ptgs = obj('{pitag_s}')
-ptgs.set_editor_property('horizontal_alignment', unreal.HorizontalAlignment.H_ALIGN_LEFT)
-ptgs.set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_BOTTOM)
-ptgs.set_editor_property('padding', unreal.Margin(12.0, 0.0, 0.0, 12.0))
+# 5. 全屏静谧四角光学标尺
+rt = obj('{ret}')
+rt.set_editor_property('top_right_code', '')
+rt.set_editor_property('bottom_right_code', 'ARCHIVE // FULLSCREEN')
+rt.set_editor_property('reticle_color', unreal.LinearColor(0.92, 0.92, 0.90, 0.24))
+rt.set_editor_property('draw_center_ticks', False)
+rt.set_editor_property('visibility', SELF)
+rts = obj('{ret_s}'); rts.set_anchors(unreal.Anchors(unreal.Vector2D(0, 0), unreal.Vector2D(1, 1))); rts.set_offsets(unreal.Margin(0, 0, 0, 0))
+
+# 6. 左上浮层标题碑
+hrs = obj('{hdr_s}'); hrs.set_anchors(unreal.Anchors(unreal.Vector2D(0, 0), unreal.Vector2D(0, 0))); hrs.set_offsets(unreal.Margin(44.0, 36.0, 0, 0)); hrs.set_auto_size(True)
+hp = obj('{hprism}'); hp.set_editor_property('vertical', True); hp.set_editor_property('bar_size', unreal.Vector2D(4.0, 44.0)); hp.set_editor_property('visibility', SELF)
+obj('{hprism_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
+pad('{tcol_s}', left=14.0); obj('{tcol_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
+txt('{hcap}', 'OPERATOR DOSSIER // SQUAD MANIFEST', 9, BONE2, False, 280)
+txt('{httl}', '人员档案', 32, BONE, True, 80)
+
+# 7. 右上编队状态 + 锐利关闭按钮
+trs = obj('{trrow_s}'); trs.set_anchors(unreal.Anchors(unreal.Vector2D(1, 0), unreal.Vector2D(1, 0))); trs.set_alignment(unreal.Vector2D(1, 0)); trs.set_offsets(unreal.Margin(-44.0, 36.0, 0, 0)); trs.set_auto_size(True)
+pad('{scol_s}', right=22.0); obj('{scol_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
+txt('{ssum}', '编队 04 / 04', 18, BONE, True, 80, unreal.TextJustify.RIGHT)
+txt('{ssta}', 'STANDBY // 尚未启程', 8, BONE3, False, 180, unreal.TextJustify.RIGHT)
+pad('{ssta_s}', top=2.0)
+
+cb = obj('{cbtn}'); cb.set_editor_property('widget_style', transparent_btn_style()); cb.set_editor_property('cursor', unreal.MouseCursor.HAND)
+obj('{cbtn_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
+cr = obj('{cring}'); cr.set_editor_property('background', rect_brush(unreal.LinearColor(0.015, 0.017, 0.022, 0.92), 1.0, unreal.LinearColor(0.92, 0.92, 0.90, 0.36))); cr.set_editor_property('padding', unreal.Margin(16.0, 8.0, 16.0, 8.0))
+txt('{cgly}', 'ESC  //  返回', 10, BONE, True, 180)
+
+# 8. 左下浮动编队横向切换条
+dcs = obj('{dcol_s}'); dcs.set_anchors(unreal.Anchors(unreal.Vector2D(0, 1), unreal.Vector2D(0, 1))); dcs.set_alignment(unreal.Vector2D(0, 1)); dcs.set_offsets(unreal.Margin(44.0, -38.0, 0, 0)); dcs.set_auto_size(True)
+pad('{drow_s}', bottom=10.0)
+ptg = obj('{pitag}'); ptg.set_editor_property('background', rect_brush(BONE)); ptg.set_editor_property('padding', unreal.Margin(10.0, 3.0, 10.0, 3.0))
+obj('{pitag_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
 txt('{pidx}', '01 / 04', 11, INK, True, 160)
-txt('{pcap}', 'ARCHIVE // VISUAL RECORD', 8, BONE3, False, 220)
-pad('{pcap_s}', top=10.0, left=2.0)
+txt('{pcap}', 'SQUAD SELECT // [1-4] 切换干员档案', 8, BONE2, False, 220)
+obj('{pcap_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
+pad('{pcap_s}', left=12.0)
+obj('{mlist}').set_editor_property('visibility', SELF)
 
-islt = obj('{info_s}')
-islt.set_editor_property('size', fill_size())
-islt.set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_FILL)
-islt.set_editor_property('padding', unreal.Margin(36.0, 0.0, 0.0, 0.0))
+# 9. 右半屏 Control: 共振式巨构档案区 (44% 宽, 92pt 名字!)
+pb = obj('{pborder}')
+eb = unreal.SlateBrush(); eb.draw_as = unreal.SlateBrushDrawType.NO_DRAW_TYPE
+pb.set_editor_property('background', eb); pb.set_editor_property('padding', unreal.Margin(0, 0, 0, 0)); pb.set_editor_property('visibility', SELF)
+pbs = obj('{pborder_s}')
+pbs.set_anchors(unreal.Anchors(unreal.Vector2D(0.56, 0.0), unreal.Vector2D(1.0, 1.0)))
+pbs.set_offsets(unreal.Margin(24.0, 116.0, 52.0, 54.0))
 
-txt('{nm}', '磐', 72, BONE, True, 20)
-txt('{cs}', 'BASALT', 15, ACCENT, True, 340)
-pad('{cs_s}', left=2.0)
+obj('{info}').set_editor_property('visibility', SELF)
+txt('{nm}', '磐', 92, BONE, True, 20)
+txt('{cs}', 'BASALT', 17, ACCENT, True, 360)
+pad('{cs_s}', left=4.0)
 
-pad('{schrow_s}', top=12.0)
-ch = obj('{chip}')
-ch.set_editor_property('padding', unreal.Margin(10.0, 3.0, 10.0, 3.0))
-ch.set_editor_property('background', rect_brush(BONE))
+pad('{schrow_s}', top=16.0, left=2.0)
+ch = obj('{chip}'); ch.set_editor_property('padding', unreal.Margin(12.0, 4.0, 12.0, 4.0)); ch.set_editor_property('background', rect_brush(BONE))
 obj('{chip_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
-txt('{chipt}', '学派 · 力学', 10, INK, True, 120)
-obj('{role_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER)
-pad('{role_s}', left=14.0)
-txt('{role}', '先锋 · VANGUARD', 10, BONE2, False, 180)
+txt('{chipt}', '学派 · 力学', 10, INK, True, 140)
+obj('{role_s}').set_editor_property('vertical_alignment', unreal.VerticalAlignment.V_ALIGN_CENTER); pad('{role_s}', left=16.0)
+txt('{role}', '先锋  //  VANGUARD', 11, BONE2, False, 200)
 
-txt('{tagl}', '以身为墙，替全队吃掉第一轮伤害。', 12, BONE2, False, 40, wrap=True)
-pad('{tagl_s}', top=12.0)
+txt('{tagl}', '以身为墙，替全队吃掉第一轮伤害。', 13, BONE2, False, 40, wrap=True)
+pad('{tagl_s}', top=16.0, left=2.0)
 
-idv = obj('{idiv}')
-idv.set_editor_property('anchor_length', 30.0)
-idv.set_editor_property('anchor_color', ACCENT)
-idv.set_editor_property('line_color', GHOST)
-idv.set_editor_property('visibility', SELF)
-pad('{idiv_s}', top=14.0)
+idv = obj('{idiv}'); idv.set_editor_property('anchor_length', 36.0); idv.set_editor_property('anchor_color', ACCENT); idv.set_editor_property('line_color', GHOST); idv.set_editor_property('visibility', SELF)
+pad('{idiv_s}', top=22.0)
 
-txt('{sttl}', '基本属性 // ATTRIBUTES', 8, BONE3, False, 220)
-pad('{sttl_s}', top=14.0)
-pad('{pstats_s}', top=10.0)
-pad('{sstats_s}', top=10.0)
+txt('{sttl}', '基本属性 // ATTRIBUTES', 9, BONE3, False, 240); pad('{sttl_s}', top=20.0)
+pad('{pstats_s}', top=12.0); pad('{sstats_s}', top=14.0)
 
-txt('{rttl2}', '四学派抗性 // RESISTANCE', 8, BONE3, False, 220)
-pad('{rttl2_s}', top=14.0)
-pad('{rbox_s}', top=10.0)
+txt('{rttl2}', '四学派抗性 // RESISTANCE', 9, BONE3, False, 240); pad('{rttl2_s}', top=24.0)
+pad('{rbox_s}', top=12.0)
 
-txt('{kttl}', '战术技能 // LOADOUT', 8, BONE3, False, 220)
-pad('{kttl_s}', top=14.0)
-pad('{kbox_s}', top=10.0)
+txt('{kttl}', '战术技能 // LOADOUT', 9, BONE3, False, 240); pad('{kttl_s}', top=24.0)
+pad('{kbox_s}', top=12.0)
 
-pad('{ftr_s}', top=10.0, bottom=20.0, left=40.0, right=34.0)
-txt('{fhint}', 'CLICK OPERATOR TO INSPECT  //  ESC 关闭', 8, BONE3, False, 140)
-obj('{fsp_s}').set_editor_property('size', fill_size())
-txt('{fmark}', 'EBBING RAINBOW // PERSONNEL ARCHIVE', 8, BONE3, False, 240)
+obj('{bsp_s}').set_editor_property('size', fill_size())
+txt('{fhint}', 'EBBING RAINBOW // OPERATOR ARCHIVE SYSTEM', 8, unreal.LinearColor(BONE3.r, BONE3.g, BONE3.b, BONE3.a * 0.7), False, 260)
 """)
     compile_and_save(m, wbp_panel)
 
@@ -1033,7 +1026,7 @@ bs = obj('{botsc}'); bs.set_editor_property('brush', sb); bs.set_editor_property
 bs.set_editor_property('render_transform_pivot', unreal.Vector2D(0.5, 0.5))
 wt = unreal.WidgetTransform(); wt.scale = unreal.Vector2D(1.0, -1.0)
 bs.set_editor_property('render_transform', wt); bs.set_editor_property('visibility', SELF)
-bss = obj('{botsc_s}'); bss.set_anchors(unreal.Anchors(unreal.Vector2D(0, 1), unreal.Vector2D(1, 1))); bss.set_alignment(unreal.Vector2D(0, 1)); bss.set_offsets(unreal.Margin(0, -145.0, 0, 0))
+bss = obj('{botsc_s}'); bss.set_anchors(unreal.Anchors(unreal.Vector2D(0, 1), unreal.Vector2D(1, 1))); bss.set_alignment(unreal.Vector2D(0, 1)); bss.set_offsets(unreal.Margin(0, 0, 0, 145.0))
 
 rt = obj('{ret}')
 rt.set_editor_property('top_right_code', '')
@@ -1420,7 +1413,7 @@ dms = obj('{rdim_s}'); dms.set_anchors(unreal.Anchors(unreal.Vector2D(0, 0), unr
 tb = obj('{rtbar}'); tb.set_editor_property('brush', wb); tb.set_editor_property('color_and_opacity', unreal.LinearColor(0.004, 0.005, 0.007, 1.0))
 tbs = obj('{rtbar_s}'); tbs.set_anchors(unreal.Anchors(unreal.Vector2D(0, 0), unreal.Vector2D(1, 0))); tbs.set_offsets(unreal.Margin(0, 0, 0, 112.0))
 bb = obj('{rbbar}'); bb.set_editor_property('brush', wb); bb.set_editor_property('color_and_opacity', unreal.LinearColor(0.004, 0.005, 0.007, 1.0))
-bbs = obj('{rbbar_s}'); bbs.set_anchors(unreal.Anchors(unreal.Vector2D(0, 1), unreal.Vector2D(1, 1))); bbs.set_alignment(unreal.Vector2D(0, 1)); bbs.set_offsets(unreal.Margin(0, -112.0, 0, 0))
+bbs = obj('{rbbar_s}'); bbs.set_anchors(unreal.Anchors(unreal.Vector2D(0, 1), unreal.Vector2D(1, 1))); bbs.set_alignment(unreal.Vector2D(0, 1)); bbs.set_offsets(unreal.Margin(0, 0, 0, 112.0))
 
 cs = obj('{rcol_s}'); cs.set_anchors(unreal.Anchors(unreal.Vector2D(0.5, 0.5), unreal.Vector2D(0.5, 0.5))); cs.set_alignment(unreal.Vector2D(0.5, 0.5)); cs.set_auto_size(True)
 st = obj('{rstag}'); st.set_editor_property('text', 'OPERATION CLEARED // TACTICAL SUMMARY'); st.set_editor_property('font', mk_font(fnt, 10, False, 360)); st.set_editor_property('color_and_opacity', unreal.SlateColor(BONE2)); st.set_editor_property('visibility', SELF)
@@ -1504,7 +1497,7 @@ bs = obj('{botsc}'); bs.set_editor_property('brush', sb); bs.set_editor_property
 bs.set_editor_property('render_transform_pivot', unreal.Vector2D(0.5, 0.5))
 wt = unreal.WidgetTransform(); wt.scale = unreal.Vector2D(1.0, -1.0)
 bs.set_editor_property('render_transform', wt); bs.set_editor_property('visibility', SELF)
-bss = obj('{botsc_s}'); bss.set_anchors(unreal.Anchors(unreal.Vector2D(0, 1), unreal.Vector2D(1, 1))); bss.set_alignment(unreal.Vector2D(0, 1)); bss.set_offsets(unreal.Margin(0, -180.0, 0, 0))
+bss = obj('{botsc_s}'); bss.set_anchors(unreal.Anchors(unreal.Vector2D(0, 1), unreal.Vector2D(1, 1))); bss.set_alignment(unreal.Vector2D(0, 1)); bss.set_offsets(unreal.Margin(0, 0, 0, 180.0))
 
 rt = obj('{ret}')
 rt.set_editor_property('top_right_code', '')
@@ -1562,6 +1555,7 @@ EAL.save_asset('/Game/UI/Battle/WBP_BattleHUD', False)
 
 
 def main():
+    clear_readonly_ui_assets()
     m = connect()
     try:
         for folder in ["/Game/UI/Fonts", "/Game/UI/Hall", "/Game/UI/Route", "/Game/UI/Battle"]:

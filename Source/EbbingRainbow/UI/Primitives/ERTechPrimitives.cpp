@@ -5,6 +5,7 @@
 #include "UI/Motion/ERUIMotion.h"
 
 #include "Engine/Font.h"
+#include "Engine/Texture2D.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Rendering/DrawElements.h"
@@ -13,12 +14,48 @@
 
 namespace
 {
+	/**
+	 * 为 FSlateDrawElement::MakeCustomVerts 提供 100% 有效的纯白纹理句柄:
+	 * 注意 FCoreStyle::WhiteBrush 是无纹理的 FSlateColorBrush, GetResourceHandle() 会返回无效句柄导致 MakeCustomVerts 静默跳过!
+	 * 必须绑定真实 UTexture2D (/Game/UI/Textures/T_UI_White) 或带引擎纹理的 GenericWhiteBox。
+	 */
 	FSlateResourceHandle GetWhiteResourceHandle()
 	{
-		const FSlateBrush* White = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
-		if (White && FSlateApplication::IsInitialized() && FSlateApplication::Get().GetRenderer())
+		if (!FSlateApplication::IsInitialized() || !FSlateApplication::Get().GetRenderer())
 		{
-			return FSlateApplication::Get().GetRenderer()->GetResourceHandle(*White);
+			return FSlateResourceHandle();
+		}
+		FSlateRenderer* Renderer = FSlateApplication::Get().GetRenderer();
+
+		if (UTexture2D* WhiteTex = ERUI::GetWhiteTexture())
+		{
+			static FSlateBrush ProjectWhiteBrush;
+			if (ProjectWhiteBrush.GetResourceObject() != WhiteTex)
+			{
+				ProjectWhiteBrush.SetResourceObject(WhiteTex);
+				ProjectWhiteBrush.DrawAs = ESlateBrushDrawType::Image;
+				ProjectWhiteBrush.ImageSize = FVector2D(4.0f, 4.0f);
+				ProjectWhiteBrush.TintColor = FSlateColor(FLinearColor::White);
+			}
+			const FSlateResourceHandle Handle = Renderer->GetResourceHandle(ProjectWhiteBrush);
+			if (Handle.IsValid())
+			{
+				return Handle;
+			}
+		}
+
+		if (const FSlateBrush* GenericWhite = FCoreStyle::Get().GetBrush(TEXT("GenericWhiteBox")))
+		{
+			const FSlateResourceHandle Handle = Renderer->GetResourceHandle(*GenericWhite);
+			if (Handle.IsValid())
+			{
+				return Handle;
+			}
+		}
+
+		if (const FSlateBrush* Def = FCoreStyle::Get().GetDefaultBrush())
+		{
+			return Renderer->GetResourceHandle(*Def);
 		}
 		return FSlateResourceHandle();
 	}

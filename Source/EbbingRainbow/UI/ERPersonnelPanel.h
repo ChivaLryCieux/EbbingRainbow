@@ -11,6 +11,7 @@
 class UBorder;
 class UButton;
 class UCanvasPanel;
+class UERCornerReticle;
 class UERPersonnelMemberRow;
 class UERPrismBar;
 class UERStatCell;
@@ -18,6 +19,8 @@ class UERTechDivider;
 class UERTechFrame;
 class UHorizontalBox;
 class UImage;
+class UPanelWidget;
+class UScaleBox;
 class UTextBlock;
 class UTexture2D;
 class UVerticalBox;
@@ -102,7 +105,7 @@ public:
 	TSoftObjectPtr<UTexture2D> PlaceholderPortrait;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Personnel")
-	bool bCloseOnOutsideClick = true;
+	bool bCloseOnOutsideClick = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Motion")
 	bool bEnableEntranceAnimation = true;
@@ -140,9 +143,12 @@ protected:
 	// ---- WBP 绑定 (全部 Optional, 缺失时由 C++ Build() 兜底) ----
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> ScrimImage;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERCornerReticle> CornerReticle;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERPrismBar> TopEdgePrism;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechFrame> PanelFrame;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> PanelBorder;
 
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> WatermarkCallsignText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERPrismBar> HeaderPrismBar;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HeaderTitle;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HeaderCaption;
@@ -154,10 +160,11 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> HeaderRule;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RailTitleText;
-	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UVerticalBox> MemberListBox;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UPanelWidget> MemberListBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RailHintText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> RailRule;
 
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> PortraitStage;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> DetailContainer;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> PortraitFrame;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> PortraitImage;

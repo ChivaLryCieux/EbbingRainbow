@@ -284,8 +284,9 @@ struct FERCipherReveal
 		constexpr int32 PoolLen = 9;
 
 		const int32 Len = Target.Len();
-		const float Eased = ERMotion::ExpoOut(T);
-		const int32 LockedCount = FMath::FloorToInt(Eased * (float)Len);
+		// 线性高速从左向右锁字 (在 90% 进度处全部收敛, 避免尾字长时间停留在乱码态)
+		const float LockFrac = FMath::Clamp(T / 0.90f, 0.0f, 1.0f);
+		const int32 LockedCount = FMath::FloorToInt(LockFrac * (float)Len + 0.0001f);
 		const int32 StepBucket = FMath::FloorToInt(Elapsed * 28.0f);
 
 		OutDisplay.Reset(Len);

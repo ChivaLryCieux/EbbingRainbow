@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "Experimental/AITacticalCommand/UBattleAICommandService.h"
 #include "ERAICommandPanel.generated.h"
 
@@ -12,6 +13,8 @@ class UButton;
 class UCanvasPanel;
 class UEditableTextBox;
 class UERActionButton;
+class UERTechDivider;
+class UERTechFrame;
 class UScrollBox;
 class UTextBlock;
 class UVerticalBox;
@@ -19,12 +22,12 @@ class UVerticalBox;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnERAIPanelCloseRequested);
 
 /**
- * [实验性毕设模块] 战斗 HUD 内嵌 AI 战术指挥面板:
- *  - 通过 InstallOnBattleHUD() 自动挂载右上角“AI 连接”按钮与折叠面板, 零侵入 WBP_BattleHUD
- *  - 可折叠 API 配置栏 (Endpoint / Model / Key / 预设)
- *  - 实时棋子编号速查条 (P1..Pn / E1..En / 当前回合 / 上下文轮数)
- *  - 战术播报与工具调用日志流
- *  - 自然语言指令输入框 + 执行/中止/新对话按钮
+ * [实验性毕设模块] 战斗 HUD 内嵌 AI 战术指挥终端 (PRTS 机能风 × 控制:共振平面重构):
+ *  - 通过 InstallOnBattleHUD() 自动挂载右上角“AI 链路”切角按钮与战术终端面板
+ *  - 黑曜石 45° 切角巨构底板 (UERTechFrame) + 左侧虹彩窄光谱条 + 四角光学刻度
+ *  - 顶部《控制:共振》式粗细巨幅对比标题 + 遥测译码 + 反白状态胶囊
+ *  - 结构化标签战报日志流 (CMD / TOOL / RET / AI / ERR / SYS)
+ *  - 反白石膏高对比主执行按钮 + 折叠 API 配置抽屉 + 展开动效
  */
 UCLASS(BlueprintType, Blueprintable)
 class EBBINGRAINBOW_API UERAICommandPanel : public UERInteractiveWidget
@@ -32,10 +35,7 @@ class EBBINGRAINBOW_API UERAICommandPanel : public UERInteractiveWidget
 	GENERATED_BODY()
 
 public:
-	/** 在战斗 HUD 上挂载“AI 连接”按钮与面板 (幂等, 已挂载则复用) */
 	static UERAICommandPanel* InstallOnBattleHUD(UUserWidget* OwnerHUD, UCanvasPanel* RootCanvas, float ScreenMargin);
-
-	/** 当前是否有任意 AI 面板输入框持有键盘焦点 */
 	static bool IsAnyTextInputFocused();
 
 	void BindService(UBattleAICommandService* InService);
@@ -57,7 +57,9 @@ protected:
 
 private:
 	void BuildLayout();
-	UButton* MakeMiniButton(const FString& Label, const FLinearColor& StrokeTint, const FLinearColor& TextColor, TObjectPtr<UTextBlock>* OutLabel = nullptr);
+	UButton* MakeTechButton(const FString& Label, bool bInvertedPrimary, const FLinearColor& FillTint,
+		const FLinearColor& StrokeTint, const FLinearColor& TextColor, TObjectPtr<UTextBlock>* OutLabel = nullptr,
+		TObjectPtr<UBorder>* OutBg = nullptr);
 	void StyleInputBox(UEditableTextBox* Box, const FText& Hint, bool bIsPassword = false);
 
 	void SyncConfigFieldsFromService();
@@ -89,6 +91,10 @@ private:
 	FDelegateHandle StateDelegateHandle;
 
 	UPROPERTY(Transient) TObjectPtr<UBorder> RootBorder;
+	UPROPERTY(Transient) TObjectPtr<UERTechFrame> PanelFrame;
+	UPROPERTY(Transient) TObjectPtr<UERTechDivider> HeaderDivider;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> HeaderCaptionText;
+	UPROPERTY(Transient) TObjectPtr<UBorder> StatusBadgeBorder;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> StatusBadgeText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> SettingsToggleText;
 	UPROPERTY(Transient) TObjectPtr<UButton> SettingsToggleButton;
@@ -108,10 +114,13 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UScrollBox> LogScrollBox;
 	UPROPERTY(Transient) TObjectPtr<UEditableTextBox> CommandInput;
 	UPROPERTY(Transient) TObjectPtr<UButton> SendButton;
+	UPROPERTY(Transient) TObjectPtr<UBorder> SendButtonBg;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> SendButtonText;
 	UPROPERTY(Transient) TObjectPtr<UButton> NewContextButton;
 	UPROPERTY(Transient) TObjectPtr<UButton> ClearLogButton;
 
+	FERRevealTrack OpenTrack;
+	FERCipherReveal CaptionCipher;
 	bool bBuilt = false;
 	bool bSettingsExpanded = false;
 	float IndexRefreshAccum = 0.0f;
