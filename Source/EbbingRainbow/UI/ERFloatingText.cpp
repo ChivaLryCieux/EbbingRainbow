@@ -44,13 +44,12 @@ void UERFloatingText::Build()
 	WidgetTree->RootWidget = Root;
 	Root->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
-	FloatingTextBlock = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone);
-	FSlateFontInfo FontInfo = T->GetFont(EERTypeScale::Title);
-	FontInfo.Size = FMath::RoundToInt(BaseFontSize);
-	FontInfo.OutlineSettings.OutlineSize = 1;
-	FontInfo.OutlineSettings.OutlineColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.78f);
+	FloatingTextBlock = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone, true);
+	FSlateFontInfo FontInfo = ERUI::FontBold(FMath::RoundToInt(FMath::Max(26.0f, BaseFontSize)), 20);
+	FontInfo.OutlineSettings.OutlineSize = 2;
+	FontInfo.OutlineSettings.OutlineColor = FLinearColor(0.005f, 0.006f, 0.008f, 0.92f);
 	FloatingTextBlock->SetFont(FontInfo);
-	FloatingTextBlock->SetShadowOffset(FVector2D(1.5f, 1.5f));
+	FloatingTextBlock->SetShadowOffset(FVector2D(1.5f, 2.0f));
 	FloatingTextBlock->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.85f));
 	FloatingTextBlock->SetJustification(ETextJustify::Center);
 

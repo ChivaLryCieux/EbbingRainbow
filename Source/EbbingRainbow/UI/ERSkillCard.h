@@ -4,9 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERSkillCard.generated.h"
 
+class UBorder;
 class UButton;
+class UERTechFrame;
 class UImage;
 class UTextBlock;
 class UTexture2D;
@@ -145,6 +148,12 @@ protected:
 	TObjectPtr<UButton> HitButton;
 
 	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UERTechFrame> CardFrame;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UBorder> CostBadge;
+
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> CardBg;
 
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -193,8 +202,10 @@ private:
 	bool bBuilt = false;
 	bool bDelegatesBound = false;
 
+	FERFloatSpring LiftSpring = FERFloatSpring::Tactile(0.0f);
 	float LiftT = 0.0f;
 	float FadeT = 1.0f;
+	float SweepProgress = 1.0f;
 
 	FLinearColor Accent = FLinearColor::White;
 	FText CardName;

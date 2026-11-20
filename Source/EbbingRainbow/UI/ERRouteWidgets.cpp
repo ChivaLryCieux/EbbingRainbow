@@ -2,6 +2,7 @@
 
 #include "UI/ERRouteWidgets.h"
 #include "UI/ERUIStatics.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "Run/RouteGraphGenerator.h"
 
 #include "Engine/Font.h"
@@ -50,14 +51,16 @@ public:
 	float Phase = 0.0f;
 	ERouteNodeVisual Visual = ERouteNodeVisual::Locked;
 	bool bReachable = false;
-	float HoverT = 0.0f;
-	float PressT = 0.0f;
+	FERFloatSpring HoverSpring = FERFloatSpring::Tactile(0.0f);
+	FERFloatSpring PressSpring = FERFloatSpring::Snappy(0.0f);
 
 	void Advance(float DeltaTime, bool bHovered, bool bPressed)
 	{
 		const bool bLive = (Visual == ERouteNodeVisual::Available);
-		HoverT = FMath::FInterpTo(HoverT, (bHovered && bLive) ? 1.0f : 0.0f, DeltaTime, 12.0f);
-		PressT = FMath::FInterpTo(PressT, (bPressed && bLive) ? 1.0f : 0.0f, DeltaTime, 20.0f);
+		HoverSpring.SetTarget((bHovered && bLive) ? 1.0f : 0.0f);
+		PressSpring.SetTarget((bPressed && bLive) ? 1.0f : 0.0f);
+		HoverSpring.Tick(DeltaTime);
+		PressSpring.Tick(DeltaTime);
 	}
 
 	virtual FVector2D ComputeDesiredSize(float) const override { return DesiredSize; }
@@ -67,34 +70,39 @@ public:
 	{
 		const FVector2D C = AllottedGeometry.GetLocalSize() * 0.5;
 		const float Time = (float)Args.GetCurrentTime() + Phase;
-		const float Pulse = 0.5f + 0.5f * FMath::Sin(Time * 1.3f);
-		const float Sc = (bFinal ? FinalScale : 1.0f) * (1.0f + 0.08f * HoverT - 0.05f * PressT);
+		const float Pulse = ERMotion::SolemnPulse(Time, 1.25f);
+		const float HoverT = FMath::Clamp(HoverSpring.Value, 0.0f, 1.15f);
+		const float PressT = FMath::Clamp(PressSpring.Value, 0.0f, 1.0f);
+		const float Sc = (bFinal ? FinalScale : 1.0f) * (1.0f + 0.065f * HoverT - 0.045f * PressT);
 		const float R = BaseRadius * Sc;
 		const FPaintGeometry Geo = AllottedGeometry.ToPaintGeometry();
+		const FLinearColor Bone(0.94f, 0.94f, 0.92f, 1.0f);
 
-		FLinearColor Ring, Fill, Soft;
-		float RingW = 1.4f, GlowAmt = 0.0f, ShapeA = 0.4f, InnerA = 0.0f;
+		// 铁律: 仅 Current 节点发光; 其余所有节点严格黑-白-点睛彩锐利矢量, 绝不发光!
+		FLinearColor Ring, Fill, ShapeCol;
+		float RingW = 1.2f, GlowAmt = 0.0f, ShapeA = 0.4f, InnerA = 0.0f;
 		switch (Visual)
 		{
 		case ERouteNodeVisual::Available:
-			Ring = Accent; RingW = 2.3f;
-			Fill = FLinearColor(0.020f + Accent.R * 0.07f, 0.034f + Accent.G * 0.07f, 0.060f + Accent.B * 0.07f, 0.95f);
-			Soft = Accent; GlowAmt = 0.0f; ShapeA = 0.70f; InnerA = 0.06f + 0.06f * HoverT;
+			Ring = Bone; RingW = 2.0f;
+			Fill = FLinearColor(0.008f, 0.009f, 0.012f, 0.95f);
+			ShapeCol = Accent; GlowAmt = 0.0f; ShapeA = 0.92f; InnerA = 0.0f;
 			break;
 		case ERouteNodeVisual::Current:
-			Ring = FLinearColor(1.0f, 0.88f, 0.52f, 1.0f); RingW = 2.7f;
-			Fill = FLinearColor(0.085f, 0.062f, 0.020f, 0.96f);
-			Soft = Gold; GlowAmt = 1.05f + 0.22f * Pulse; ShapeA = 0.95f; InnerA = 0.20f;
+			Ring = FLinearColor(1.0f, 0.88f, 0.52f, 1.0f); RingW = 2.6f;
+			Fill = FLinearColor(0.070f, 0.048f, 0.014f, 0.96f);
+			ShapeCol = Gold; GlowAmt = 1.05f + 0.22f * Pulse; ShapeA = 0.95f; InnerA = 0.22f;
 			break;
 		case ERouteNodeVisual::Visited:
-			Ring = WithAlphaCol(Gold, 0.52f); RingW = 1.5f;
-			Fill = FLinearColor(0.026f, 0.026f, 0.034f, 0.92f);
-			Soft = Gold; GlowAmt = 0.0f; ShapeA = 0.34f;
+			Ring = WithAlphaCol(Gold, 0.52f); RingW = 1.3f;
+			Fill = FLinearColor(0.012f, 0.012f, 0.016f, 0.92f);
+			ShapeCol = Gold; GlowAmt = 0.0f; ShapeA = 0.30f;
 			break;
 		default:
-			Ring = WithAlphaCol(Accent, bReachable ? 0.58f : 0.24f); RingW = 1.3f;
-			Fill = FLinearColor(0.018f, 0.028f, 0.052f, bReachable ? 0.88f : 0.72f);
-			Soft = Accent; GlowAmt = 0.0f; ShapeA = bReachable ? 0.32f : 0.14f;
+			Ring = WithAlphaCol(Bone, bReachable ? 0.38f : 0.14f); RingW = 1.0f;
+			Fill = FLinearColor(0.008f, 0.009f, 0.012f, bReachable ? 0.88f : 0.72f);
+			ShapeCol = bReachable ? WithAlphaCol(Accent, 0.45f) : WithAlphaCol(Bone, 0.16f);
+			GlowAmt = 0.0f; ShapeA = bReachable ? 0.46f : 0.16f;
 			break;
 		}
 
@@ -110,59 +118,93 @@ public:
 			FSlateDrawElement::MakeLines(OutDrawElements, LayerId + L, Geo, P, ESlateDrawEffect::None, Col, true, W);
 		};
 
+		// 仅 Current 节点绘制微弱内晕 (外层大光晕交由 3D M_Route_Halo)
 		if (GlowAmt > 0.01f)
 		{
-			Disc(R + 5.0f * Sc, WithAlphaCol(Soft, GlowAmt * 0.05f), 0);
-			Disc(R + 2.5f * Sc, WithAlphaCol(Soft, GlowAmt * 0.06f), 0);
+			Disc(R + 5.0f * Sc, WithAlphaCol(Gold, GlowAmt * 0.055f), 0);
+			Disc(R + 2.5f * Sc, WithAlphaCol(Gold, GlowAmt * 0.065f), 0);
 		}
 
 		Disc(R, Fill, 1);
 		if (InnerA > 0.0f)
 		{
-			Disc(R * 0.86f, WithAlphaCol(Soft, InnerA * 0.5f), 1);
-			Disc(R * 0.62f, WithAlphaCol(Soft, InnerA * 0.5f), 1);
+			Disc(R * 0.84f, WithAlphaCol(Gold, InnerA * 0.5f), 1);
+			Disc(R * 0.58f, WithAlphaCol(Gold, InnerA * 0.5f), 1);
 		}
 
+		// 主圆环 (Available 绝不画模糊宽发光线, 保持 2px 锐利纯白线)
 		RouteVis::MakeCircle(P, C, R, 64);
-		if (Visual == ERouteNodeVisual::Available || Visual == ERouteNodeVisual::Current)
+		if (Visual == ERouteNodeVisual::Current)
 		{
-			Line(WithAlphaCol(Ring, 0.16f), RingW + 5.0f, 2);
+			Line(WithAlphaCol(Ring, 0.18f), RingW + 5.0f, 2);
 		}
 		Line(Ring, RingW, 3);
+
+		// 内精密发丝刻度环
 		if (Visual != ERouteNodeVisual::Locked || bReachable)
 		{
-			RouteVis::MakeCircle(P, C, R - 6.5f * Sc, 56);
-			Line(WithAlphaCol(Ring, 0.28f), 1.0f, 3);
+			RouteVis::MakeCircle(P, C, R - 6.0f * Sc, 56);
+			Line(WithAlphaCol(Ring, Visual == ERouteNodeVisual::Available ? 0.24f : 0.20f), 0.9f, 3);
 		}
 
+		// 类型外轮廓 (点睛色锐利细线)
 		RouteVis::MakeTypeShape(P, Type, C, R + 8.0f * Sc);
-		Line(WithAlphaCol(Ring, ShapeA), (Visual == ERouteNodeVisual::Available || Visual == ERouteNodeVisual::Current) ? 1.6f : 1.1f, 3);
+		Line(WithAlphaCol(ShapeCol, ShapeA), (Visual == ERouteNodeVisual::Available || Visual == ERouteNodeVisual::Current) ? 1.5f : 1.0f, 3);
+
+		// Available 悬停时四角精密对准括号 [ ] 弹簧收敛锁定 (无发光, 纯机能美学)
+		if (Visual == ERouteNodeVisual::Available && HoverT > 0.02f)
+		{
+			const float BoxR = R + FMath::Lerp(17.0f, 11.0f, HoverT) * Sc;
+			const float Arm = 7.5f * Sc;
+			const FLinearColor BCol = WithAlphaCol(Bone, 0.92f * FMath::Clamp(HoverT, 0.0f, 1.0f));
+			auto Corner = [&](float SX, float SY)
+			{
+				P = {
+					C + FVector2D(SX * BoxR, SY * (BoxR - Arm)),
+					C + FVector2D(SX * BoxR, SY * BoxR),
+					C + FVector2D(SX * (BoxR - Arm), SY * BoxR)
+				};
+				Line(BCol, 1.5f, 4);
+			};
+			Corner(-1.0f, -1.0f);
+			Corner( 1.0f, -1.0f);
+			Corner( 1.0f,  1.0f);
+			Corner(-1.0f,  1.0f);
+		}
 
 		if (Visual == ERouteNodeVisual::Current)
 		{
-			const float Spin = Time * 0.20f;
+			const float Spin = Time * 0.18f;
 			for (int32 K = 0; K < 3; ++K)
 			{
 				const float A0 = Spin + K * (2.0f * PI / 3.0f);
-				RouteVis::MakeArc(P, C, R + 13.0f * Sc, A0, A0 + 1.30f, 32);
-				Line(WithAlphaCol(Ring, 0.55f), 1.6f, 3);
+				RouteVis::MakeArc(P, C, R + 13.5f * Sc, A0, A0 + 1.25f, 32);
+				Line(WithAlphaCol(Ring, 0.62f), 1.5f, 3);
+			}
+			// 四向天体准星发丝刻度
+			for (int32 K = 0; K < 4; ++K)
+			{
+				const float Ang = K * (PI * 0.5f);
+				const FVector2D Dir(FMath::Cos(Ang), FMath::Sin(Ang));
+				P = { C + Dir * (R + 10.0f * Sc), C + Dir * (R + 17.0f * Sc) };
+				Line(WithAlphaCol(Ring, 0.50f), 1.1f, 3);
 			}
 		}
 		else if (Visual == ERouteNodeVisual::Visited)
 		{
 			const FVector2D K = C + FVector2D(R * 0.80f, -R * 0.80f);
 			FSlateDrawElement::MakeBox(OutDrawElements, LayerId + 4,
-				AllottedGeometry.ToPaintGeometry(FVector2D(20.0f, 20.0f), FSlateLayoutTransform(K - FVector2D(10.0f, 10.0f))),
+				AllottedGeometry.ToPaintGeometry(FVector2D(18.0f, 18.0f), FSlateLayoutTransform(K - FVector2D(9.0f, 9.0f))),
 				&CircleBrush, ESlateDrawEffect::None, WithAlphaCol(Gold, 0.92f));
-			P = { K + FVector2D(-4.0f, 0.5f), K + FVector2D(-1.2f, 3.4f), K + FVector2D(4.2f, -3.2f) };
-			Line(FLinearColor(0.06f, 0.04f, 0.01f, 1.0f), 1.9f, 5);
+			P = { K + FVector2D(-3.6f, 0.5f), K + FVector2D(-1.0f, 3.0f), K + FVector2D(3.8f, -2.8f) };
+			Line(FLinearColor(0.01f, 0.01f, 0.01f, 1.0f), 1.8f, 5);
 		}
 
 		if (bFinal)
 		{
 			const bool bLive = (Visual != ERouteNodeVisual::Locked);
 			RouteVis::MakeCircle(P, C, R + 15.0f, 72);
-			Line(WithAlphaCol(Ring, bLive ? 0.34f : 0.18f), 1.0f, 3);
+			Line(WithAlphaCol(Ring, bLive ? 0.36f : 0.16f), 1.0f, 3);
 		}
 
 		return LayerId + 8;
@@ -406,14 +448,12 @@ public:
 				White, ESlateDrawEffect::None, C);
 		};
 
-		Rect(X0, Y - 0.5f, X1 - X0, 1.0f, BaseLine);
+		Rect(X0, Y - 0.5f, X1 - X0, 1.0f, FLinearColor(0.92f, 0.92f, 0.90f, 0.16f));
 		const float XC = LayerXs[Cur];
-		Rect(X0, Y - 3.0f, XC - X0, 6.0f, FLinearColor(Gold.R, Gold.G, Gold.B, 0.07f));
-		Rect(X0, Y - 0.8f, XC - X0, 1.6f, FLinearColor(Gold.R, Gold.G, Gold.B, 0.80f));
+		Rect(X0, Y - 0.8f, XC - X0, 1.6f, FLinearColor(Gold.R, Gold.G, Gold.B, 0.88f));
 
-		const UObject* FontObj = ERUI::Theme()->GetRuntimeFont();
-		FSlateFontInfo Font(FontObj, FontSize);
-		FSlateFontInfo FontBold(FontObj, ActiveFontSize);
+		FSlateFontInfo Font = ERUI::FontRegular(FontSize, 160);
+		FSlateFontInfo FontBold = ERUI::FontBold(ActiveFontSize + 1, 120);
 		TSharedRef<FSlateFontMeasure> Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 
 		for (int32 I = 0; I < LayerXs.Num(); ++I)
@@ -421,33 +461,40 @@ public:
 			const float X = LayerXs[I];
 			const bool bPast = I < Cur, bNow = I == Cur;
 			const bool bLast = I == LayerXs.Num() - 1;
-			const FLinearColor TickC = bNow ? FLinearColor(1.0f, 0.90f, 0.60f, 1.0f)
-				: bPast ? FLinearColor(Gold.R, Gold.G, Gold.B, 0.65f)
-				: FLinearColor(0.62f, 0.74f, 0.94f, 0.34f);
+			const FLinearColor TickC = bNow ? FLinearColor(1.0f, 0.90f, 0.58f, 1.0f)
+				: bPast ? FLinearColor(Gold.R, Gold.G, Gold.B, 0.68f)
+				: FLinearColor(0.92f, 0.92f, 0.90f, 0.34f);
+
+			// 层间精密副刻度
+			if (I + 1 < LayerXs.Num())
+			{
+				const float MidX = 0.5f * (X + LayerXs[I + 1]);
+				Rect(MidX - 0.5f, Y - 2.5f, 1.0f, 5.0f, FLinearColor(0.92f, 0.92f, 0.90f, 0.12f));
+			}
 
 			if (bNow)
 			{
 				TArray<FVector2D> D;
-				RouteVis::MakePolygon(D, FVector2D(X, Y), 7.0f, 4, -PI * 0.5f);
+				RouteVis::MakePolygon(D, FVector2D(X, Y), 7.5f, 4, -PI * 0.5f);
 				FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 1, AllottedGeometry.ToPaintGeometry(), D,
 					ESlateDrawEffect::None, TickC, true, 1.6f);
 				Rect(X - 2.0f, Y - 2.0f, 4.0f, 4.0f, TickC);
 			}
 			else
 			{
-				Rect(X - 0.5f, Y - (bLast ? 6.0f : 4.0f), 1.0f, bLast ? 12.0f : 8.0f, TickC);
+				Rect(X - 0.5f, Y - (bLast ? 7.0f : 4.5f), 1.0f, bLast ? 14.0f : 9.0f, TickC);
 			}
 
-			const FString Label = bLast ? FinalLabel : FString::FromInt(I + 1);
+			const FString Label = bLast ? FString::Printf(TEXT("%02d · %s"), I + 1, *FinalLabel) : FString::Printf(TEXT("%02d"), I + 1);
 			const FSlateFontInfo& F = (bNow || bLast) ? FontBold : Font;
 			const FVector2D TS = Measure->Measure(Label, F);
 			FSlateDrawElement::MakeText(OutDrawElements, LayerId + 1,
 				MakeBoxGeo(AllottedGeometry, FVector2D(X - TS.X * 0.5f, Y + 13.0f), TS),
 				Label, F, ESlateDrawEffect::None,
-				bNow ? FLinearColor(1.0f, 0.88f, 0.55f, 0.95f)
-				: bPast ? FLinearColor(Gold.R, Gold.G, Gold.B, 0.55f)
-				: bLast ? FLinearColor(0.85f, 0.92f, 1.0f, 0.55f)
-				: FLinearColor(0.70f, 0.80f, 0.95f, 0.38f));
+				bNow ? FLinearColor(1.0f, 0.88f, 0.55f, 0.98f)
+				: bPast ? FLinearColor(Gold.R, Gold.G, Gold.B, 0.60f)
+				: bLast ? FLinearColor(0.94f, 0.94f, 0.92f, 0.72f)
+				: FLinearColor(0.92f, 0.92f, 0.90f, 0.36f));
 		}
 
 		return LayerId + 2;

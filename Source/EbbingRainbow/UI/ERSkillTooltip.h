@@ -6,6 +6,8 @@
 #include "Blueprint/UserWidget.h"
 #include "ERSkillTooltip.generated.h"
 
+class UERTechDivider;
+class UERTechFrame;
 class UImage;
 class UTextBlock;
 
@@ -37,6 +39,12 @@ public:
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativePreConstruct() override;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UERTechFrame> TooltipFrame;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UERTechDivider> TooltipDivider;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> TooltipBg;

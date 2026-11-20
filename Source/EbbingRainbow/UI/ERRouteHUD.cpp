@@ -7,6 +7,7 @@
 #include "UI/ERRouteNode.h"
 #include "UI/ERRouteWidgets.h"
 #include "UI/ERUIStatics.h"
+#include "UI/Primitives/ERTechPrimitives.h"
 #include "Run/RouteGraphGenerator.h"
 #include "Run/RouteLayout.h"
 #include "Run/RunSubsystem.h"
@@ -91,6 +92,11 @@ void UERRouteHUD::NativeConstruct()
 	{
 		PlayAnimationForward(Anim_Intro);
 	}
+	if (!IsDesignTime())
+	{
+		EntranceTrack.Trigger(0.75f);
+		SubtitleCipher.Start(TEXT("EBBING RAINBOW // EXPEDITION GRAPH"), 0.42f, 0.08f);
+	}
 }
 
 void UERRouteHUD::ResolveTypeVisual(ERouteNodeType Type, FText& OutName, FText& OutGlyph, FLinearColor& OutColor, UTexture2D*& OutIcon) const
@@ -113,9 +119,9 @@ void UERRouteHUD::ResolveTypeVisual(ERouteNodeType Type, FText& OutName, FText& 
 void UERRouteHUD::BuildLayout()
 {
 	const UERUITheme* T = ERUI::Theme();
-	const FLinearColor TextHi(0.93f, 0.96f, 1.00f, 0.96f);
-	const FLinearColor TextMid(0.74f, 0.82f, 0.94f, 0.70f);
-	const FLinearColor TextLo(0.62f, 0.72f, 0.88f, 0.46f);
+	const FLinearColor TextHi = T->Bone;
+	const FLinearColor TextMid = T->BoneSecondary;
+	const FLinearColor TextLo = T->BoneTertiary;
 
 	if (!RootCanvas)
 	{
@@ -207,80 +213,75 @@ void UERRouteHUD::BuildLayout()
 		}
 	}
 
-	// 左上标题组
+	// 全屏四角静谧光学标尺
+	if (!CornerReticle)
+	{
+		CornerReticle = WidgetTree->ConstructWidget<UERCornerReticle>(UERCornerReticle::StaticClass(), TEXT("CornerReticle"));
+		CornerReticle->TopRightCode = TEXT("");
+		CornerReticle->BottomRightCode = TEXT("DAG // NAV.CHART");
+		CornerReticle->ReticleColor = FLinearColor(0.92f, 0.92f, 0.90f, 0.24f);
+		CornerReticle->bDrawCenterTicks = false;
+		CornerReticle->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		UCanvasPanelSlot* RS = RootCanvas->AddChildToCanvas(CornerReticle);
+		RS->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+		RS->SetOffsets(FMargin(0.0f));
+	}
+
+	// 左上标题组 (Control: 共振式巨幅粗体 + 虹彩竖条 + 极小追踪英文副标)
 	if (!TitleText)
 	{
 		UHorizontalBox* HeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("HeaderRow"));
 		HeaderRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
-		TitleAccentRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("TitleAccentRule"));
-		TitleAccentRule->SetBrush(ERUI::WhiteBrush(FVector2D(2.0f, 36.0f)));
-		TitleAccentRule->SetColorAndOpacity(FLinearColor(1.0f, 0.80f, 0.34f, 0.85f));
-		TitleAccentRule->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-		UHorizontalBoxSlot* RuleSlot = HeaderRow->AddChildToHorizontalBox(TitleAccentRule);
-		RuleSlot->SetVerticalAlignment(VAlign_Fill);
-		RuleSlot->SetPadding(FMargin(0.0f, 2.0f, 12.0f, 2.0f));
+		TitlePrismBar = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("TitlePrismBar"));
+		TitlePrismBar->bVertical = true;
+		TitlePrismBar->BarSize = FVector2D(4.0f, 54.0f);
+		TitlePrismBar->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		UHorizontalBoxSlot* RuleSlot = HeaderRow->AddChildToHorizontalBox(TitlePrismBar);
+		RuleSlot->SetVerticalAlignment(VAlign_Center);
+		RuleSlot->SetPadding(FMargin(0.0f, 2.0f, 16.0f, 2.0f));
 
 		UVerticalBox* HeaderCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("HeaderCol"));
 		HeaderRow->AddChildToHorizontalBox(HeaderCol);
 
-		TitleText = ERUI::MakeText(this, INVTEXT("航线图"), EERTypeScale::Title, TextHi);
-		{
-			FSlateFontInfo F = T->GetFont(EERTypeScale::Title);
-			F.Size = 24;
-			TitleText->SetFont(F);
-			TitleText->SetShadowOffset(FVector2D(0.0f, 1.0f));
-			TitleText->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.6f));
-		}
-		HeaderCol->AddChildToVerticalBox(TitleText);
+		SubtitleText = ERUI::MakeText(this, INVTEXT("EBBING RAINBOW // EXPEDITION GRAPH"), EERTypeScale::Micro, TextLo, true);
+		SubtitleText->SetFont(ERUI::FontRegular(9, 280));
+		HeaderCol->AddChildToVerticalBox(SubtitleText);
 
-		SubtitleText = ERUI::MakeText(this, INVTEXT("虹 不 我 与   ·   E B B I N G   R A I N B O W"), EERTypeScale::Micro,
-			FLinearColor(0.50f, 0.72f, 0.98f, 0.62f));
-		{
-			FSlateFontInfo F = T->GetFont(EERTypeScale::Micro);
-			F.Size = 9;
-			F.LetterSpacing = 80;
-			SubtitleText->SetFont(F);
-		}
-		HeaderCol->AddChildToVerticalBox(SubtitleText)->SetPadding(FMargin(1.0f, 2.0f, 0.0f, 0.0f));
+		TitleText = ERUI::MakeText(this, INVTEXT("航线图"), EERTypeScale::Display, TextHi);
+		TitleText->SetFont(ERUI::FontBold(42, 80));
+		TitleText->SetShadowOffset(FVector2D(0.0f, 2.0f));
+		TitleText->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.72f));
+		HeaderCol->AddChildToVerticalBox(TitleText)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 0.0f));
 
 		UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(HeaderRow);
 		S->SetAnchors(FAnchors(0.0f, 0.0f));
-		S->SetPosition(FVector2D(34.0f, 26.0f));
+		S->SetPosition(FVector2D(38.0f, 24.0f));
 		S->SetAutoSize(true);
 	}
 
-	// 右上进度与种子统计
+	// 右上进度与种子统计 (超大 Linux Biolinum 层号对比极小遥测统计)
 	if (!ProgressText)
 	{
 		UVerticalBox* StatusCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("StatusCol"));
 		StatusCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
-		ProgressText = ERUI::MakeText(this, INVTEXT("第 1 / 10 层"), EERTypeScale::Title, FLinearColor(1.0f, 0.86f, 0.46f, 0.98f));
-		{
-			FSlateFontInfo F = T->GetFont(EERTypeScale::Title);
-			F.Size = 17;
-			ProgressText->SetFont(F);
-			ProgressText->SetShadowOffset(FVector2D(0.0f, 1.0f));
-			ProgressText->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.6f));
-		}
+		ProgressText = ERUI::MakeText(this, INVTEXT("01 / 10"), EERTypeScale::Display, TextHi, true);
+		ProgressText->SetFont(ERUI::FontBold(38, 40));
+		ProgressText->SetShadowOffset(FVector2D(0.0f, 2.0f));
+		ProgressText->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.70f));
 		StatusCol->AddChildToVerticalBox(ProgressText)->SetHorizontalAlignment(HAlign_Right);
 
-		StatText = ERUI::MakeText(this, INVTEXT("战斗 0 场   ·   种子 0"), EERTypeScale::Micro, TextMid);
-		{
-			FSlateFontInfo F = T->GetFont(EERTypeScale::Micro);
-			F.Size = 10;
-			F.LetterSpacing = 40;
-			StatText->SetFont(F);
-		}
+		StatText = ERUI::MakeText(this, INVTEXT("LAYER // 战斗 0 · SEED 0"), EERTypeScale::Micro, TextMid, true);
+		StatText->SetFont(ERUI::FontRegular(9, 200));
 		UVerticalBoxSlot* StSlot = StatusCol->AddChildToVerticalBox(StatText);
 		StSlot->SetHorizontalAlignment(HAlign_Right);
-		StSlot->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
+		StSlot->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 0.0f));
 
 		UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(StatusCol);
 		S->SetAnchors(FAnchors(1.0f, 0.0f));
 		S->SetAlignment(FVector2D(1.0f, 0.0f));
-		S->SetPosition(FVector2D(-34.0f, 26.0f));
+		S->SetPosition(FVector2D(-38.0f, 22.0f));
 		S->SetAutoSize(true);
 	}
 
@@ -292,42 +293,33 @@ void UERRouteHUD::BuildLayout()
 		UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(LegendBox);
 		S->SetAnchors(FAnchors(0.0f, 1.0f));
 		S->SetAlignment(FVector2D(0.0f, 1.0f));
-		S->SetPosition(FVector2D(34.0f, -22.0f));
+		S->SetPosition(FVector2D(38.0f, -24.0f));
 		S->SetAutoSize(true);
 	}
 
 	// 底部操作提示
 	if (!HintText)
 	{
-		HintText = ERUI::MakeText(this, INVTEXT("点击发光节点前进   ·   战斗节点将进入竞技场"), EERTypeScale::Micro, TextLo);
-		FSlateFontInfo F = T->GetFont(EERTypeScale::Micro);
-		F.Size = 10;
-		F.LetterSpacing = 60;
-		HintText->SetFont(F);
+		HintText = ERUI::MakeText(this, INVTEXT("SELECT REACHABLE NODE  //  点击可选节点推进航线"), EERTypeScale::Micro, TextLo, true);
+		HintText->SetFont(ERUI::FontRegular(9, 200));
 		UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(HintText);
 		S->SetAnchors(FAnchors(0.5f, 1.0f));
 		S->SetAlignment(FVector2D(0.5f, 1.0f));
-		S->SetPosition(FVector2D(0.0f, -22.0f));
+		S->SetPosition(FVector2D(0.0f, -24.0f));
 		S->SetAutoSize(true);
 	}
 
-	// 顶部通知胶囊
+	// 顶部通知条 (锐利直角黑曜石条, 零胶囊圆角)
 	if (!NotificationBorder)
 	{
 		NotificationBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("NotificationBorder"));
-		FSlateBrush PillBrush;
-		PillBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
-		PillBrush.TintColor = FSlateColor(FLinearColor(0.020f, 0.034f, 0.062f, 0.86f));
-		PillBrush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
-		PillBrush.OutlineSettings.CornerRadii = FVector4(16.0f, 16.0f, 16.0f, 16.0f);
-		PillBrush.OutlineSettings.Width = 1.0f;
-		PillBrush.OutlineSettings.Color = FSlateColor(FLinearColor(0.80f, 0.90f, 1.00f, 0.24f));
-		NotificationBorder->SetBrush(PillBrush);
+		NotificationBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.94f), 1.0f, FLinearColor(0.92f, 0.92f, 0.90f, 0.34f)));
 		NotificationBorder->SetBrushColor(FLinearColor::White);
-		NotificationBorder->SetPadding(FMargin(22.0f, 9.0f));
+		NotificationBorder->SetPadding(FMargin(26.0f, 10.0f));
 		NotificationBorder->SetVisibility(ESlateVisibility::Collapsed);
 
 		NotificationText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, TextHi);
+		NotificationText->SetFont(ERUI::FontBold(13, 80));
 		NotificationBorder->SetContent(NotificationText);
 
 		UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(NotificationBorder);
@@ -606,14 +598,14 @@ void UERRouteHUD::Refresh()
 
 	if (StatText)
 	{
-		StatText->SetText(FText::FromString(FString::Printf(TEXT("战斗 %d 场   ·   种子 %d"),
+		StatText->SetText(FText::FromString(FString::Printf(TEXT("LAYER  //  战斗 %d 场 · SEED %d"),
 			Run->GetBattlesFought(), Run->GetRunSeed())));
 	}
 	if (ProgressText)
 	{
 		const FRouteNode* Current = Run->GetCurrentNode();
 		const int32 Layer = Current ? Current->Layer + 1 : 0;
-		ProgressText->SetText(FText::FromString(FString::Printf(TEXT("第 %d / %d 层"), Layer, Graph.NumLayers)));
+		ProgressText->SetText(FText::FromString(FString::Printf(TEXT("%02d / %02d"), Layer, Graph.NumLayers)));
 	}
 }
 
@@ -661,6 +653,19 @@ void UERRouteHUD::HandleNodeClicked(int32 NodeId)
 void UERRouteHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (EntranceTrack.Tick(InDeltaTime))
+	{
+		const float E = EntranceTrack.Expo(0.0f, 0.48f);
+		if (CornerReticle) { CornerReticle->SetRevealAlpha(E); }
+		if (TitlePrismBar) { TitlePrismBar->SetRevealAlpha(EntranceTrack.Expo(0.05f, 0.40f)); }
+	}
+
+	FString Decoded;
+	if (SubtitleCipher.Tick(InDeltaTime, Decoded) && SubtitleText)
+	{
+		SubtitleText->SetText(FText::FromString(Decoded));
+	}
 
 	if (NotificationTimeLeft > 0.0f && NotificationBorder)
 	{

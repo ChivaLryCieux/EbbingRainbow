@@ -4,11 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "Styling/SlateBrush.h"
 #include "ERHallButton.generated.h"
 
 class UBorder;
 class UButton;
+class UERTechFrame;
 class USizeBox;
 class UTextBlock;
 class UWidgetAnimation;
@@ -16,9 +18,11 @@ class UWidgetAnimation;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnERHallButtonClicked);
 
 /**
- * 空间站大厅液态玻璃胶囊按钮 (WBP_HallButton):
- *  - 烟熏半透明圆角胶囊底 + 发丝描边 + 状态呼吸灯 + 主/副双层排版
- *  - 全部节点均为标准 UMG 控件, 可在 Designer 中自由拖拽、改圆角、换材质或挂动画轨
+ * 空间站大厅机能风切角主控模块按钮 (WBP_HallButton):
+ *  - 黑-白-点睛彩建筑视觉:
+ *      次按钮 = 哑光黑曜石底 + 纯白粗体 + 1px 发丝框 + 四角对准刻度
+ *      主按钮 = 反白石膏底 + 极墨黑粗体 + 左侧 3px 《虹不我与》窄光谱点睛条
+ *  - 二阶弹簧物理驱动悬停微移/按压回弹 + 斜向扫描高光 + 英文副标遥测译码
  */
 UCLASS(BlueprintType, Blueprintable)
 class EBBINGRAINBOW_API UERHallButton : public UERInteractiveWidget
@@ -32,19 +36,26 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ERUI|HallButton")
 	void SetAccentAndPrimary(FLinearColor InAccent, bool bInPrimary);
 
+	/** 触发英文副标译码动效与一次扫描光 */
+	UFUNCTION(BlueprintCallable, Category = "ERUI|HallButton")
+	void TriggerEntrancePulse(float DelaySeconds = 0.0f);
+
 	UPROPERTY(BlueprintAssignable, Category = "ERUI|HallButton")
 	FOnERHallButtonClicked OnButtonClicked;
 
-	// ---- 可在实例面板或 Class Defaults 直接手调的参数 ----
+	// ---- 可调参数 ----
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ExposeOnSpawn = "true"))
+	FText IndexCode = INVTEXT("02");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ExposeOnSpawn = "true"))
 	FText Label = INVTEXT("航线管理");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ExposeOnSpawn = "true"))
-	FText Caption = INVTEXT("R O U T E S");
+	FText Caption = INVTEXT("EXPEDITION ROUTES");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ExposeOnSpawn = "true"))
-	FLinearColor AccentColor = FLinearColor(0.32f, 0.76f, 1.0f, 1.0f);
+	FLinearColor AccentColor = FLinearColor(0.96f, 0.56f, 0.04f, 1.0f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ExposeOnSpawn = "true"))
 	bool bPrimary = true;
@@ -53,24 +64,27 @@ public:
 	bool bApplyWidthOverride = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (EditCondition = "bApplyWidthOverride"))
-	float ButtonWidth = 264.0f;
+	float ButtonWidth = 312.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	float BodyCornerRadius = 27.0f;
+	float ButtonHeight = 74.0f;
+
+	/** 保留旧属性以兼容已有蓝图序列化 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
+	float BodyCornerRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	float GlowCornerRadius = 34.0f;
+	float GlowCornerRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	FLinearColor BaseGlassColor = FLinearColor(0.05f, 0.075f, 0.11f, 0.44f);
+	FLinearColor BaseGlassColor = FLinearColor(0.008f, 0.009f, 0.012f, 0.90f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	FLinearColor HoverGlassColor = FLinearColor(0.09f, 0.135f, 0.20f, 0.60f);
+	FLinearColor HoverGlassColor = FLinearColor(0.022f, 0.024f, 0.030f, 0.96f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	FLinearColor OutlineColor = FLinearColor(0.90f, 0.95f, 1.0f, 1.0f);
+	FLinearColor OutlineColor = FLinearColor(0.92f, 0.92f, 0.90f, 1.0f);
 
-	/** 是否由代码每帧驱动呼吸光晕/玻璃提亮/回弹缩放; 关掉后可完全由蓝图材质与动画控制 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
 	bool bDriveGlassAnimationFromCode = true;
 
@@ -81,10 +95,10 @@ public:
 	float PressInterpSpeed = 22.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ClampMin = "0.8", ClampMax = "1.0"))
-	float PressedScale = 0.97f;
+	float PressedScale = 0.975f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	float BreathSpeed = 1.6f;
+	float BreathSpeed = 1.4f;
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "ERUI|HallButton", meta = (DisplayName = "On Hall Button Hover Changed"))
 	void BP_OnHoverChanged(bool bIsHovered);
@@ -103,11 +117,14 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> HitButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USizeBox> ButtonSizeBox;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechFrame> TechFrame;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> GlowBorder;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> BodyBorder;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> LedBorder;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> IndexText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> LabelText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> CaptionText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ArrowText;
 
 	UPROPERTY(Transient, meta = (BindWidgetAnimOptional)) TObjectPtr<UWidgetAnimation> Anim_Hover;
 
@@ -117,11 +134,12 @@ private:
 	void SyncStaticProperties();
 	void RefreshVisuals(float DeltaTime, bool bDesignPreview);
 
-	FSlateBrush MakeRoundedBrush(float Radius, FLinearColor Fill, float OutlineWidth, FLinearColor Outline) const;
-
-	float HoverAlpha = 0.0f;
-	float PressAlpha = 0.0f;
+	FERFloatSpring HoverSpring = FERFloatSpring::Tactile(0.0f);
+	FERFloatSpring PressSpring = FERFloatSpring::Snappy(0.0f);
+	FERCipherReveal CaptionCipher;
+	float SweepProgress = 1.0f;
 	float ElapsedTime = 0.0f;
+	bool bWasHovered = false;
 	bool bBuilt = false;
 	bool bDelegatesBound = false;
 };

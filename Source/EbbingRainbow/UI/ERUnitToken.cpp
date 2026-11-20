@@ -3,6 +3,7 @@
 #include "UI/ERUnitToken.h"
 #include "Blueprint/WidgetTree.h"
 #include "UI/ERUIStatics.h"
+#include "UI/Primitives/ERTechPrimitives.h"
 
 #include "Battle/Units/BattleUnit.h"
 #include "Components/Button.h"
@@ -308,6 +309,37 @@ void UERUnitToken::UpdateNameVisibility()
 	}
 	const bool bShow = bAlwaysShowName || (bShowName && (bActive || bFocused || bHovered || IsDesignTime()));
 	NameText->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+}
+
+void UERUnitToken::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	const float Target = (bActive || bFocused || bHovered) ? 1.0f : 0.0f;
+	MotionSpring.SetTarget(Target);
+	const float M = MotionSpring.Tick(InDeltaTime);
+	const float M01 = FMath::Clamp(M, 0.0f, 1.0f);
+
+	if (bIsSquad)
+	{
+		SetRenderTranslation(FVector2D(6.0f * M, 0.0f));
+	}
+	else
+	{
+		SetRenderTranslation(FVector2D(0.0f, 4.0f * M));
+	}
+
+	if (TokenFrame)
+	{
+		const UERUITheme* T = ERUI::Theme();
+		const FLinearColor Border = bActive ? T->Accent : (bFocused ? T->Bone : FLinearColor(0.92f, 0.92f, 0.90f, 0.20f + 0.55f * M01));
+		TokenFrame->SetFrameColors(
+			FLinearColor(0.008f, 0.009f, 0.012f, 0.90f),
+			Border,
+			bActive ? T->Accent : T->Bone,
+			bActive ? T->Accent : T->BoneGhost);
+		TokenFrame->SetMotionState(1.0f, M01, 1.0f);
+	}
 }
 
 void UERUnitToken::HandleClicked()

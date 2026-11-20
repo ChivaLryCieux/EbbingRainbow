@@ -5,10 +5,12 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERBattleResult.generated.h"
 
 class UCanvasPanel;
 class UERActionButton;
+class UERPrismBar;
 class UImage;
 class UTextBlock;
 class UVerticalBox;
@@ -142,7 +144,13 @@ protected:
 	TObjectPtr<UImage> DimImage;
 
 	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> StatusTagText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> TitleText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UERPrismBar> TitlePrismBar;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> TitleRule;
@@ -168,6 +176,8 @@ private:
 	void HandlePrimaryClicked();
 
 	float EntranceT = 1.0f;
+	FERRevealTrack ResultTrack;
+	FERCipherReveal StatusCipher;
 	bool bBuilt = false;
 	bool bDelegatesBound = false;
 };

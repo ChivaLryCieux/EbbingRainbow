@@ -22,8 +22,12 @@ namespace ERUI
 	/** 当前主题 (UERUITheme::Get 的简写) */
 	const UERUITheme* Theme();
 
-	/** 档位字体 (bLatin: 纯数字/拉丁串用 Inter) */
+	/** 档位字体 (Linux Biolinum 拉丁/数字 + Noto 中文) */
 	FSlateFontInfo Font(EERTypeScale Scale, bool bLatin = false);
+
+	/** 显式字号/粗细/字距 (用于《控制:共振》大占比粗体与极小微标对比) */
+	FSlateFontInfo FontBold(int32 Size, int32 Tracking = 0);
+	FSlateFontInfo FontRegular(int32 Size, int32 Tracking = 0);
 
 	/** 乘算透明度 */
 	inline FLinearColor Fade(FLinearColor C, float AlphaMul)

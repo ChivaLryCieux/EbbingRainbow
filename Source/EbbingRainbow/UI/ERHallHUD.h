@@ -4,20 +4,26 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERHallHUD.generated.h"
 
 class UBorder;
 class UCanvasPanel;
+class UERCornerReticle;
 class UERHallButton;
+class UERPrismBar;
+class UERTechDivider;
+class UERTechFrame;
 class UHorizontalBox;
 class UTextBlock;
 class UWidgetAnimation;
 
 /**
  * 空间站大厅主界面 UMG 控件 (WBP_HallHUD):
- *  - 底部居中液态玻璃双按钮 Dock: [人员管理 PERSONNEL] + [航线管理 ROUTES]
- *  - Esc / 点击空白切换全屏观景模式 (Zen Mode)
- *  - 全部控件均在 WBP_HallHUD 可视树中供手动调整位置、文案、外观与动画
+ *  - 全屏静谧四角光学标尺 (UERCornerReticle), 92%+ 空间留给日光建筑圣殿
+ *  - 左上《控制:共振》式巨型粗体标题碑: 「虹不我与」48pt 粗体 + 窄光谱虹彩条 + 极小 Linux Biolinum 遥测副标
+ *  - 底部双机能切角主控模块: [01 人员管理] (黑曜石) + [02 航线管理] (反白石膏+虹彩点睛)
+ *  - 错峰建筑展开 + 英文副标译码 + Esc/空白切观景模式
  */
 UCLASS(BlueprintType, Blueprintable)
 class EBBINGRAINBOW_API UERHallHUD : public UUserWidget
@@ -25,7 +31,6 @@ class EBBINGRAINBOW_API UERHallHUD : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	/** 切换全屏无 UI 观景模式 */
 	UFUNCTION(BlueprintCallable, Category = "ERUI|Hall")
 	void ToggleZenMode();
 
@@ -35,7 +40,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ERUI|Hall")
 	bool IsZenMode() const { return bZenMode; }
 
-	/** 发起远征, 打开航线图关卡 */
 	UFUNCTION(BlueprintCallable, Category = "ERUI|Hall")
 	void LaunchRouteMap();
 
@@ -48,20 +52,17 @@ public:
 	FString RouteLevelOptions = TEXT("game=/Script/EbbingRainbow.RouteGameMode");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Hall")
-	FText ZenHintMessage = INVTEXT("观景模式 · 点击任意位置或按 Esc 返回界面");
+	FText ZenHintMessage = INVTEXT("ZEN MODE // 观景模式 · 点击任意位置或按 ESC 返回");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Motion")
 	bool bEnableEntranceAnimation = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Motion")
-	float EntranceDuration = 0.9f;
+	float EntranceDuration = 0.85f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Motion")
-	float EntranceOffsetY = 34.0f;
+	float EntranceOffsetY = 24.0f;
 
-	// ---- 设计期预览 ----
-
-	/** 在 Designer 中勾选可预览观景模式提示胶囊并调位置 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Preview")
 	bool bPreviewZenMode = false;
 
@@ -87,6 +88,14 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCanvasPanel> RootCanvas;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> DashboardContainer;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERCornerReticle> CornerReticle;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> MastheadContainer;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechFrame> MastheadFrame;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERPrismBar> MastheadPrism;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> MastheadTagText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> MastheadTitleText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechDivider> MastheadDivider;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> MastheadMetaText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UHorizontalBox> DockBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> PersonnelButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> RoutesButton;
@@ -99,13 +108,17 @@ protected:
 private:
 	void BuildLayout();
 	void ApplyZenState(bool bInZen);
+	void ApplyEntrancePose();
 	UWorld* ResolvePlayWorld() const;
 
 	FVector2D BaseDockTranslation = FVector2D::ZeroVector;
+	FVector2D BaseMastheadTranslation = FVector2D::ZeroVector;
 	float BaseDockOpacity = 1.0f;
 	bool bBaseCached = false;
 
 	bool bZenMode = false;
-	float EntranceProgress = 0.0f;
+	FERRevealTrack EntranceTrack;
+	FERCipherReveal MastheadTagCipher;
+	FERCipherReveal MastheadMetaCipher;
 	bool bLayoutBuilt = false;
 };

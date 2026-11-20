@@ -197,7 +197,7 @@ void UERAICommandPanel::BuildLayout()
 
 	RootBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("RootBorder"));
 	RootBorder->SetBrush(ERUI::WhiteBrush());
-	RootBorder->SetBrushColor(FLinearColor(0.025f, 0.030f, 0.038f, 0.94f));
+	RootBorder->SetBrushColor(FLinearColor(0.008f, 0.009f, 0.012f, 0.96f));
 	RootBorder->SetPadding(FMargin(0.0f));
 	PanelSize->AddChild(RootBorder);
 

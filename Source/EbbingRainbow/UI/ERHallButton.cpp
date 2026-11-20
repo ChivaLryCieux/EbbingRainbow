@@ -4,28 +4,19 @@
 #include "Animation/WidgetAnimation.h"
 #include "Blueprint/WidgetTree.h"
 #include "UI/ERUIStatics.h"
+#include "UI/Primitives/ERTechPrimitives.h"
 
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/SizeBox.h"
 #include "Components/Spacer.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
-
-FSlateBrush UERHallButton::MakeRoundedBrush(float Radius, FLinearColor Fill, float OutlineWidth, FLinearColor Outline) const
-{
-	FSlateBrush Brush;
-	Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
-	Brush.TintColor = FSlateColor(Fill);
-	Brush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
-	Brush.OutlineSettings.CornerRadii = FVector4(Radius, Radius, Radius, Radius);
-	Brush.OutlineSettings.Width = OutlineWidth;
-	Brush.OutlineSettings.Color = FSlateColor(Outline);
-	return Brush;
-}
 
 TSharedRef<SWidget> UERHallButton::RebuildWidget()
 {
@@ -59,6 +50,11 @@ void UERHallButton::NativeConstruct()
 	}
 	BindDelegates();
 	Super::NativeConstruct();
+
+	HoverSpring.SnapTo(0.0f);
+	PressSpring.SnapTo(0.0f);
+	SweepProgress = 1.0f;
+	bWasHovered = false;
 
 	SyncStaticProperties();
 	RefreshVisuals(0.0f, false);
@@ -95,61 +91,79 @@ void UERHallButton::Build()
 
 	ButtonSizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("ButtonSizeBox"));
 	ButtonSizeBox->SetWidthOverride(ButtonWidth);
+	ButtonSizeBox->SetHeightOverride(ButtonHeight);
 	HitButton->SetContent(ButtonSizeBox);
 
-	GlowBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("GlowBorder"));
-	GlowBorder->SetPadding(FMargin(11.0f, 10.0f));
-	GlowBorder->SetHorizontalAlignment(HAlign_Fill);
-	GlowBorder->SetVerticalAlignment(VAlign_Fill);
-	ButtonSizeBox->SetContent(GlowBorder);
+	UOverlay* RootOverlay = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("RootOverlay"));
+	RootOverlay->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	ButtonSizeBox->SetContent(RootOverlay);
 
-	BodyBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("BodyBorder"));
-	BodyBorder->SetPadding(FMargin(20.0f, 12.0f));
-	BodyBorder->SetHorizontalAlignment(HAlign_Fill);
-	BodyBorder->SetVerticalAlignment(VAlign_Fill);
-	GlowBorder->SetContent(BodyBorder);
+	// 1. 机能风 45° 切角底板 (右上/左下切角 + 四角对准刻度 + 左侧点睛条)
+	TechFrame = WidgetTree->ConstructWidget<UERTechFrame>(UERTechFrame::StaticClass(), TEXT("TechFrame"));
+	TechFrame->Chamfer = FVector4(0.0f, 14.0f, 0.0f, 14.0f);
+	TechFrame->BorderThickness = 1.0f;
+	TechFrame->bDrawCornerBrackets = true;
+	TechFrame->BracketLength = 10.0f;
+	TechFrame->BracketThickness = 1.5f;
+	TechFrame->AccentEdge = EERAccentEdge::Left;
+	TechFrame->AccentThickness = 3.5f;
+	TechFrame->bUsePrismAccent = bPrimary;
+	TechFrame->DesiredFrameSize = FVector2D(ButtonWidth, ButtonHeight);
+	TechFrame->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	{
+		UOverlaySlot* S = RootOverlay->AddChildToOverlay(TechFrame);
+		S->SetHorizontalAlignment(HAlign_Fill);
+		S->SetVerticalAlignment(VAlign_Fill);
+	}
 
+	// 2. 内容排版: [大号 Linux Biolinum 索引号] | [粗体主标题 / 极小英文遥测副标] ... [→]
 	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("ContentRow"));
-	BodyBorder->SetContent(Row);
+	Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	{
+		UOverlaySlot* S = RootOverlay->AddChildToOverlay(Row);
+		S->SetHorizontalAlignment(HAlign_Fill);
+		S->SetVerticalAlignment(VAlign_Fill);
+		S->SetPadding(FMargin(22.0f, 10.0f, 20.0f, 10.0f));
+	}
 
-	USpacer* LeftSp = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass(), TEXT("LeftSpacer"));
-	Row->AddChildToHorizontalBox(LeftSp)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-
-	USizeBox* LedBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("LedSizeBox"));
-	LedBox->SetWidthOverride(9.0f);
-	LedBox->SetHeightOverride(9.0f);
-	LedBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LedBorder"));
-	LedBorder->SetPadding(FMargin(0.0f));
-	LedBox->SetContent(LedBorder);
-	UHorizontalBoxSlot* LedSlot = Row->AddChildToHorizontalBox(LedBox);
-	LedSlot->SetVerticalAlignment(VAlign_Center);
+	IndexText = ERUI::MakeText(this, IndexCode, EERTypeScale::Title, T->BoneSecondary, true);
+	IndexText->SetFont(ERUI::FontBold(24, 40));
+	{
+		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(IndexText);
+		S->SetVerticalAlignment(VAlign_Center);
+		S->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+	}
 
 	UVerticalBox* TextCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("TextCol"));
-	UHorizontalBoxSlot* TcSlot = Row->AddChildToHorizontalBox(TextCol);
-	TcSlot->SetVerticalAlignment(VAlign_Center);
-	TcSlot->SetPadding(FMargin(13.0f, 0.0f, 0.0f, 0.0f));
+	TextCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	{
+		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(TextCol);
+		S->SetVerticalAlignment(VAlign_Center);
+		S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
 
-	LabelText = ERUI::MakeText(this, Label, EERTypeScale::Body, FLinearColor(0.96f, 0.98f, 1.0f, 0.96f));
-	FSlateFontInfo LblFont = T->GetFont(EERTypeScale::Body);
-	LblFont.Size = 15;
-	LabelText->SetFont(LblFont);
+	LabelText = ERUI::MakeText(this, Label, EERTypeScale::Title, T->Bone);
+	LabelText->SetFont(ERUI::FontBold(20, 60));
 	TextCol->AddChildToVerticalBox(LabelText);
 
-	CaptionText = ERUI::MakeText(this, Caption, EERTypeScale::Micro, FLinearColor(0.78f, 0.85f, 0.95f, 0.58f), true);
-	FSlateFontInfo CapFont = T->GetFont(EERTypeScale::Micro, true);
-	CapFont.Size = 8;
-	CapFont.LetterSpacing = 120;
-	CaptionText->SetFont(CapFont);
-	TextCol->AddChildToVerticalBox(CaptionText)->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 0.0f));
+	CaptionText = ERUI::MakeText(this, Caption, EERTypeScale::Micro, T->BoneTertiary, true);
+	CaptionText->SetFont(ERUI::FontRegular(8, 240));
+	TextCol->AddChildToVerticalBox(CaptionText)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
 
-	USpacer* RightSp = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass(), TEXT("RightSpacer"));
-	Row->AddChildToHorizontalBox(RightSp)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	ArrowText = ERUI::MakeText(this, INVTEXT("→"), EERTypeScale::Title, T->BoneSecondary, true);
+	ArrowText->SetFont(ERUI::FontBold(18, 0));
+	{
+		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(ArrowText);
+		S->SetVerticalAlignment(VAlign_Center);
+		S->SetPadding(FMargin(10.0f, 0.0f, 0.0f, 0.0f));
+	}
 }
 
 void UERHallButton::SyncStaticProperties()
 {
+	if (IndexText)   { IndexText->SetText(IndexCode); }
 	if (LabelText)   { LabelText->SetText(Label); }
-	if (CaptionText) { CaptionText->SetText(Caption); }
+	if (CaptionText && !CaptionCipher.IsRunning()) { CaptionText->SetText(Caption); }
 	if (ButtonSizeBox)
 	{
 		if (bApplyWidthOverride)
@@ -160,6 +174,13 @@ void UERHallButton::SyncStaticProperties()
 		{
 			ButtonSizeBox->ClearWidthOverride();
 		}
+		ButtonSizeBox->SetHeightOverride(ButtonHeight);
+	}
+	if (TechFrame)
+	{
+		TechFrame->bUsePrismAccent = bPrimary;
+		TechFrame->AccentEdge = EERAccentEdge::Left;
+		TechFrame->AccentThickness = bPrimary ? 4.0f : 3.0f;
 	}
 }
 
@@ -174,13 +195,32 @@ void UERHallButton::SetAccentAndPrimary(FLinearColor InAccent, bool bInPrimary)
 {
 	AccentColor = InAccent;
 	bPrimary = bInPrimary;
+	SyncStaticProperties();
 	RefreshVisuals(0.0f, IsDesignTime());
+}
+
+void UERHallButton::TriggerEntrancePulse(float DelaySeconds)
+{
+	CaptionCipher.Start(Caption.ToString(), 0.36f, DelaySeconds);
+	SweepProgress = 0.01f;
 }
 
 void UERHallButton::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	ElapsedTime += InDeltaTime;
+
+	FString Decoded;
+	if (CaptionCipher.Tick(InDeltaTime, Decoded) && CaptionText)
+	{
+		CaptionText->SetText(FText::FromString(Decoded));
+	}
+
+	if (SweepProgress < 1.0f)
+	{
+		SweepProgress = FMath::Min(1.0f, SweepProgress + InDeltaTime / 0.42f);
+	}
+
 	RefreshVisuals(InDeltaTime, false);
 }
 
@@ -191,69 +231,85 @@ void UERHallButton::RefreshVisuals(float DeltaTime, bool bDesignPreview)
 		return;
 	}
 
+	const UERUITheme* T = ERUI::Theme();
 	const bool bHovered = !bDesignPreview && HitButton && HitButton->IsHovered();
 	const bool bPressed = !bDesignPreview && HitButton && HitButton->IsPressed();
 
-	if (DeltaTime > 0.0f)
+	if (bHovered && !bWasHovered)
 	{
-		HoverAlpha = FMath::FInterpTo(HoverAlpha, bHovered ? 1.0f : 0.0f, DeltaTime, HoverInterpSpeed);
-		PressAlpha = FMath::FInterpTo(PressAlpha, bPressed ? 1.0f : 0.0f, DeltaTime, PressInterpSpeed);
+		SweepProgress = 0.01f;
 	}
-	else
-	{
-		HoverAlpha = 0.0f;
-		PressAlpha = 0.0f;
-	}
+	bWasHovered = bHovered;
 
-	const float Breath = bPrimary
-		? (bDesignPreview ? 0.65f : (0.5f + 0.5f * FMath::Sin(ElapsedTime * BreathSpeed)))
-		: 0.0f;
+	HoverSpring.SetTarget(bHovered ? 1.0f : 0.0f);
+	PressSpring.SetTarget(bPressed ? 1.0f : 0.0f);
 
-	if (GlowBorder)
-	{
-		const float GlowAlpha = bPrimary ? (0.06f + 0.04f * Breath + 0.13f * HoverAlpha) : 0.0f;
-		GlowBorder->SetBrush(MakeRoundedBrush(GlowCornerRadius, AccentColor.CopyWithNewOpacity(GlowAlpha), 0.0f, FLinearColor::Transparent));
-		GlowBorder->SetBrushColor(FLinearColor::White);
+	const float HoverA = (DeltaTime > 0.0f) ? HoverSpring.Tick(DeltaTime) : 0.0f;
+	const float PressA = (DeltaTime > 0.0f) ? PressSpring.Tick(DeltaTime) : 0.0f;
+	const float Hover01 = FMath::Clamp(HoverA, 0.0f, 1.15f);
+	const float Pulse = bPrimary ? ERMotion::SolemnPulse(ElapsedTime, BreathSpeed) : 0.0f;
 
-		const float Scale = FMath::Lerp(1.0f, PressedScale, PressAlpha);
-		GlowBorder->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
-		GlowBorder->SetRenderScale(FVector2D(Scale, Scale));
-	}
-
-	if (BodyBorder)
-	{
-		FLinearColor Glass = FMath::Lerp(BaseGlassColor, HoverGlassColor, HoverAlpha);
-		if (bPrimary)
-		{
-			const FLinearColor AccentGlass(
-				FMath::Lerp(0.09f, 0.13f, Breath),
-				FMath::Lerp(0.20f, 0.26f, Breath),
-				0.34f,
-				0.55f);
-			Glass = FMath::Lerp(Glass, AccentGlass, 0.40f * HoverAlpha);
-		}
-		const float OutAlpha = 0.20f + 0.30f * HoverAlpha;
-		BodyBorder->SetBrush(MakeRoundedBrush(BodyCornerRadius, Glass, 1.1f, OutlineColor.CopyWithNewOpacity(OutAlpha)));
-		BodyBorder->SetBrushColor(FLinearColor::White);
-	}
-
-	if (LedBorder)
+	// 黑-白-点睛彩对比: 主按钮反白极墨字 + 虹彩边条; 次按钮哑光黑曜石 + 纯白字
+	if (TechFrame)
 	{
 		if (bPrimary)
 		{
-			const float LedAlpha = FMath::Clamp(0.45f + 0.55f * Breath + 0.20f * HoverAlpha, 0.0f, 1.0f);
-			LedBorder->SetBrush(MakeRoundedBrush(5.0f, AccentColor.CopyWithNewOpacity(LedAlpha), 1.2f, AccentColor.CopyWithNewOpacity(0.85f)));
+			const FLinearColor Fill = FMath::Lerp(
+				FLinearColor(0.93f, 0.93f, 0.91f, 0.95f),
+				FLinearColor(1.00f, 1.00f, 0.98f, 1.00f),
+				FMath::Clamp(Hover01, 0.0f, 1.0f));
+			const FLinearColor Border = FLinearColor(0.02f, 0.02f, 0.03f, 0.35f + 0.45f * FMath::Clamp(Hover01, 0.0f, 1.0f));
+			const FLinearColor Bracket = FLinearColor(0.01f, 0.01f, 0.02f, 0.72f + 0.25f * Pulse);
+			TechFrame->SetFrameColors(Fill, Border, Bracket, AccentColor);
+			TechFrame->bUsePrismAccent = true;
 		}
 		else
 		{
-			LedBorder->SetBrush(MakeRoundedBrush(5.0f, FLinearColor::Transparent, 1.2f, AccentColor.CopyWithNewOpacity(0.45f + 0.35f * HoverAlpha)));
+			const FLinearColor Fill = FMath::Lerp(
+				FLinearColor(0.008f, 0.009f, 0.012f, 0.90f),
+				FLinearColor(0.024f, 0.026f, 0.032f, 0.96f),
+				FMath::Clamp(Hover01, 0.0f, 1.0f));
+			const FLinearColor Border = FLinearColor(0.92f, 0.92f, 0.90f, 0.22f + 0.56f * FMath::Clamp(Hover01, 0.0f, 1.0f));
+			const FLinearColor Bracket = FLinearColor(0.92f, 0.92f, 0.90f, 0.68f + 0.32f * FMath::Clamp(Hover01, 0.0f, 1.0f));
+			const FLinearColor EdgeCol = FMath::Lerp(FLinearColor(0.92f, 0.92f, 0.90f, 0.28f), AccentColor, FMath::Clamp(Hover01, 0.0f, 1.0f));
+			TechFrame->SetFrameColors(Fill, Border, Bracket, EdgeCol);
+			TechFrame->bUsePrismAccent = false;
 		}
-		LedBorder->SetBrushColor(FLinearColor::White);
+		TechFrame->SetMotionState(1.0f, FMath::Clamp(Hover01, 0.0f, 1.0f), SweepProgress);
+	}
+
+	// 文字色彩反转
+	const FLinearColor MainTextCol = bPrimary ? T->PureInk : T->Bone;
+	const FLinearColor SubTextCol  = bPrimary ? ERUI::Fade(T->PureInk, 0.62f) : ERUI::Fade(T->Bone, 0.48f + 0.28f * FMath::Clamp(Hover01, 0.0f, 1.0f));
+	const FLinearColor IdxCol      = bPrimary ? ERUI::Fade(T->PureInk, 0.42f + 0.30f * FMath::Clamp(Hover01, 0.0f, 1.0f)) : FMath::Lerp(ERUI::Fade(T->Bone, 0.32f), AccentColor, FMath::Clamp(Hover01, 0.0f, 1.0f));
+
+	if (IndexText)   { IndexText->SetColorAndOpacity(FSlateColor(IdxCol)); }
+	if (LabelText)   { LabelText->SetColorAndOpacity(FSlateColor(MainTextCol)); }
+	if (CaptionText) { CaptionText->SetColorAndOpacity(FSlateColor(SubTextCol)); }
+	if (ArrowText)
+	{
+		ArrowText->SetColorAndOpacity(FSlateColor(bPrimary ? T->PureInk : FMath::Lerp(T->BoneSecondary, T->Bone, FMath::Clamp(Hover01, 0.0f, 1.0f))));
+		ArrowText->SetRenderTranslation(FVector2D(6.0f * HoverA, 0.0f));
+	}
+
+	// 弹簧物理位姿 (极克制 3px 轻抬 + 按压缩放)
+	const float Scale = FMath::Lerp(1.0f, PressedScale, FMath::Clamp(PressA, 0.0f, 1.0f));
+	SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	SetRenderScale(FVector2D(Scale, Scale));
+	SetRenderTranslation(FVector2D(0.0f, -3.0f * HoverA + 1.5f * PressA));
+
+	// 兼容旧 WBP 如果仍保留 BodyBorder (不破坏老蓝图)
+	if (!TechFrame && BodyBorder)
+	{
+		const FLinearColor Fill = bPrimary ? FLinearColor(0.94f, 0.94f, 0.92f, 0.96f) : T->InkPanel;
+		BodyBorder->SetBrush(ERUI::RoundedBrush(0.0f, Fill, 1.0f, T->Bone));
+		BodyBorder->SetBrushColor(FLinearColor::White);
 	}
 }
 
 void UERHallButton::HandleClicked()
 {
+	PressSpring.Impulse(6.0f);
 	OnButtonClicked.Broadcast();
 }
 

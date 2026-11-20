@@ -306,20 +306,20 @@ void UERRouteNode::ApplyVisual()
 	switch (Visual)
 	{
 	case ERouteNodeVisual::Available:
-		GlyphColor = AvailableGlyphColor;
-		LabelColor = FLinearColor(0.78f + Accent.R * 0.2f, 0.86f + Accent.G * 0.12f, 0.92f + Accent.B * 0.08f, 0.92f);
+		GlyphColor = FLinearColor(0.96f, 0.96f, 0.94f, 1.0f);
+		LabelColor = FLinearColor(0.92f, 0.92f, 0.90f, 0.92f);
 		break;
 	case ERouteNodeVisual::Current:
 		GlyphColor = CurrentGlyphColor;
 		LabelColor = CurrentLabelColor;
 		break;
 	case ERouteNodeVisual::Visited:
-		GlyphColor = FLinearColor(Gold.R, Gold.G, Gold.B, 0.62f);
-		LabelColor = FLinearColor(0.80f, 0.72f, 0.52f, 0.48f);
+		GlyphColor = FLinearColor(Gold.R, Gold.G, Gold.B, 0.65f);
+		LabelColor = FLinearColor(0.90f, 0.80f, 0.55f, 0.50f);
 		break;
 	default:
-		GlyphColor = FLinearColor(0.74f, 0.82f, 0.94f, bReachable ? 0.66f : 0.30f);
-		LabelColor = FLinearColor(0.70f, 0.78f, 0.90f, bReachable ? 0.46f : 0.22f);
+		GlyphColor = FLinearColor(0.92f, 0.92f, 0.90f, bReachable ? 0.56f : 0.24f);
+		LabelColor = FLinearColor(0.92f, 0.92f, 0.90f, bReachable ? 0.42f : 0.18f);
 		break;
 	}
 

@@ -1,10 +1,11 @@
-// Copyright Epic Games, Inc. All rights reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERStatCell.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "UI/ERUIStatics.h"
 
+#include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -42,18 +43,22 @@ void UERStatCell::Build()
 	Col->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	WidgetTree->RootWidget = Col;
 
+	// 极小追踪微标 (Control: 共振式大小字极度对比)
 	LabelText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneTertiary);
-	FSlateFontInfo LabelFont = T->GetFont(EERTypeScale::Micro);
-	LabelFont.Size = 9;
-	LabelFont.LetterSpacing = 120;
-	LabelText->SetFont(LabelFont);
+	LabelText->SetFont(ERUI::FontRegular(8, 220));
 	Col->AddChildToVerticalBox(LabelText);
 
+	// 巨幅 Linux Biolinum 粗体数值
 	ValueText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone, true);
-	FSlateFontInfo ValueFont = T->GetFont(EERTypeScale::Title, true);
-	ValueFont.Size = 21;
-	ValueText->SetFont(ValueFont);
-	Col->AddChildToVerticalBox(ValueText)->SetPadding(FMargin(0.0f, 1.0f, 0.0f, 0.0f));
+	ValueText->SetFont(ERUI::FontBold(26, 10));
+	Col->AddChildToVerticalBox(ValueText)->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 4.0f));
+
+	UImage* FootTick = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("FootTick"));
+	FootTick->SetBrush(ERUI::WhiteBrush(FVector2D(16.0f, 1.5f)));
+	FootTick->SetColorAndOpacity(T->BoneGhost);
+	FootTick->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	UVerticalBoxSlot* TS = Col->AddChildToVerticalBox(FootTick);
+	TS->SetHorizontalAlignment(HAlign_Left);
 }
 
 void UERStatCell::SetStat(const FText& InLabel, const FText& InValue, FLinearColor InTint)

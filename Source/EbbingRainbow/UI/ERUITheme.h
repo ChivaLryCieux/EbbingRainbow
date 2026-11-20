@@ -40,83 +40,105 @@ class EBBINGRAINBOW_API UERUITheme : public UDataAsset
 	GENERATED_BODY()
 
 public:
-	// ---------------- 调色板 ----------------
+	// ---------------- 调色板 (黑 - 白 - 点睛彩) ----------------
 
-	/** 面板墨底 (提示框/结算背板) */
+	/** 面板黑曜石墨底 (#08090C 哑光黑, 高对比承载纯白排印) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor InkPanel = FLinearColor(0.030f, 0.035f, 0.043f, 0.86f);
+	FLinearColor InkPanel = FLinearColor(0.008f, 0.009f, 0.012f, 0.92f);
 
-	/** 屏幕边缘渐压色 (scrim 纯色部分) */
+	/** 次级抬升炭黑表面 (#12141A) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor InkScrim = FLinearColor(0.018f, 0.022f, 0.028f, 1.00f);
+	FLinearColor ObsidianElevated = FLinearColor(0.018f, 0.020f, 0.026f, 0.94f);
 
-	/** 骨白 —— 主文字/图形 */
+	/** 纯墨黑 (用于反白卡片上的黑色文字) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor Bone = FLinearColor(0.92f, 0.90f, 0.87f, 1.00f);
+	FLinearColor PureInk = FLinearColor(0.006f, 0.007f, 0.009f, 1.00f);
 
-	/** 骨白二阶 (次级文字, 0.60) */
+	/** 屏幕边缘渐压色 (深渊纯黑) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor BoneSecondary = FLinearColor(0.92f, 0.90f, 0.87f, 0.60f);
+	FLinearColor InkScrim = FLinearColor(0.004f, 0.005f, 0.007f, 1.00f);
 
-	/** 骨白三阶 (弱化文字/图例, 0.34) */
+	/** 极纯白 / 石膏白 —— 主文字与反白模块 (#F5F5F2) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor BoneTertiary = FLinearColor(0.92f, 0.90f, 0.87f, 0.34f);
+	FLinearColor Bone = FLinearColor(0.92f, 0.92f, 0.90f, 1.00f);
 
-	/** 发丝线/幽灵刻度 (0.16) */
+	/** 纯白二阶 (次级说明文字, 0.62) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor BoneGhost = FLinearColor(0.92f, 0.90f, 0.87f, 0.16f);
+	FLinearColor BoneSecondary = FLinearColor(0.92f, 0.92f, 0.90f, 0.62f);
 
-	/** 暖金 —— 全局唯一强调色 (当前焦点/可行动/选中) */
+	/** 纯白三阶 (微标/遥测索引, 0.36) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor Accent = FLinearColor(0.94f, 0.72f, 0.30f, 1.00f);
+	FLinearColor BoneTertiary = FLinearColor(0.92f, 0.92f, 0.90f, 0.36f);
 
-	/** 我方标记色 (冰蓝, 仅小标记用) */
+	/** 1px 发丝结构线 (0.16) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor AllyMark = FLinearColor(0.42f, 0.70f, 0.95f, 1.00f);
+	FLinearColor BoneGhost = FLinearColor(0.92f, 0.92f, 0.90f, 0.16f);
 
-	/** 敌方标记色 (朱红, 仅小标记用) */
+	/** 折射暖金 —— 全局主点睛色 (焦点/当前行动/主控确认) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor EnemyMark = FLinearColor(0.90f, 0.33f, 0.24f, 1.00f);
+	FLinearColor Accent = FLinearColor(0.96f, 0.56f, 0.04f, 1.00f);
 
-	/** 低血量/危险 */
+	/** 我方遥测冷青 (仅 2px 刻度与点睛使用) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor DangerColor = FLinearColor(0.90f, 0.33f, 0.24f, 1.00f);
+	FLinearColor AllyMark = FLinearColor(0.05f, 0.56f, 0.94f, 1.00f);
+
+	/** 敌方 / 控制朱红 (仅 2px 刻度与危险告警使用) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
+	FLinearColor EnemyMark = FLinearColor(0.84f, 0.05f, 0.03f, 1.00f);
+
+	/** 低血量/高危朱红 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
+	FLinearColor DangerColor = FLinearColor(0.84f, 0.05f, 0.03f, 1.00f);
+
+	/** 《虹不我与》招牌窄光谱条三段色 (冷青 -> 折射暖金 -> 控制朱红) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette|Prism")
+	FLinearColor PrismStart = FLinearColor(0.04f, 0.62f, 0.96f, 1.00f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette|Prism")
+	FLinearColor PrismMid = FLinearColor(0.96f, 0.56f, 0.04f, 1.00f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette|Prism")
+	FLinearColor PrismEnd = FLinearColor(0.86f, 0.06f, 0.04f, 1.00f);
 
 	/** 阵亡态着色 (整体乘算) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Palette")
-	FLinearColor DeadTint = FLinearColor(0.72f, 0.72f, 0.74f, 0.30f);
+	FLinearColor DeadTint = FLinearColor(0.60f, 0.60f, 0.62f, 0.28f);
 
-	// ---------------- 字体 ----------------
+	// ---------------- 字体 (Linux Biolinum + Noto, 控制:共振式巨细对比) ----------------
 
-	/** 正文字体 (Noto Sans SC, 中文+拉丁后备) */
+	/** 正文中文字体 (Noto Sans SC Regular) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
 	TObjectPtr<UFontFace> FontBody = nullptr;
 
-	/** 拉丁/数字字体 (Inter, 优先用于数字与字母) */
+	/** 粗体中文字体 (Noto Sans SC Bold, 用于巨型标题与夸张层级对比) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
+	TObjectPtr<UFontFace> FontBodyBold = nullptr;
+
+	/** 拉丁/数字字体 (Linux Biolinum Bold, 统一用于英文与数字) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
 	TObjectPtr<UFontFace> FontLatin = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
-	int32 MicroSize = 10;
+	int32 MicroSize = 9;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
-	int32 CaptionSize = 12;
+	int32 CaptionSize = 11;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
 	int32 BodySize = 13;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
-	int32 TitleSize = 18;
+	int32 TitleSize = 24;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
-	int32 DisplaySize = 40;
+	int32 DisplaySize = 54;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
-	int32 HeroSize = 64;
+	int32 HeroSize = 96;
 
 	/** Micro/Caption 档位的字距 (Slate FontInfo LetterSpacing, 1/1000 em 量级) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Type")
-	int32 MicroTracking = 240;
+	int32 MicroTracking = 280;
 
 	// ---------------- 度量 ----------------
 
@@ -177,10 +199,14 @@ public:
 
 	// ---------------- 工具 ----------------
 
-	/** 档位字号。FontObject 始终是复合字体 UFont: FontLatin 为默认 typeface,
-	 *  FontBody(Noto) 挂在 Fallback typeface, 中文字形自动回落, bLatin 仅保留兼容签名 */
+	/** 档位字号。FontObject 始终是复合字体 UFont: Linux Biolinum 为默认 typeface,
+	 *  Noto (Regular + Bold) 挂在 Fallback typeface, 中文字形自动回落。
+	 *  Title/Display/Hero 自动选用 Bold 字重形成《控制:共振》式粗细巨幅对比。 */
 	UFUNCTION(BlueprintPure, Category = "ERUI|Theme")
 	FSlateFontInfo GetFont(EERTypeScale Scale, bool bLatin = false) const;
+
+	/** 指定字重/字号/字距的快捷字体构造 */
+	FSlateFontInfo GetFontExplicit(int32 Size, bool bBold = false, int32 Tracking = 0) const;
 
 	/** 惰性构建的运行时复合字体 (UFont), FontFace 不能直接当 FontObject 用
 	 *  (UFontFace 只有 IFontFaceInterface, 无 IFontProviderInterface) */

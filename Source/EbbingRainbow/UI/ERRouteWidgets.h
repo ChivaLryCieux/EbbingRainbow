@@ -86,28 +86,28 @@ class EBBINGRAINBOW_API UERRouteEdgeLayer : public UWidget
 
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
-	FLinearColor AvailableEdgeColor = FLinearColor(0.78f, 0.90f, 1.00f, 0.80f);
+	FLinearColor AvailableEdgeColor = FLinearColor(0.95f, 0.95f, 0.93f, 0.90f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
-	float AvailableEdgeThickness = 1.7f;
+	float AvailableEdgeThickness = 1.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
-	FLinearColor TakenEdgeColor = FLinearColor(1.00f, 0.82f, 0.46f, 0.70f);
+	FLinearColor TakenEdgeColor = FLinearColor(0.96f, 0.56f, 0.04f, 0.82f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
 	float TakenEdgeThickness = 1.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
-	FLinearColor ReachableEdgeColor = FLinearColor(0.62f, 0.74f, 0.95f, 0.30f);
+	FLinearColor ReachableEdgeColor = FLinearColor(0.92f, 0.92f, 0.90f, 0.24f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
-	float ReachableEdgeThickness = 1.2f;
+	float ReachableEdgeThickness = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
-	FLinearColor LockedEdgeColor = FLinearColor(0.55f, 0.65f, 0.85f, 0.10f);
+	FLinearColor LockedEdgeColor = FLinearColor(0.92f, 0.92f, 0.90f, 0.08f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
-	float LockedEdgeThickness = 1.0f;
+	float LockedEdgeThickness = 0.9f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|RouteEdges")
 	float EdgeTrimRadius = ERRouteLayout::EdgeTrim;

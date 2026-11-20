@@ -5,10 +5,13 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Run/RunTypes.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERRouteHUD.generated.h"
 
 class UBorder;
 class UCanvasPanel;
+class UERCornerReticle;
+class UERPrismBar;
 class UERRouteEdgeLayer;
 class UERRouteLayerRuler;
 class UERRouteLegendItem;
@@ -116,6 +119,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCanvasPanel> RootCanvas;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> TopScrim;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> BottomScrim;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERCornerReticle> CornerReticle;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UScaleBox> MapScaleBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USizeBox> MapSizeBox;
@@ -124,6 +128,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERRouteEdgeLayer> EdgeLayer;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCanvasPanel> NodeCanvas;
 
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERPrismBar> TitlePrismBar;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> TitleAccentRule;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> TitleText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SubtitleText;
@@ -154,5 +159,7 @@ private:
 
 	TArray<FVector2D> NodePositions;
 	float NotificationTimeLeft = 0.0f;
+	FERRevealTrack EntranceTrack;
+	FERCipherReveal SubtitleCipher;
 	bool bLayoutBuilt = false;
 };

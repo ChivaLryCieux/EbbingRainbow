@@ -4,10 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERHeroPlate.generated.h"
 
 class ABattleUnit;
 class UERPipBar;
+class UERTechFrame;
 class UImage;
 class UProgressBar;
 class UTextBlock;
@@ -73,10 +75,18 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "ERUI|HeroPlate", meta = (DisplayName = "On Unit Bound"))
 	void BP_OnUnitBound(ABattleUnit* BoundUnit);
 
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativePreConstruct() override;
 	virtual void NativeConstruct() override;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UERTechFrame> PlateFrame;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> UnitTagText;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NameText;
@@ -89,6 +99,9 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> BarrierText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UProgressBar> HpTrailLine;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> HpLine;
@@ -115,5 +128,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<ABattleUnit> Unit;
 
+	FERFloatSpring HpSpring = FERFloatSpring::Snappy(1.0f);
+	FERFloatSpring HpTrailSpring = FERFloatSpring::Silky(1.0f);
+	float TargetHpPct = 1.0f;
+	float SweepProgress = 1.0f;
 	bool bBuilt = false;
 };

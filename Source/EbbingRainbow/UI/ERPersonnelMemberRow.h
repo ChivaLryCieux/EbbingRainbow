@@ -5,10 +5,12 @@
 #include "CoreMinimal.h"
 #include "Hall/HallRoster.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERPersonnelMemberRow.generated.h"
 
 class UBorder;
 class UButton;
+class UERTechFrame;
 class UImage;
 class UTextBlock;
 class UTexture2D;
@@ -77,6 +79,9 @@ protected:
 	TObjectPtr<UButton> HitButton;
 
 	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UERTechFrame> RowFrame;
+
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UBorder> RowBorder;
 
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -87,6 +92,9 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> PortraitThumb;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> MemberIndexText;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> MemberName;
@@ -110,11 +118,14 @@ private:
 	int32 MemberIndex = INDEX_NONE;
 	bool bSelected = false;
 	bool bHovered = false;
+	bool bWasHovered = false;
 	bool bBuilt = false;
 	bool bDelegatesBound = false;
-	float HoverAlpha = 0.0f;
+	FERFloatSpring HoverSpring = FERFloatSpring::Tactile(0.0f);
+	FERFloatSpring SelectSpring = FERFloatSpring::Snappy(0.0f);
+	float SweepProgress = 1.0f;
 
-	FLinearColor Accent = FLinearColor(0.68f, 0.78f, 0.94f, 1.0f);
+	FLinearColor Accent = FLinearColor(0.96f, 0.56f, 0.04f, 1.0f);
 	float IntegrityAlpha = 1.0f;
 	bool bLowIntegrity = false;
 };

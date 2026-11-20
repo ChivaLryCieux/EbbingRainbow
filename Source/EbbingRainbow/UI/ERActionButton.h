@@ -4,10 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "Layout/Margin.h"
 #include "ERActionButton.generated.h"
 
 class UButton;
+class UERTechFrame;
 class UImage;
 class UTextBlock;
 class UWidgetAnimation;
@@ -95,7 +97,11 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> HitButton;
 
-	/** 可选独立边框图 (若 WBP 放置了 BorderImage, 程序化着色也会同步驱动它) */
+	/** 机能风切角底板 (新架构默认提供, 高对比黑曜石/反白切换) */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UERTechFrame> ButtonFrame;
+
+	/** 可选独立边框图 (兼容旧蓝图) */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> BorderImage;
 
@@ -111,11 +117,15 @@ protected:
 private:
 	void Build();
 	void BindDelegates();
-	void ApplyStyle();
+	void ApplyStyle(float DeltaTime = 0.0f);
 
 	bool bUrgent = false;
 	bool bEnabledState = true;
+	bool bWasHovered = false;
 	bool bBuilt = false;
 	bool bDelegatesBound = false;
 	float UrgentPhase = 0.0f;
+	float SweepProgress = 1.0f;
+	FERFloatSpring HoverSpring = FERFloatSpring::Tactile(0.0f);
+	FERFloatSpring PressSpring = FERFloatSpring::Snappy(0.0f);
 };

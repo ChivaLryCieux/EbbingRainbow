@@ -5,13 +5,17 @@
 #include "CoreMinimal.h"
 #include "Hall/HallRoster.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERPersonnelPanel.generated.h"
 
 class UBorder;
 class UButton;
 class UCanvasPanel;
 class UERPersonnelMemberRow;
+class UERPrismBar;
 class UERStatCell;
+class UERTechDivider;
+class UERTechFrame;
 class UHorizontalBox;
 class UImage;
 class UTextBlock;
@@ -136,14 +140,17 @@ protected:
 	// ---- WBP 绑定 (全部 Optional, 缺失时由 C++ Build() 兜底) ----
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> ScrimImage;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechFrame> PanelFrame;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> PanelBorder;
 
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERPrismBar> HeaderPrismBar;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HeaderTitle;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HeaderCaption;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SquadSummaryText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SquadStateText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> CloseButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> CloseGlyphText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechDivider> HeaderDivider;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> HeaderRule;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RailTitleText;
@@ -151,6 +158,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RailHintText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> RailRule;
 
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> DetailContainer;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> PortraitFrame;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> PortraitImage;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> PortraitScrim;
@@ -163,6 +171,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SchoolChipText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RoleText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> TaglineText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechDivider> InfoDivider;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> InfoRule;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> StatsTitleText;
@@ -206,6 +215,9 @@ private:
 	bool bClosing = false;
 	float AnimT = 1.0f;
 	float AnimDirection = 0.0f;
+	FERRevealTrack DetailTrack;
+	FERCipherReveal HeaderCaptionCipher;
+	FERCipherReveal CallsignCipher;
 	bool bBuilt = false;
 	bool bDelegatesBound = false;
 };

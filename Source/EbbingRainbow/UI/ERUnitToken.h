@@ -4,10 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERUnitToken.generated.h"
 
 class ABattleUnit;
 class UButton;
+class UERTechFrame;
 class UImage;
 class UProgressBar;
 class USizeBox;
@@ -106,6 +108,7 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "ERUI|UnitToken", meta = (DisplayName = "On Unit Token Refreshed"))
 	void BP_OnUnitRefreshed(ABattleUnit* InUnit, float HpPercent, bool bIsActive, bool bIsFocused);
 
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual UWidget* GetHoverCheckWidget() const override;
 
 protected:
@@ -125,6 +128,9 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> HitButton;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UERTechFrame> TokenFrame;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> TeamTick;
@@ -169,4 +175,5 @@ private:
 	bool bBuilt = false;
 	bool bBuiltInCode = false;
 	bool bDelegatesBound = false;
+	FERFloatSpring MotionSpring = FERFloatSpring::Tactile(0.0f);
 };

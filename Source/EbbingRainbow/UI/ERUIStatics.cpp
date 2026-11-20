@@ -20,6 +20,16 @@ namespace ERUI
 		return Theme()->GetFont(Scale, bLatin);
 	}
 
+	FSlateFontInfo FontBold(int32 Size, int32 Tracking)
+	{
+		return Theme()->GetFontExplicit(Size, true, Tracking);
+	}
+
+	FSlateFontInfo FontRegular(int32 Size, int32 Tracking)
+	{
+		return Theme()->GetFontExplicit(Size, false, Tracking);
+	}
+
 	static UTexture2D* MakeTransientTexture(int32 W, int32 H, TFunctionRef<FColor(int32, int32)> PixelFn)
 	{
 		UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);

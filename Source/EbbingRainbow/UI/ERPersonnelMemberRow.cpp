@@ -1,15 +1,18 @@
-﻿// Copyright Epic Games, Inc. All rights reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERPersonnelMemberRow.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "UI/ERUIStatics.h"
+#include "UI/Primitives/ERTechPrimitives.h"
 
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
@@ -37,16 +40,14 @@ void UERPersonnelMemberRow::NativePreConstruct()
 
 	if (IsDesignTime())
 	{
-		FHallHeroProfile Preview;
-		Preview.HeroName = PreviewName;
-		Preview.RoleTitle = FText::GetEmpty();
-		Preview.School = EDamageType::Kinetic;
-		Accent = ERHallRoster::GetSchoolColor(Preview.School);
-		if (MemberName) { MemberName->SetText(PreviewName); }
-		if (MemberSchool) { MemberSchool->SetText(PreviewSchool); }
+		Accent = ERHallRoster::GetSchoolColor(EDamageType::Kinetic);
+		if (MemberIndexText) { MemberIndexText->SetText(INVTEXT("01")); }
+		if (MemberName)      { MemberName->SetText(PreviewName); }
+		if (MemberSchool)    { MemberSchool->SetText(PreviewSchool); }
 		if (MemberIntegrity) { MemberIntegrity->SetText(PreviewIntegrity); }
-		if (SchoolDot) { SchoolDot->SetBrush(ERUI::RoundedBrush(3.0f, Accent)); }
+		if (SchoolDot)       { SchoolDot->SetBrush(ERUI::RoundedBrush(0.0f, Accent)); }
 		bSelected = bPreviewSelected;
+		SelectSpring.SnapTo(bSelected ? 1.0f : 0.0f);
 		RefreshVisuals(0.0f, true);
 	}
 }
@@ -67,6 +68,9 @@ void UERPersonnelMemberRow::NativeConstruct()
 		}
 	}
 	Super::NativeConstruct();
+	HoverSpring.SnapTo(0.0f);
+	SelectSpring.SnapTo(bSelected ? 1.0f : 0.0f);
+	SweepProgress = 1.0f;
 	RefreshVisuals(0.0f, false);
 }
 
@@ -88,32 +92,43 @@ void UERPersonnelMemberRow::Build()
 	WidgetTree->RootWidget = HitButton;
 
 	USizeBox* RowSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("RowSize"));
-	RowSize->SetHeightOverride(86.0f);
+	RowSize->SetHeightOverride(84.0f);
 	HitButton->SetContent(RowSize);
 
-	RowBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("RowBorder"));
-	RowBorder->SetPadding(FMargin(10.0f, 8.0f));
-	RowBorder->SetHorizontalAlignment(HAlign_Fill);
-	RowBorder->SetVerticalAlignment(VAlign_Fill);
-	RowSize->SetContent(RowBorder);
+	UOverlay* Ov = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("RowOverlay"));
+	Ov->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	RowSize->SetContent(Ov);
+
+	// 切角机能底板 (右上 10px 切角 + 左侧 4px 学派点睛条)
+	RowFrame = WidgetTree->ConstructWidget<UERTechFrame>(UERTechFrame::StaticClass(), TEXT("RowFrame"));
+	RowFrame->Chamfer = FVector4(0.0f, 10.0f, 0.0f, 0.0f);
+	RowFrame->BorderThickness = 1.0f;
+	RowFrame->bDrawCornerBrackets = false;
+	RowFrame->AccentEdge = EERAccentEdge::Left;
+	RowFrame->AccentThickness = 4.0f;
+	RowFrame->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	{
+		UOverlaySlot* S = Ov->AddChildToOverlay(RowFrame);
+		S->SetHorizontalAlignment(HAlign_Fill);
+		S->SetVerticalAlignment(VAlign_Fill);
+	}
 
 	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("RowContent"));
 	Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	RowBorder->SetContent(Row);
-
-	SelectRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("SelectRule"));
-	SelectRule->SetBrush(ERUI::WhiteBrush(FVector2D(2.0f, 40.0f)));
-	UHorizontalBoxSlot* RuleSlot = Row->AddChildToHorizontalBox(SelectRule);
-	RuleSlot->SetVerticalAlignment(VAlign_Center);
-	RuleSlot->SetPadding(FMargin(0.0f, 0.0f, 9.0f, 0.0f));
+	{
+		UOverlaySlot* S = Ov->AddChildToOverlay(Row);
+		S->SetHorizontalAlignment(HAlign_Fill);
+		S->SetVerticalAlignment(VAlign_Fill);
+		S->SetPadding(FMargin(14.0f, 8.0f, 14.0f, 8.0f));
+	}
 
 	ThumbFrame = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ThumbFrame"));
-	ThumbFrame->SetPadding(FMargin(0.0f));
+	ThumbFrame->SetPadding(FMargin(1.0f));
 	ThumbFrame->SetHorizontalAlignment(HAlign_Fill);
 	ThumbFrame->SetVerticalAlignment(VAlign_Fill);
 	{
 		USizeBox* ThumbSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("ThumbSize"));
-		ThumbSize->SetWidthOverride(52.0f);
+		ThumbSize->SetWidthOverride(50.0f);
 		ThumbSize->SetHeightOverride(64.0f);
 		ThumbSize->SetContent(ThumbFrame);
 		UHorizontalBoxSlot* ThumbSlot = Row->AddChildToHorizontalBox(ThumbSize);
@@ -121,7 +136,7 @@ void UERPersonnelMemberRow::Build()
 	}
 	PortraitThumb = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("PortraitThumb"));
 	PortraitThumb->SetBrush(ERUI::WhiteBrush());
-	PortraitThumb->SetColorAndOpacity(FLinearColor(0.10f, 0.12f, 0.15f, 1.0f));
+	PortraitThumb->SetColorAndOpacity(FLinearColor(0.08f, 0.09f, 0.11f, 1.0f));
 	PortraitThumb->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	ThumbFrame->SetContent(PortraitThumb);
 
@@ -132,11 +147,22 @@ void UERPersonnelMemberRow::Build()
 	TextSlot->SetPadding(FMargin(12.0f, 0.0f, 6.0f, 0.0f));
 	TextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
-	MemberName = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, T->Bone);
-	FSlateFontInfo NameFont = T->GetFont(EERTypeScale::Body);
-	NameFont.Size = 16;
-	MemberName->SetFont(NameFont);
-	TextCol->AddChildToVerticalBox(MemberName);
+	// 编号 + 粗体名字行
+	UHorizontalBox* NameRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("NameRow"));
+	NameRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	TextCol->AddChildToVerticalBox(NameRow);
+
+	MemberIndexText = ERUI::MakeText(this, INVTEXT("01"), EERTypeScale::Micro, T->BoneTertiary, true);
+	MemberIndexText->SetFont(ERUI::FontBold(9, 140));
+	{
+		UHorizontalBoxSlot* S = NameRow->AddChildToHorizontalBox(MemberIndexText);
+		S->SetVerticalAlignment(VAlign_Bottom);
+		S->SetPadding(FMargin(0.0f, 0.0f, 7.0f, 2.0f));
+	}
+
+	MemberName = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone);
+	MemberName->SetFont(ERUI::FontBold(20, 20));
+	NameRow->AddChildToHorizontalBox(MemberName)->SetVerticalAlignment(VAlign_Bottom);
 
 	UHorizontalBox* SchoolRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("SchoolRow"));
 	SchoolRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
@@ -144,11 +170,11 @@ void UERPersonnelMemberRow::Build()
 
 	SchoolDot = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("SchoolDot"));
 	SchoolDot->SetPadding(FMargin(0.0f));
-	SchoolDot->SetBrush(ERUI::RoundedBrush(3.0f, Accent));
+	SchoolDot->SetBrush(ERUI::RoundedBrush(0.0f, Accent));
 	{
 		USizeBox* DotSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("SchoolDotSize"));
-		DotSize->SetWidthOverride(6.0f);
-		DotSize->SetHeightOverride(6.0f);
+		DotSize->SetWidthOverride(5.0f);
+		DotSize->SetHeightOverride(5.0f);
 		DotSize->SetContent(SchoolDot);
 		UHorizontalBoxSlot* DotSlot = SchoolRow->AddChildToHorizontalBox(DotSize);
 		DotSlot->SetVerticalAlignment(VAlign_Center);
@@ -156,13 +182,11 @@ void UERPersonnelMemberRow::Build()
 	}
 
 	MemberSchool = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneTertiary);
-	FSlateFontInfo SchoolFont = T->GetFont(EERTypeScale::Micro);
-	SchoolFont.Size = 9;
-	SchoolFont.LetterSpacing = 80;
-	MemberSchool->SetFont(SchoolFont);
+	MemberSchool->SetFont(ERUI::FontRegular(9, 100));
 	SchoolRow->AddChildToHorizontalBox(MemberSchool)->SetVerticalAlignment(VAlign_Center);
 
-	MemberIntegrity = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->BoneSecondary, true);
+	MemberIntegrity = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->BoneSecondary, true);
+	MemberIntegrity->SetFont(ERUI::FontBold(17, 0));
 	MemberIntegrity->SetJustification(ETextJustify::Right);
 	UHorizontalBoxSlot* IntegritySlot = Row->AddChildToHorizontalBox(MemberIntegrity);
 	IntegritySlot->SetVerticalAlignment(VAlign_Center);
@@ -184,21 +208,26 @@ void UERPersonnelMemberRow::Setup(int32 InIndex, const FHallHeroProfile& Profile
 	IntegrityAlpha = FMath::Clamp(ShownIntegrity / MaxIntegrity, 0.0f, 1.0f);
 	bLowIntegrity = IntegrityAlpha < 0.35f;
 
+	if (MemberIndexText)
+	{
+		MemberIndexText->SetText(FText::FromString(FString::Printf(TEXT("%02d"), InIndex + 1)));
+	}
 	if (MemberName) { MemberName->SetText(Profile.HeroName); }
 	if (MemberSchool)
 	{
-		MemberSchool->SetText(FText::FromString(FString::Printf(TEXT("%s 路 %s"),
+		// 修复中点编码
+		MemberSchool->SetText(FText::FromString(FString::Printf(TEXT("%s · %s"),
 			*Profile.GetSchoolName().ToString(), *Profile.RoleTitle.ToString())));
 	}
 	if (MemberIntegrity)
 	{
 		MemberIntegrity->SetText(FText::FromString(bHasRunState
-			? FString::Printf(TEXT("%d / %d"), FMath::RoundToInt(ShownIntegrity), FMath::RoundToInt(MaxIntegrity))
+			? FString::Printf(TEXT("%d/%d"), FMath::RoundToInt(ShownIntegrity), FMath::RoundToInt(MaxIntegrity))
 			: FString::Printf(TEXT("%d"), FMath::RoundToInt(MaxIntegrity))));
 	}
 	if (SchoolDot)
 	{
-		SchoolDot->SetBrush(ERUI::RoundedBrush(3.0f, Accent));
+		SchoolDot->SetBrush(ERUI::RoundedBrush(0.0f, Accent));
 	}
 
 	UTexture2D* PortraitTexture = Profile.Portrait.IsNull() ? nullptr : Profile.Portrait.LoadSynchronous();
@@ -208,7 +237,16 @@ void UERPersonnelMemberRow::Setup(int32 InIndex, const FHallHeroProfile& Profile
 
 void UERPersonnelMemberRow::SetSelected(bool bInSelected)
 {
+	if (bInSelected && !bSelected)
+	{
+		SweepProgress = 0.01f;
+	}
 	bSelected = bInSelected;
+	SelectSpring.SetTarget(bSelected ? 1.0f : 0.0f);
+	if (IsDesignTime())
+	{
+		SelectSpring.SnapTo(bSelected ? 1.0f : 0.0f);
+	}
 	RefreshVisuals(0.0f, IsDesignTime());
 }
 
@@ -226,7 +264,7 @@ void UERPersonnelMemberRow::SetPortrait(UTexture2D* InTexture)
 	else
 	{
 		PortraitThumb->SetBrush(ERUI::WhiteBrush());
-		PortraitThumb->SetColorAndOpacity(FLinearColor(0.10f, 0.12f, 0.15f, 1.0f));
+		PortraitThumb->SetColorAndOpacity(FLinearColor(0.08f, 0.09f, 0.11f, 1.0f));
 	}
 }
 
@@ -234,65 +272,72 @@ void UERPersonnelMemberRow::RefreshVisuals(float DeltaTime, bool bDesignPreview)
 {
 	const UERUITheme* T = ERUI::Theme();
 	const bool bIsHovered = !bDesignPreview && bDriveHoverFromCode && HitButton && HitButton->IsHovered();
-
-	if (DeltaTime > 0.0f)
+	if (bIsHovered && !bWasHovered)
 	{
-		HoverAlpha = FMath::FInterpTo(HoverAlpha, bIsHovered ? 1.0f : 0.0f, DeltaTime, HoverInterpSpeed);
+		SweepProgress = 0.01f;
 	}
-	else
+	bWasHovered = bIsHovered;
+
+	HoverSpring.SetTarget(bIsHovered ? 1.0f : 0.0f);
+	SelectSpring.SetTarget(bSelected ? 1.0f : 0.0f);
+
+	const float HoverA = (DeltaTime > 0.0f) ? HoverSpring.Tick(DeltaTime) : (bIsHovered ? 1.0f : 0.0f);
+	const float SelA   = (DeltaTime > 0.0f) ? SelectSpring.Tick(DeltaTime) : (bSelected ? 1.0f : 0.0f);
+	const float H01    = FMath::Clamp(HoverA, 0.0f, 1.0f);
+	const float S01    = FMath::Clamp(SelA, 0.0f, 1.0f);
+
+	if (DeltaTime > 0.0f && SweepProgress < 1.0f)
 	{
-		HoverAlpha = bIsHovered ? 1.0f : 0.0f;
+		SweepProgress = FMath::Min(1.0f, SweepProgress + DeltaTime / 0.36f);
 	}
 
+	// 明日方舟标志性黑白反转选中态: 选中=反白石膏底+极墨黑字+4px 学派点睛条; 未选=哑光黑曜石底+纯白字
+	const FLinearColor DarkFill = FMath::Lerp(FLinearColor(0.014f, 0.016f, 0.020f, 0.78f), FLinearColor(0.028f, 0.030f, 0.038f, 0.92f), H01);
+	const FLinearColor SelectedFill(0.93f, 0.93f, 0.91f, 0.97f);
+	const FLinearColor Fill = FMath::Lerp(DarkFill, SelectedFill, S01);
+
+	const FLinearColor Border = FMath::Lerp(
+		FLinearColor(0.92f, 0.92f, 0.90f, 0.10f + 0.24f * H01),
+		FLinearColor(1.00f, 1.00f, 0.98f, 0.95f),
+		S01);
+	const FLinearColor EdgeBarCol = FMath::Lerp(FLinearColor(0.92f, 0.92f, 0.90f, 0.14f + 0.30f * H01), Accent, S01);
+
+	if (RowFrame)
+	{
+		RowFrame->SetFrameColors(Fill, Border, Border, EdgeBarCol);
+		RowFrame->SetMotionState(1.0f, FMath::Max(H01, S01 * 0.5f), SweepProgress);
+	}
 	if (RowBorder)
 	{
-		FLinearColor Fill = FLinearColor(0.055f, 0.075f, 0.105f, 0.30f + 0.16f * HoverAlpha);
-		if (bSelected)
-		{
-			Fill = FLinearColor(
-				FMath::Lerp(0.075f, Accent.R * 0.30f, 0.45f),
-				FMath::Lerp(0.105f, Accent.G * 0.30f, 0.45f),
-				FMath::Lerp(0.150f, Accent.B * 0.30f, 0.45f),
-				0.52f);
-		}
-		const FLinearColor Outline = bSelected
-			? Accent.CopyWithNewOpacity(0.52f)
-			: FLinearColor(0.90f, 0.95f, 1.0f, 0.08f + 0.10f * HoverAlpha);
-		RowBorder->SetBrush(ERUI::RoundedBrush(10.0f, Fill, 1.0f, Outline));
+		RowBorder->SetBrush(ERUI::RoundedBrush(0.0f, Fill, 1.0f, Border));
 		RowBorder->SetBrushColor(FLinearColor::White);
 	}
-
 	if (SelectRule)
 	{
-		SelectRule->SetColorAndOpacity(Accent.CopyWithNewOpacity(bSelected ? 1.0f : 0.0f));
+		SelectRule->SetColorAndOpacity(EdgeBarCol);
 	}
 
 	if (ThumbFrame)
 	{
-		const FLinearColor ThumbOutline = bSelected
-			? Accent.CopyWithNewOpacity(0.42f)
-			: FLinearColor(1.0f, 1.0f, 1.0f, 0.10f + 0.08f * HoverAlpha);
-		ThumbFrame->SetBrush(ERUI::RoundedBrush(2.0f, FLinearColor(0.02f, 0.03f, 0.04f, 0.85f), 1.0f, ThumbOutline));
+		const FLinearColor ThumbOut = FMath::Lerp(FLinearColor(0.92f, 0.92f, 0.90f, 0.18f + 0.20f * H01), T->PureInk, S01);
+		ThumbFrame->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.95f), 1.0f, ThumbOut));
 		ThumbFrame->SetBrushColor(FLinearColor::White);
 	}
 
-	if (MemberName)
-	{
-		MemberName->SetColorAndOpacity(FSlateColor(bSelected
-			? T->Bone
-			: ERUI::Fade(T->Bone, 0.58f + 0.22f * HoverAlpha)));
-	}
-	if (MemberSchool)
-	{
-		MemberSchool->SetColorAndOpacity(FSlateColor(ERUI::Fade(T->BoneTertiary, bSelected ? 1.25f : 1.0f)));
-	}
-	if (MemberIntegrity)
-	{
-		const FLinearColor IntegrityTint = bLowIntegrity
-			? T->DangerColor
-			: (bSelected ? T->BoneSecondary : ERUI::Fade(T->BoneTertiary, 1.1f));
-		MemberIntegrity->SetColorAndOpacity(FSlateColor(IntegrityTint));
-	}
+	const FLinearColor NameCol = FMath::Lerp(ERUI::Fade(T->Bone, 0.68f + 0.30f * H01), T->PureInk, S01);
+	const FLinearColor SubCol  = FMath::Lerp(ERUI::Fade(T->Bone, 0.42f + 0.18f * H01), ERUI::Fade(T->PureInk, 0.65f), S01);
+	const FLinearColor IdxCol  = FMath::Lerp(ERUI::Fade(T->Bone, 0.30f + 0.20f * H01), ERUI::Fade(T->PureInk, 0.52f), S01);
+	const FLinearColor IntCol  = bLowIntegrity
+		? T->DangerColor
+		: FMath::Lerp(ERUI::Fade(T->Bone, 0.55f + 0.25f * H01), T->PureInk, S01);
+
+	if (MemberIndexText) { MemberIndexText->SetColorAndOpacity(FSlateColor(IdxCol)); }
+	if (MemberName)      { MemberName->SetColorAndOpacity(FSlateColor(NameCol)); }
+	if (MemberSchool)    { MemberSchool->SetColorAndOpacity(FSlateColor(SubCol)); }
+	if (MemberIntegrity) { MemberIntegrity->SetColorAndOpacity(FSlateColor(IntCol)); }
+
+	// 弹簧横向微推 (+7px 选中 / +3px 悬停)
+	SetRenderTranslation(FVector2D(7.0f * SelA + 3.0f * HoverA * (1.0f - S01), 0.0f));
 }
 
 void UERPersonnelMemberRow::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)

@@ -82,19 +82,21 @@ void UERPipBar::Rebuild()
 		return;
 	}
 	PipBox->ClearChildren();
-	const float Size = (PipSizeOverride > 0.0f) ? PipSizeOverride : ERUI::Theme()->PipSize;
-	const float Gap = (PipGapOverride >= 0.0f) ? PipGapOverride : ERUI::Theme()->PipGap;
+	const float BarW = (PipSizeOverride > 0.0f) ? (PipSizeOverride * 2.4f) : 18.0f;
+	const float BarH = (PipSizeOverride > 0.0f) ? FMath::Max(4.0f, PipSizeOverride * 0.65f) : 5.0f;
+	const float Gap = (PipGapOverride >= 0.0f) ? PipGapOverride : 5.0f;
 	UTexture2D* Tex = PipTexture ? PipTexture.Get() : ERUI::GetWhiteTexture();
 	for (int32 i = 0; i < CurTotal; ++i)
 	{
 		UImage* Pip = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 		FSlateBrush Brush;
 		Brush.SetResourceObject(Tex);
-		Brush.ImageSize = FVector2D(Size, Size);
+		Brush.ImageSize = FVector2D(BarW, BarH);
 		Brush.TintColor = FSlateColor(FLinearColor::White);
 		Pip->SetBrush(Brush);
 		Pip->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		UHorizontalBoxSlot* S = PipBox->AddChildToHorizontalBox(Pip);
+		S->SetVerticalAlignment(VAlign_Center);
 		S->SetPadding(FMargin(i == 0 ? 0.0f : Gap, 0.0f, 0.0f, 0.0f));
 	}
 }

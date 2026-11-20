@@ -20,23 +20,27 @@ const UFont* UERUITheme::GetRuntimeFont() const
 	Font->FontCacheType = EFontCacheType::Runtime;
 
 	FCompositeFont& CompositeFont = Font->GetMutableInternalCompositeFont();
-	auto AppendFace = [](FTypeface& Typeface, const UFontFace* Face)
+	auto AppendFace = [](FTypeface& Typeface, FName StyleName, const UFontFace* Face)
 	{
 		if (!Face)
 		{
 			return;
 		}
 		FTypefaceEntry& Entry = Typeface.Fonts.AddDefaulted_GetRef();
-		Entry.Name = TEXT("Regular");
+		Entry.Name = StyleName;
 		Entry.Font = FFontData(Face);
 	};
 
-	// 默认 typeface = Inter(拉丁/数字), Fallback = Noto(中文自动回落, 跳过字形检查)。
-	// 只配了一个面时两边都指向它, 保证总有可用的主字体。
+	// 默认 typeface = Linux Biolinum (拉丁/数字, Regular & Bold 均走 Biolinum),
+	// Fallback = Noto Sans SC (Regular + Bold 双字重回落)。
 	const UFontFace* Primary = FontLatin ? FontLatin.Get() : FontBody.Get();
-	const UFontFace* Secondary = FontBody ? FontBody.Get() : FontLatin.Get();
-	AppendFace(CompositeFont.DefaultTypeface, Primary);
-	AppendFace(CompositeFont.FallbackTypeface.Typeface, Secondary);
+	const UFontFace* CjkReg = FontBody ? FontBody.Get() : Primary;
+	const UFontFace* CjkBold = FontBodyBold ? FontBodyBold.Get() : CjkReg;
+
+	AppendFace(CompositeFont.DefaultTypeface, FName(TEXT("Regular")), Primary);
+	AppendFace(CompositeFont.DefaultTypeface, FName(TEXT("Bold")), Primary);
+	AppendFace(CompositeFont.FallbackTypeface.Typeface, FName(TEXT("Regular")), CjkReg);
+	AppendFace(CompositeFont.FallbackTypeface.Typeface, FName(TEXT("Bold")), CjkBold);
 
 	RuntimeFont = Font;
 	return RuntimeFont;
@@ -44,21 +48,25 @@ const UFont* UERUITheme::GetRuntimeFont() const
 
 FSlateFontInfo UERUITheme::GetFont(EERTypeScale Scale, bool bLatin) const
 {
-	const UObject* FontObj = GetRuntimeFont();
-
 	int32 Size = BodySize;
 	int32 Tracking = 0;
+	bool bBold = false;
 	switch (Scale)
 	{
-	case EERTypeScale::Micro:    Size = MicroSize;    Tracking = MicroTracking; break;
-	case EERTypeScale::Caption:  Size = CaptionSize;  Tracking = MicroTracking / 2; break;
-	case EERTypeScale::Body:     Size = BodySize;     break;
-	case EERTypeScale::Title:    Size = TitleSize;    break;
-	case EERTypeScale::Display:  Size = DisplaySize;  break;
-	case EERTypeScale::Hero:     Size = HeroSize;     break;
+	case EERTypeScale::Micro:    Size = MicroSize;    Tracking = MicroTracking;     bBold = false; break;
+	case EERTypeScale::Caption:  Size = CaptionSize;  Tracking = MicroTracking / 2; bBold = false; break;
+	case EERTypeScale::Body:     Size = BodySize;     Tracking = 20;                bBold = false; break;
+	case EERTypeScale::Title:    Size = TitleSize;    Tracking = 40;                bBold = true;  break;
+	case EERTypeScale::Display:  Size = DisplaySize;  Tracking = -10;               bBold = true;  break;
+	case EERTypeScale::Hero:     Size = HeroSize;     Tracking = 80;                bBold = true;  break;
 	}
+	return GetFontExplicit(Size, bBold, Tracking);
+}
 
-	FSlateFontInfo Info(FontObj, Size);
+FSlateFontInfo UERUITheme::GetFontExplicit(int32 Size, bool bBold, int32 Tracking) const
+{
+	const UObject* FontObj = GetRuntimeFont();
+	FSlateFontInfo Info(FontObj, Size, bBold ? FName(TEXT("Bold")) : FName(TEXT("Regular")));
 	Info.LetterSpacing = Tracking;
 	return Info;
 }

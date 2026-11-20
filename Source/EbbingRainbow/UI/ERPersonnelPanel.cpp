@@ -13,6 +13,7 @@
 #include "UI/ERPersonnelMemberRow.h"
 #include "UI/ERStatCell.h"
 #include "UI/ERUIStatics.h"
+#include "UI/Primitives/ERTechPrimitives.h"
 
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -36,12 +37,9 @@ namespace
 		return FSlateChildSize(ESlateSizeRule::Fill);
 	}
 
-	FSlateFontInfo MakeFont(const UERUITheme* T, EERTypeScale Scale, int32 Size, int32 Tracking = 0, bool bLatin = false)
+	FSlateFontInfo MakeFont(const UERUITheme* T, EERTypeScale Scale, int32 Size, int32 Tracking = 0, bool bBold = false)
 	{
-		FSlateFontInfo Font = T->GetFont(Scale, bLatin);
-		Font.Size = Size;
-		Font.LetterSpacing = Tracking;
-		return Font;
+		return T->GetFontExplicit(Size, bBold, Tracking);
 	}
 }
 
@@ -136,9 +134,9 @@ void UERPersonnelPanel::Build()
 		S->SetOffsets(FMargin(0.0f));
 	}
 
-	// ---- 主面板 ----
+	// ---- 主面板 (黑曜石 45° 切角巨构 + 四角对准刻度) ----
 	PanelBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("PanelBorder"));
-	PanelBorder->SetBrush(ERUI::RoundedBrush(26.0f, T->InkPanel, 1.0f, T->BoneGhost));
+	PanelBorder->SetBrush(ERUI::TransparentBrush());
 	PanelBorder->SetBrushColor(FLinearColor::White);
 	PanelBorder->SetPadding(FMargin(0.0f));
 	PanelBorder->SetHorizontalAlignment(HAlign_Fill);
@@ -147,29 +145,52 @@ void UERPersonnelPanel::Build()
 		UCanvasPanelSlot* S = Root->AddChildToCanvas(PanelBorder);
 		S->SetAnchors(FAnchors(0.5f, 0.5f));
 		S->SetAlignment(FVector2D(0.5f, 0.5f));
-		S->SetOffsets(FMargin(0.0f, 0.0f, 1320.0f, 800.0f));
+		S->SetOffsets(FMargin(0.0f, 0.0f, 1360.0f, 820.0f));
 		S->SetAutoSize(false);
+	}
+
+	UOverlay* PanelRootOv = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("PanelRootOverlay"));
+	PanelRootOv->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	PanelBorder->SetContent(PanelRootOv);
+
+	PanelFrame = WidgetTree->ConstructWidget<UERTechFrame>(UERTechFrame::StaticClass(), TEXT("PanelFrame"));
+	PanelFrame->Chamfer = FVector4(20.0f, 0.0f, 20.0f, 0.0f);
+	PanelFrame->FillColor = FLinearColor(0.006f, 0.007f, 0.010f, 0.96f);
+	PanelFrame->BorderColor = FLinearColor(0.92f, 0.92f, 0.90f, 0.18f);
+	PanelFrame->BorderThickness = 1.0f;
+	PanelFrame->bDrawCornerBrackets = true;
+	PanelFrame->BracketLength = 16.0f;
+	PanelFrame->BracketThickness = 1.6f;
+	PanelFrame->BracketColor = FLinearColor(0.92f, 0.92f, 0.90f, 0.80f);
+	PanelFrame->AccentEdge = EERAccentEdge::Top;
+	PanelFrame->bUsePrismAccent = true;
+	PanelFrame->AccentThickness = 3.0f;
+	PanelFrame->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	{
+		UOverlaySlot* S = PanelRootOv->AddChildToOverlay(PanelFrame);
+		S->SetHorizontalAlignment(HAlign_Fill);
+		S->SetVerticalAlignment(VAlign_Fill);
 	}
 
 	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("PanelColumn"));
 	Column->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	PanelBorder->SetContent(Column);
+	{
+		UOverlaySlot* S = PanelRootOv->AddChildToOverlay(Column);
+		S->SetHorizontalAlignment(HAlign_Fill);
+		S->SetVerticalAlignment(VAlign_Fill);
+	}
 
-	// ======== 标题行 ========
+	// ======== 标题行 (Control: 共振式巨幅粗体 + 反白索引标签) ========
 	UHorizontalBox* HeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("HeaderRow"));
 	HeaderRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	Column->AddChildToVerticalBox(HeaderRow)->SetPadding(FMargin(36.0f, 26.0f, 30.0f, 0.0f));
+	Column->AddChildToVerticalBox(HeaderRow)->SetPadding(FMargin(40.0f, 26.0f, 34.0f, 0.0f));
 
 	{
-		USizeBox* TickSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("AccentTickSize"));
-		TickSize->SetWidthOverride(2.0f);
-		TickSize->SetHeightOverride(26.0f);
-		UBorder* Tick = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("AccentTick"));
-		Tick->SetBrush(ERUI::RoundedBrush(1.0f, T->Accent));
-		Tick->SetBrushColor(FLinearColor::White);
-		Tick->SetPadding(FMargin(0.0f));
-		TickSize->SetContent(Tick);
-		HeaderRow->AddChildToHorizontalBox(TickSize)->SetVerticalAlignment(VAlign_Center);
+		HeaderPrismBar = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("HeaderPrismBar"));
+		HeaderPrismBar->bVertical = true;
+		HeaderPrismBar->BarSize = FVector2D(4.0f, 40.0f);
+		HeaderPrismBar->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		HeaderRow->AddChildToHorizontalBox(HeaderPrismBar)->SetVerticalAlignment(VAlign_Center);
 	}
 
 	UVerticalBox* TitleCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("TitleCol"));
@@ -177,16 +198,16 @@ void UERPersonnelPanel::Build()
 	{
 		UHorizontalBoxSlot* S = HeaderRow->AddChildToHorizontalBox(TitleCol);
 		S->SetVerticalAlignment(VAlign_Center);
-		S->SetPadding(FMargin(14.0f, 0.0f, 0.0f, 0.0f));
+		S->SetPadding(FMargin(16.0f, 0.0f, 0.0f, 0.0f));
 	}
 
-	HeaderTitle = ERUI::MakeText(this, INVTEXT("人员管理"), EERTypeScale::Title, T->Bone);
-	HeaderTitle->SetFont(MakeFont(T, EERTypeScale::Title, 21, 60));
-	TitleCol->AddChildToVerticalBox(HeaderTitle);
+	HeaderCaption = ERUI::MakeText(this, INVTEXT("OPERATOR DOSSIER // SQUAD MANIFEST"), EERTypeScale::Micro, T->BoneTertiary, true);
+	HeaderCaption->SetFont(MakeFont(T, EERTypeScale::Micro, 8, 280, false));
+	TitleCol->AddChildToVerticalBox(HeaderCaption);
 
-	HeaderCaption = ERUI::MakeText(this, INVTEXT("P E R S O N N E L   R O S T E R"), EERTypeScale::Micro, T->BoneTertiary, true);
-	HeaderCaption->SetFont(MakeFont(T, EERTypeScale::Micro, 8, 200, true));
-	TitleCol->AddChildToVerticalBox(HeaderCaption)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
+	HeaderTitle = ERUI::MakeText(this, INVTEXT("人员档案"), EERTypeScale::Title, T->Bone);
+	HeaderTitle->SetFont(MakeFont(T, EERTypeScale::Title, 30, 80, true));
+	TitleCol->AddChildToVerticalBox(HeaderTitle)->SetPadding(FMargin(0.0f, 1.0f, 0.0f, 0.0f));
 
 	HeaderRow->AddChildToHorizontalBox(WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass(), TEXT("HeaderSpacer")))
 		->SetSize(FillSize());
@@ -196,20 +217,20 @@ void UERPersonnelPanel::Build()
 	{
 		UHorizontalBoxSlot* S = HeaderRow->AddChildToHorizontalBox(StatusCol);
 		S->SetVerticalAlignment(VAlign_Center);
-		S->SetPadding(FMargin(0.0f, 0.0f, 18.0f, 0.0f));
+		S->SetPadding(FMargin(0.0f, 0.0f, 22.0f, 0.0f));
 	}
 
-	SquadSummaryText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->BoneSecondary);
+	SquadSummaryText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone, true);
 	SquadSummaryText->SetJustification(ETextJustify::Right);
-	SquadSummaryText->SetFont(MakeFont(T, EERTypeScale::Caption, 11, 80));
+	SquadSummaryText->SetFont(MakeFont(T, EERTypeScale::Title, 18, 80, true));
 	StatusCol->AddChildToVerticalBox(SquadSummaryText);
 
 	SquadStateText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneTertiary);
 	SquadStateText->SetJustification(ETextJustify::Right);
-	SquadStateText->SetFont(MakeFont(T, EERTypeScale::Micro, 9, 60));
+	SquadStateText->SetFont(MakeFont(T, EERTypeScale::Micro, 8, 180, false));
 	StatusCol->AddChildToVerticalBox(SquadStateText)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
 
-	// 关闭按钮: 发丝圆环 + ×
+	// 关闭按钮: 锐利直角方框 [ × ]
 	CloseButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("CloseButton"));
 	{
 		FButtonStyle Style;
@@ -225,30 +246,32 @@ void UERPersonnelPanel::Build()
 	}
 	{
 		USizeBox* CloseSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("CloseSize"));
-		CloseSize->SetWidthOverride(34.0f);
-		CloseSize->SetHeightOverride(34.0f);
+		CloseSize->SetWidthOverride(38.0f);
+		CloseSize->SetHeightOverride(38.0f);
 		CloseButton->SetContent(CloseSize);
 
 		UBorder* CloseRing = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CloseRing"));
-		CloseRing->SetBrush(ERUI::RoundedBrush(17.0f, FLinearColor(0.06f, 0.08f, 0.11f, 0.35f), 1.0f, T->BoneGhost));
+		CloseRing->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.02f, 0.022f, 0.028f, 0.85f), 1.0f, FLinearColor(0.92f, 0.92f, 0.90f, 0.28f)));
 		CloseRing->SetBrushColor(FLinearColor::White);
 		CloseRing->SetPadding(FMargin(0.0f));
 		CloseRing->SetHorizontalAlignment(HAlign_Center);
 		CloseRing->SetVerticalAlignment(VAlign_Center);
 		CloseSize->SetContent(CloseRing);
 
-		CloseGlyphText = ERUI::MakeText(this, INVTEXT("×"), EERTypeScale::Body, T->BoneSecondary);
+		CloseGlyphText = ERUI::MakeText(this, INVTEXT("×"), EERTypeScale::Title, T->Bone);
 		CloseGlyphText->SetJustification(ETextJustify::Center);
-		CloseGlyphText->SetFont(MakeFont(T, EERTypeScale::Body, 17, 0));
+		CloseGlyphText->SetFont(MakeFont(T, EERTypeScale::Title, 20, 0, true));
 		CloseRing->SetContent(CloseGlyphText);
 	}
 	HeaderRow->AddChildToHorizontalBox(CloseButton)->SetVerticalAlignment(VAlign_Center);
 
-	// 标题下的发丝线
-	HeaderRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("HeaderRule"));
-	HeaderRule->SetBrush(ERUI::WhiteBrush(FVector2D(1.0f, 1.0f)));
-	HeaderRule->SetColorAndOpacity(T->BoneGhost);
-	Column->AddChildToVerticalBox(HeaderRule)->SetPadding(FMargin(36.0f, 18.0f, 30.0f, 0.0f));
+	// 标题下的建筑分割线
+	HeaderDivider = WidgetTree->ConstructWidget<UERTechDivider>(UERTechDivider::StaticClass(), TEXT("HeaderDivider"));
+	HeaderDivider->AnchorLength = 42.0f;
+	HeaderDivider->AnchorColor = T->Bone;
+	HeaderDivider->LineColor = T->BoneGhost;
+	HeaderDivider->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	Column->AddChildToVerticalBox(HeaderDivider)->SetPadding(FMargin(40.0f, 18.0f, 34.0f, 0.0f));
 
 	// ======== 主体 ========
 	UHorizontalBox* BodyRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("BodyRow"));
@@ -299,9 +322,10 @@ void UERPersonnelPanel::Build()
 	// ---- 右: 档案 ----
 	UHorizontalBox* DetailRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("DetailRow"));
 	DetailRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	DetailContainer = DetailRow;
 	BodyRow->AddChildToHorizontalBox(DetailRow)->SetSize(FillSize());
 
-	// 立绘列
+	// 立绘列 (锐利直角画框 + 反白编号铭牌)
 	USizeBox* PortraitCol = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("PortraitCol"));
 	PortraitCol->SetWidthOverride(384.0f);
 	DetailRow->AddChildToHorizontalBox(PortraitCol)->SetVerticalAlignment(VAlign_Fill);
@@ -311,7 +335,7 @@ void UERPersonnelPanel::Build()
 	PortraitCol->SetContent(PortraitColumn);
 
 	PortraitFrame = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("PortraitFrame"));
-	PortraitFrame->SetBrush(ERUI::RoundedBrush(4.0f, FLinearColor(0.02f, 0.03f, 0.045f, 0.72f), 1.0f, T->BoneGhost));
+	PortraitFrame->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.96f), 1.0f, FLinearColor(0.92f, 0.92f, 0.90f, 0.24f)));
 	PortraitFrame->SetBrushColor(FLinearColor::White);
 	PortraitFrame->SetPadding(FMargin(0.0f));
 	PortraitFrame->SetHorizontalAlignment(HAlign_Fill);
@@ -319,7 +343,7 @@ void UERPersonnelPanel::Build()
 	{
 		USizeBox* FrameSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("PortraitFrameSize"));
 		FrameSize->SetWidthOverride(384.0f);
-		FrameSize->SetHeightOverride(510.0f);
+		FrameSize->SetHeightOverride(516.0f);
 		FrameSize->SetContent(PortraitFrame);
 		PortraitColumn->AddChildToVerticalBox(FrameSize);
 	}
@@ -330,70 +354,75 @@ void UERPersonnelPanel::Build()
 
 	PortraitImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("PortraitImage"));
 	PortraitImage->SetBrush(ERUI::WhiteBrush());
-	PortraitImage->SetColorAndOpacity(FLinearColor(0.08f, 0.10f, 0.13f, 1.0f));
+	PortraitImage->SetColorAndOpacity(FLinearColor(0.05f, 0.06f, 0.08f, 1.0f));
 	PortraitOverlay->AddChildToOverlay(PortraitImage);
 
 	PortraitScrim = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("PortraitScrim"));
 	PortraitScrim->SetBrush(ERUI::ScrimBrush());
-	PortraitScrim->SetColorAndOpacity(ERUI::Fade(T->InkScrim, 0.72f));
+	PortraitScrim->SetColorAndOpacity(ERUI::Fade(T->InkScrim, 0.78f));
 	PortraitScrim->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
 	{
-		// 渐压纹理是"上实下透", 翻转后变成"下实上透", 让立绘底部沉入面板
 		FWidgetTransform Flip;
 		Flip.Scale = FVector2D(1.0f, -1.0f);
 		PortraitScrim->SetRenderTransform(Flip);
 	}
 	PortraitOverlay->AddChildToOverlay(PortraitScrim);
 
-	PortraitIndexText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, ERUI::Fade(T->Bone, 0.78f), true);
-	PortraitIndexText->SetFont(MakeFont(T, EERTypeScale::Micro, 10, 120, true));
+	// 底部反白石膏编号块 [ 01 / 04 ]
+	UBorder* IndexTag = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("PortraitIndexTag"));
+	IndexTag->SetBrush(ERUI::RoundedBrush(0.0f, T->Bone));
+	IndexTag->SetBrushColor(FLinearColor::White);
+	IndexTag->SetPadding(FMargin(10.0f, 3.0f));
+	PortraitIndexText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->PureInk, true);
+	PortraitIndexText->SetFont(MakeFont(T, EERTypeScale::Micro, 11, 160, true));
+	IndexTag->SetContent(PortraitIndexText);
 	{
-		UOverlaySlot* S = PortraitOverlay->AddChildToOverlay(PortraitIndexText);
+		UOverlaySlot* S = PortraitOverlay->AddChildToOverlay(IndexTag);
 		S->SetHorizontalAlignment(HAlign_Left);
 		S->SetVerticalAlignment(VAlign_Bottom);
-		S->SetPadding(FMargin(14.0f, 0.0f, 0.0f, 12.0f));
+		S->SetPadding(FMargin(12.0f, 0.0f, 0.0f, 12.0f));
 	}
 
-	PortraitCaptionText = ERUI::MakeText(this, INVTEXT("档案影像 · ARCHIVE"), EERTypeScale::Micro, T->BoneTertiary);
-	PortraitCaptionText->SetFont(MakeFont(T, EERTypeScale::Micro, 9, 80));
+	PortraitCaptionText = ERUI::MakeText(this, INVTEXT("ARCHIVE // VISUAL RECORD"), EERTypeScale::Micro, T->BoneTertiary, true);
+	PortraitCaptionText->SetFont(MakeFont(T, EERTypeScale::Micro, 8, 220, false));
 	PortraitColumn->AddChildToVerticalBox(PortraitCaptionText)->SetPadding(FMargin(2.0f, 10.0f, 0.0f, 0.0f));
 
-	// 信息列
+	// 信息列 (Control: 共振式 72pt 巨型名字 + 极小追踪英文遥测)
 	UVerticalBox* InfoCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("InfoCol"));
 	InfoCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	{
 		UHorizontalBoxSlot* S = DetailRow->AddChildToHorizontalBox(InfoCol);
 		S->SetSize(FillSize());
 		S->SetVerticalAlignment(VAlign_Fill);
-		S->SetPadding(FMargin(34.0f, 0.0f, 0.0f, 0.0f));
+		S->SetPadding(FMargin(36.0f, 0.0f, 0.0f, 0.0f));
 	}
 
 	NameText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Display, T->Bone);
-	NameText->SetFont(MakeFont(T, EERTypeScale::Display, 40, 30));
+	NameText->SetFont(MakeFont(T, EERTypeScale::Display, 72, 20, true));
 	InfoCol->AddChildToVerticalBox(NameText);
 
-	CallsignText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->BoneSecondary, true);
-	CallsignText->SetFont(MakeFont(T, EERTypeScale::Caption, 12, 260, true));
-	InfoCol->AddChildToVerticalBox(CallsignText)->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 0.0f));
+	CallsignText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Accent, true);
+	CallsignText->SetFont(MakeFont(T, EERTypeScale::Title, 15, 340, true));
+	InfoCol->AddChildToVerticalBox(CallsignText)->SetPadding(FMargin(2.0f, 0.0f, 0.0f, 0.0f));
 
 	UHorizontalBox* SchoolRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("SchoolRow"));
 	SchoolRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	InfoCol->AddChildToVerticalBox(SchoolRow)->SetPadding(FMargin(0.0f, 12.0f, 0.0f, 0.0f));
 
 	SchoolChipBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("SchoolChipBorder"));
-	SchoolChipBorder->SetBrush(ERUI::RoundedBrush(4.0f, FLinearColor(0.10f, 0.12f, 0.16f, 0.55f), 1.0f, T->BoneGhost));
+	SchoolChipBorder->SetBrush(ERUI::RoundedBrush(0.0f, T->Bone, 0.0f, FLinearColor::Transparent));
 	SchoolChipBorder->SetBrushColor(FLinearColor::White);
-	SchoolChipBorder->SetPadding(FMargin(10.0f, 4.0f));
+	SchoolChipBorder->SetPadding(FMargin(10.0f, 3.0f));
 	SchoolChipBorder->SetHorizontalAlignment(HAlign_Center);
 	SchoolChipBorder->SetVerticalAlignment(VAlign_Center);
 	SchoolRow->AddChildToHorizontalBox(SchoolChipBorder)->SetVerticalAlignment(VAlign_Center);
 
-	SchoolChipText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary);
-	SchoolChipText->SetFont(MakeFont(T, EERTypeScale::Micro, 10, 40));
+	SchoolChipText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->PureInk);
+	SchoolChipText->SetFont(MakeFont(T, EERTypeScale::Micro, 10, 120, true));
 	SchoolChipBorder->SetContent(SchoolChipText);
 
-	RoleText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary);
-	RoleText->SetFont(MakeFont(T, EERTypeScale::Micro, 10, 100));
+	RoleText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, true);
+	RoleText->SetFont(MakeFont(T, EERTypeScale::Micro, 10, 180, false));
 	{
 		UHorizontalBoxSlot* S = SchoolRow->AddChildToHorizontalBox(RoleText);
 		S->SetVerticalAlignment(VAlign_Center);
@@ -402,13 +431,15 @@ void UERPersonnelPanel::Build()
 
 	TaglineText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->BoneSecondary);
 	TaglineText->SetAutoWrapText(true);
-	TaglineText->SetFont(MakeFont(T, EERTypeScale::Caption, 12, 30));
-	InfoCol->AddChildToVerticalBox(TaglineText)->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 0.0f));
+	TaglineText->SetFont(MakeFont(T, EERTypeScale::Caption, 12, 40, false));
+	InfoCol->AddChildToVerticalBox(TaglineText)->SetPadding(FMargin(0.0f, 12.0f, 0.0f, 0.0f));
 
-	InfoRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("InfoRule"));
-	InfoRule->SetBrush(ERUI::WhiteBrush(FVector2D(1.0f, 1.0f)));
-	InfoRule->SetColorAndOpacity(T->BoneGhost);
-	InfoCol->AddChildToVerticalBox(InfoRule)->SetPadding(FMargin(0.0f, 16.0f, 0.0f, 0.0f));
+	InfoDivider = WidgetTree->ConstructWidget<UERTechDivider>(UERTechDivider::StaticClass(), TEXT("InfoDivider"));
+	InfoDivider->AnchorLength = 30.0f;
+	InfoDivider->AnchorColor = T->Accent;
+	InfoDivider->LineColor = T->BoneGhost;
+	InfoDivider->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	InfoCol->AddChildToVerticalBox(InfoDivider)->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 0.0f));
 
 	StatsTitleText = ERUI::MakeText(this, INVTEXT("基本属性 · ATTRIBUTES"), EERTypeScale::Micro, T->BoneTertiary);
 	StatsTitleText->SetFont(MakeFont(T, EERTypeScale::Micro, 9, 140));
@@ -478,12 +509,19 @@ void UERPersonnelPanel::OpenPanel()
 		AnimT = 0.0f;
 		AnimDirection = 1.0f;
 		SetRenderOpacity(0.0f);
+		HeaderCaptionCipher.Start(TEXT("OPERATOR DOSSIER // SQUAD MANIFEST"), 0.38f, 0.04f);
+		DetailTrack.Trigger(0.45f);
+		if (Profiles.IsValidIndex(SelectedIndex))
+		{
+			CallsignCipher.Start(Profiles[SelectedIndex].Callsign.ToString(), 0.34f, 0.08f);
+		}
 	}
 	else
 	{
 		AnimT = 1.0f;
 		AnimDirection = 0.0f;
 		SetRenderOpacity(1.0f);
+		DetailTrack.FinishImmediately();
 	}
 	PanelBorder->SetRenderTranslation(FVector2D::ZeroVector);
 	PanelBorder->SetRenderScale(FVector2D(1.0f, 1.0f));
@@ -523,12 +561,24 @@ void UERPersonnelPanel::UpdateAnimation(float DeltaTime)
 
 	const float Duration = FMath::Max(0.05f, EntranceDuration);
 	AnimT = FMath::Clamp(AnimT + AnimDirection * (DeltaTime / Duration), 0.0f, 1.0f);
-	const float Ease = 1.0f - FMath::Pow(1.0f - AnimT, 3.0f);
+	const float Ease = (AnimDirection > 0.0f) ? ERMotion::ExpoOut(AnimT) : ERMotion::CubicOut(AnimT);
 
 	SetRenderOpacity(Ease);
+	if (PanelFrame)
+	{
+		PanelFrame->SetMotionState(FMath::Lerp(0.55f, 1.0f, Ease), 0.0f, (AnimDirection > 0.0f && AnimT < 1.0f) ? AnimT : 1.0f);
+	}
+	if (HeaderDivider)
+	{
+		HeaderDivider->SetRevealAlpha(Ease);
+	}
+	if (HeaderPrismBar)
+	{
+		HeaderPrismBar->SetRevealAlpha(Ease);
+	}
 	if (PanelBorder)
 	{
-		const float Scale = FMath::Lerp(0.985f, 1.0f, Ease);
+		const float Scale = FMath::Lerp(0.975f, 1.0f, Ease);
 		PanelBorder->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
 		PanelBorder->SetRenderScale(FVector2D(Scale, Scale));
 		PanelBorder->SetRenderTranslation(FVector2D(0.0f, (1.0f - Ease) * EntranceOffsetY));
@@ -558,6 +608,31 @@ void UERPersonnelPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTim
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	UpdateAnimation(InDeltaTime);
+
+	if (DetailTrack.Tick(InDeltaTime))
+	{
+		const float E = DetailTrack.Expo(0.0f, 0.34f);
+		const float DivE = DetailTrack.Expo(0.06f, 0.36f);
+		if (DetailContainer)
+		{
+			DetailContainer->SetRenderOpacity(FMath::Lerp(0.25f, 1.0f, E));
+			DetailContainer->SetRenderTranslation(FVector2D(16.0f * (1.0f - E), 0.0f));
+		}
+		if (InfoDivider)
+		{
+			InfoDivider->SetRevealAlpha(DivE);
+		}
+	}
+
+	FString Decoded;
+	if (HeaderCaptionCipher.Tick(InDeltaTime, Decoded) && HeaderCaption)
+	{
+		HeaderCaption->SetText(FText::FromString(Decoded));
+	}
+	if (CallsignCipher.Tick(InDeltaTime, Decoded) && CallsignText)
+	{
+		CallsignText->SetText(FText::FromString(Decoded));
+	}
 }
 
 FReply UERPersonnelPanel::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
@@ -691,14 +766,17 @@ void UERPersonnelPanel::RefreshDetail()
 	if (SchoolChipText)
 	{
 		SchoolChipText->SetText(FText::FromString(FString::Printf(TEXT("学派 · %s"), *Profile.GetSchoolName().ToString())));
-		SchoolChipText->SetColorAndOpacity(FSlateColor(ERUI::Fade(SchoolColor, 0.95f)));
+		SchoolChipText->SetColorAndOpacity(FSlateColor(T->PureInk));
 	}
 	if (SchoolChipBorder)
 	{
-		SchoolChipBorder->SetBrush(ERUI::RoundedBrush(4.0f,
-			FLinearColor(SchoolColor.R, SchoolColor.G, SchoolColor.B, 0.12f), 1.0f,
-			SchoolColor.CopyWithNewOpacity(0.38f)));
+		// 高对比反白标牌 + 学派左色感 (单点睛色)
+		SchoolChipBorder->SetBrush(ERUI::RoundedBrush(0.0f, SchoolColor, 0.0f, FLinearColor::Transparent));
 		SchoolChipBorder->SetBrushColor(FLinearColor::White);
+	}
+	if (InfoDivider)
+	{
+		InfoDivider->SetDividerColors(T->BoneGhost, SchoolColor);
 	}
 	if (RoleText)
 	{
@@ -814,17 +892,29 @@ void UERPersonnelPanel::PopulateSkills(const FHallHeroProfile& Profile)
 	for (const FText& Label : SkillNames)
 	{
 		UBorder* Chip = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-		Chip->SetBrush(ERUI::RoundedBrush(3.0f,
-			FLinearColor(SchoolColor.R, SchoolColor.G, SchoolColor.B, 0.09f), 1.0f,
-			SchoolColor.CopyWithNewOpacity(0.30f)));
+		Chip->SetBrush(ERUI::RoundedBrush(0.0f,
+			FLinearColor(0.016f, 0.018f, 0.024f, 0.92f), 1.0f,
+			FLinearColor(0.92f, 0.92f, 0.90f, 0.22f)));
 		Chip->SetBrushColor(FLinearColor::White);
-		Chip->SetPadding(FMargin(9.0f, 4.0f));
+		Chip->SetPadding(FMargin(11.0f, 5.0f));
 		Chip->SetHorizontalAlignment(HAlign_Center);
 		Chip->SetVerticalAlignment(VAlign_Center);
 
-		UTextBlock* Text = ERUI::MakeText(this, Label, EERTypeScale::Micro, T->BoneSecondary);
-		Text->SetFont(MakeFont(T, EERTypeScale::Micro, 10, 30));
-		Chip->SetContent(Text);
+		UHorizontalBox* ChipRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		ChipRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		Chip->SetContent(ChipRow);
+
+		UImage* Bar = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		Bar->SetBrush(ERUI::WhiteBrush(FVector2D(2.0f, 11.0f)));
+		Bar->SetColorAndOpacity(SchoolColor);
+		Bar->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		UHorizontalBoxSlot* BSlot = ChipRow->AddChildToHorizontalBox(Bar);
+		BSlot->SetVerticalAlignment(VAlign_Center);
+		BSlot->SetPadding(FMargin(0.0f, 0.0f, 7.0f, 0.0f));
+
+		UTextBlock* Text = ERUI::MakeText(this, Label, EERTypeScale::Micro, T->Bone);
+		Text->SetFont(MakeFont(T, EERTypeScale::Micro, 10, 60, false));
+		ChipRow->AddChildToHorizontalBox(Text)->SetVerticalAlignment(VAlign_Center);
 
 		UHorizontalBoxSlot* ChipSlot = SkillsBox->AddChildToHorizontalBox(Chip);
 		ChipSlot->SetVerticalAlignment(VAlign_Center);
@@ -961,9 +1051,15 @@ void UERPersonnelPanel::SelectMember(int32 MemberIndex)
 	{
 		return;
 	}
+	const bool bChanged = (SelectedIndex != MemberIndex);
 	SelectedIndex = MemberIndex;
 	RefreshDetail();
 	RefreshSelectionVisuals();
+	if (bChanged && !IsDesignTime())
+	{
+		DetailTrack.Trigger(0.42f);
+		CallsignCipher.Start(Profiles[SelectedIndex].Callsign.ToString(), 0.30f, 0.02f);
+	}
 	if (!IsDesignTime())
 	{
 		BP_OnMemberSelected(MemberIndex);

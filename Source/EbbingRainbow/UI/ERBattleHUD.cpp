@@ -12,6 +12,8 @@
 #include "UI/ERHeroPlate.h"
 #include "UI/ERActionButton.h"
 #include "UI/ERInteractiveWidget.h"
+#include "UI/Primitives/ERTechPrimitives.h"
+#include "Components/Border.h"
 #if ER_WITH_AI_COMMAND
 #include "Experimental/AITacticalCommand/ERAICommandPanel.h"
 #endif
@@ -87,6 +89,7 @@ void UERBattleHUD::NativeConstruct()
 	if (SquadBox)      { SquadBox->ClearChildren(); }
 	if (HandBox)       { HandBox->ClearChildren(); }
 
+	if (NotifyBanner)  { NotifyBanner->SetVisibility(ESlateVisibility::Hidden); }
 	if (NotifyText)    { NotifyText->SetVisibility(ESlateVisibility::Hidden); }
 	if (SkillTooltip)  { SkillTooltip->SetVisibility(ESlateVisibility::Collapsed); }
 	if (TooltipRoot)   { TooltipRoot->SetVisibility(ESlateVisibility::Collapsed); }
@@ -112,6 +115,14 @@ void UERBattleHUD::NativeConstruct()
 	}
 
 	EntranceT = bEnableEntranceAnimation ? 0.0f : 1.0f;
+	if (bEnableEntranceAnimation && !IsDesignTime())
+	{
+		EntranceTrack.Trigger(0.75f);
+	}
+	else
+	{
+		EntranceTrack.FinishImmediately();
+	}
 	if (Anim_Intro)
 	{
 		PlayAnimationForward(Anim_Intro);
@@ -203,6 +214,20 @@ void UERBattleHUD::BuildLayout()
 		S->SetAlignment(FVector2D(0.0f, 1.0f));
 	}
 
+	if (!CornerReticle)
+	{
+		CornerReticle = WidgetTree->ConstructWidget<UERCornerReticle>(UERCornerReticle::StaticClass(), TEXT("CornerReticle"));
+		CornerReticle->TopRightCode = TEXT("");
+		CornerReticle->BottomRightCode = TEXT("TACTICAL // GRID");
+		CornerReticle->ReticleColor = FLinearColor(0.95f, 0.95f, 0.92f, 0.36f);
+		CornerReticle->ShadowColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.65f);
+		CornerReticle->bDrawCenterTicks = false;
+		CornerReticle->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		UCanvasPanelSlot* RS = RootCanvas->AddChildToCanvas(CornerReticle);
+		RS->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+		RS->SetOffsets(FMargin(0.0f));
+	}
+
 	if (!InitiativeBox)
 	{
 		UVerticalBox* Strip = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("InitiativeStrip"));
@@ -226,8 +251,16 @@ void UERBattleHUD::BuildLayout()
 
 	if (!NotifyText)
 	{
-		NotifyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->Accent);
-		AddAnchored(NotifyText, FVector2D(0.5f, 0.0f), FVector2D(0.5f, 0.0f), FVector2D(0.0f, 96.0f));
+		NotifyBanner = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("NotifyBanner"));
+		NotifyBanner->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.92f), 1.0f, FLinearColor(0.92f, 0.92f, 0.90f, 0.28f)));
+		NotifyBanner->SetBrushColor(FLinearColor::White);
+		NotifyBanner->SetPadding(FMargin(22.0f, 7.0f));
+		NotifyBanner->SetVisibility(ESlateVisibility::Hidden);
+
+		NotifyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->Bone);
+		NotifyText->SetFont(ERUI::FontBold(12, 80));
+		NotifyBanner->SetContent(NotifyText);
+		AddAnchored(NotifyBanner, FVector2D(0.5f, 0.0f), FVector2D(0.5f, 0.0f), FVector2D(0.0f, 106.0f));
 	}
 
 	if (!SquadBox)
@@ -423,6 +456,11 @@ bool UERBattleHUD::IsMouseOverInteractiveUI() const
 
 void UERBattleHUD::PostNotification(const FString& Message)
 {
+	if (NotifyBanner)
+	{
+		NotifyBanner->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		NotifyBanner->SetRenderOpacity(1.0f);
+	}
 	if (NotifyText)
 	{
 		NotifyText->SetText(FText::FromString(Message));
@@ -441,31 +479,38 @@ void UERBattleHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	// 入场: 相对 Designer 基准坐标轻微滑入, 不覆盖用户手调位置
-	if (bEnableEntranceAnimation && EntranceT < 1.0f)
+	// 错峰建筑入场 (相对 Designer 基准坐标轻微滑入, 不覆盖用户手调位置)
+	if (bEnableEntranceAnimation && EntranceTrack.Tick(InDeltaTime))
 	{
-		const float Dur = FMath::Max(0.05f, ERUI::Theme()->EntranceDuration);
-		EntranceT = FMath::Min(EntranceT + InDeltaTime / Dur, 1.0f);
-		const float C = 1.0f - EntranceT;
-		const float E = 1.0f - C * C * C;
-		if (InitiativeBox) { InitiativeBox->SetRenderTranslation(BaseInitiativeTranslation + InitiativeEntranceOffset * (1.0f - E)); }
-		if (HandBox)       { HandBox->SetRenderTranslation(BaseHandTranslation + HandEntranceOffset * (1.0f - E)); }
-		if (SquadBox)      { SquadBox->SetRenderTranslation(BaseSquadTranslation + SquadEntranceOffset * (1.0f - E)); }
-		if (HeroPlate)     { HeroPlate->SetRenderOpacity(BaseHeroOpacity * E); }
-		if (EndTurnButton) { EndTurnButton->SetRenderOpacity(BaseEndTurnOpacity * E); }
+		const float RetE  = EntranceTrack.Expo(0.00f, 0.36f);
+		const float InitE = EntranceTrack.Expo(0.04f, 0.42f);
+		const float SqE   = EntranceTrack.Expo(0.10f, 0.44f);
+		const float HeroE = EntranceTrack.Quint(0.14f, 0.48f);
+		const float HandE = EntranceTrack.Quint(0.18f, 0.50f);
+		const float EndE  = EntranceTrack.Expo(0.24f, 0.44f);
+
+		if (CornerReticle) { CornerReticle->SetRevealAlpha(RetE); }
+		if (InitiativeBox) { InitiativeBox->SetRenderTranslation(BaseInitiativeTranslation + InitiativeEntranceOffset * (1.0f - InitE)); InitiativeBox->SetRenderOpacity(InitE); }
+		if (SquadBox)      { SquadBox->SetRenderTranslation(BaseSquadTranslation + SquadEntranceOffset * (1.0f - SqE)); SquadBox->SetRenderOpacity(SqE); }
+		if (HeroPlate)     { HeroPlate->SetRenderOpacity(BaseHeroOpacity * HeroE); }
+		if (HandBox)       { HandBox->SetRenderTranslation(BaseHandTranslation + HandEntranceOffset * (1.0f - HandE)); HandBox->SetRenderOpacity(HandE); }
+		if (EndTurnButton) { EndTurnButton->SetRenderOpacity(BaseEndTurnOpacity * EndE); }
 	}
 
 	// 通知淡出
 	if (NotifyTimer > 0.0f)
 	{
 		NotifyTimer -= InDeltaTime;
-		if (NotifyTimer <= 0.0f && NotifyText)
+		if (NotifyTimer <= 0.0f)
 		{
-			NotifyText->SetVisibility(ESlateVisibility::Hidden);
+			if (NotifyBanner) { NotifyBanner->SetVisibility(ESlateVisibility::Hidden); }
+			if (NotifyText)   { NotifyText->SetVisibility(ESlateVisibility::Hidden); }
 		}
-		else if (NotifyTimer < 0.4f && NotifyText)
+		else if (NotifyTimer < 0.4f)
 		{
-			NotifyText->SetRenderOpacity(NotifyTimer / 0.4f);
+			const float Alpha = NotifyTimer / 0.4f;
+			if (NotifyBanner) { NotifyBanner->SetRenderOpacity(Alpha); }
+			if (NotifyText)   { NotifyText->SetRenderOpacity(Alpha); }
 		}
 	}
 

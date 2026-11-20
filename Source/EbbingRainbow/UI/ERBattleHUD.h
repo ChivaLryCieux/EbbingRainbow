@@ -6,14 +6,17 @@
 #include "Blueprint/UserWidget.h"
 #include "Battle/Core/BattleTypes.h"
 #include "UI/ERBattleResult.h"
+#include "UI/Motion/ERUIMotion.h"
 #include "ERBattleHUD.generated.h"
 
 class ABattleGameMode;
 class ABattlePlayerController;
 class ABattleUnit;
 class UBattleManager;
+class UBorder;
 class UCanvasPanel;
 class UERActionButton;
+class UERCornerReticle;
 class UERHeroPlate;
 class UERSkillCard;
 class UERSkillTooltip;
@@ -167,12 +170,14 @@ protected:
 
 	// ---- 控件树 (BindWidgetOptional: WBP 提供则用 WBP 的, 否则 C++ 建默认布局) ----
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCanvasPanel> RootCanvas;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERCornerReticle> CornerReticle;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UHorizontalBox> InitiativeBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> InitiativeRule;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UVerticalBox> SquadBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHeroPlate> HeroPlate;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UHorizontalBox> HandBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERActionButton> EndTurnButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> NotifyBanner;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> NotifyText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> TopScrim;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> BottomScrim;
@@ -243,5 +248,6 @@ private:
 
 	float NotifyTimer = 0.0f;
 	float EntranceT = 0.0f;
+	FERRevealTrack EntranceTrack;
 	bool bLayoutBuilt = false;
 };

@@ -5,6 +5,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "UI/ERUIStatics.h"
 #include "UI/ERActionButton.h"
+#include "UI/Primitives/ERTechPrimitives.h"
 
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
@@ -198,19 +199,26 @@ void UERBattleResult::Build()
 		S->SetAutoSize(true);
 	}
 
+	StatusTagText = ERUI::MakeText(this, INVTEXT("OPERATION CLEARED // TACTICAL SUMMARY"), EERTypeScale::Micro, T->BoneSecondary, true);
+	StatusTagText->SetFont(ERUI::FontRegular(10, 360));
+	Col->AddChildToVerticalBox(StatusTagText)->SetHorizontalAlignment(HAlign_Center);
+
 	TitleText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Hero, T->Bone);
+	TitleText->SetFont(ERUI::FontBold(96, 120));
 	Col->AddChildToVerticalBox(TitleText)->SetHorizontalAlignment(HAlign_Center);
 
-	TitleRule = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("TitleRule"));
-	TitleRule->SetBrush(ERUI::WhiteBrush(FVector2D(80.0f, T->RuleThickness)));
-	TitleRule->SetColorAndOpacity(T->Accent);
+	TitlePrismBar = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("TitlePrismBar"));
+	TitlePrismBar->bVertical = false;
+	TitlePrismBar->BarSize = FVector2D(260.0f, 3.0f);
+	TitlePrismBar->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	{
-		UVerticalBoxSlot* S = Col->AddChildToVerticalBox(TitleRule);
+		UVerticalBoxSlot* S = Col->AddChildToVerticalBox(TitlePrismBar);
 		S->SetHorizontalAlignment(HAlign_Center);
-		S->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 14.0f));
+		S->SetPadding(FMargin(0.0f, 16.0f, 0.0f, 16.0f));
 	}
 
-	SubtitleText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->BoneTertiary);
+	SubtitleText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->BoneSecondary);
+	SubtitleText->SetFont(ERUI::FontRegular(12, 160));
 	Col->AddChildToVerticalBox(SubtitleText)->SetHorizontalAlignment(HAlign_Center);
 
 	RowsBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("RowsBox"));
@@ -259,11 +267,24 @@ void UERBattleResult::SetResult(bool bWon, const FText& Title, const FText& Subt
 	}
 	const UERUITheme* T = ERUI::Theme();
 	EntranceT = bEnableEntranceAnimation ? 0.0f : 1.0f;
+	if (bEnableEntranceAnimation && !IsDesignTime())
+	{
+		ResultTrack.Trigger(0.95f);
+		StatusCipher.Start(bWon ? TEXT("OPERATION CLEARED // TACTICAL SUMMARY") : TEXT("SIGNAL LOST // OPERATION TERMINATED"), 0.48f, 0.12f);
+	}
+	else
+	{
+		ResultTrack.FinishImmediately();
+		if (StatusTagText)
+		{
+			StatusTagText->SetText(bWon ? INVTEXT("OPERATION CLEARED // TACTICAL SUMMARY") : INVTEXT("SIGNAL LOST // OPERATION TERMINATED"));
+		}
+	}
 
 	if (TitleText)
 	{
 		TitleText->SetText(Title);
-		TitleText->SetColorAndOpacity(FSlateColor(bWon ? T->Bone : ERUI::Fade(T->Bone, 0.55f)));
+		TitleText->SetColorAndOpacity(FSlateColor(bWon ? T->Bone : T->DangerColor));
 	}
 	if (TitleRule)
 	{
@@ -295,21 +316,50 @@ void UERBattleResult::SetResult(bool bWon, const FText& Title, const FText& Subt
 void UERBattleResult::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
-	if (bEnableEntranceAnimation && EntranceT < 1.0f)
+
+	if (ResultTrack.Tick(InDeltaTime))
 	{
-		const float Dur = FMath::Max(0.05f, EntranceDuration);
-		EntranceT = FMath::Min(EntranceT + InDeltaTime / Dur, 1.0f);
-		const float C = 1.0f - EntranceT;
-		const float E = 1.0f - C * C * C;
-		SetRenderOpacity(E);
+		const float BgE    = ResultTrack.Expo(0.00f, 0.36f);
+		const float BarE   = ResultTrack.Expo(0.04f, 0.44f);
+		const float TitleE = ResultTrack.Quint(0.10f, 0.52f);
+		const float PrismE = ResultTrack.Expo(0.22f, 0.46f);
+
+		SetRenderOpacity(BgE);
 		if (TopBar)
 		{
-			TopBar->SetRenderTranslation(FVector2D(0.0f, -LetterboxSlideOffset * (1.0f - E)));
+			TopBar->SetRenderTranslation(FVector2D(0.0f, -LetterboxSlideOffset * 2.0f * (1.0f - BarE)));
 		}
 		if (BottomBar)
 		{
-			BottomBar->SetRenderTranslation(FVector2D(0.0f, LetterboxSlideOffset * (1.0f - E)));
+			BottomBar->SetRenderTranslation(FVector2D(0.0f, LetterboxSlideOffset * 2.0f * (1.0f - BarE)));
 		}
+		if (TitleText)
+		{
+			TitleText->SetRenderOpacity(TitleE);
+			TitleText->SetRenderTranslation(FVector2D(0.0f, 18.0f * (1.0f - TitleE)));
+		}
+		if (TitlePrismBar)
+		{
+			TitlePrismBar->SetRevealAlpha(PrismE);
+		}
+		if (RowsBox)
+		{
+			for (int32 i = 0; i < RowsBox->GetChildrenCount(); ++i)
+			{
+				if (UWidget* Child = RowsBox->GetChildAt(i))
+				{
+					const float RE = ResultTrack.Expo(0.30f + 0.06f * i, 0.36f);
+					Child->SetRenderOpacity(RE);
+					Child->SetRenderTranslation(FVector2D(0.0f, 12.0f * (1.0f - RE)));
+				}
+			}
+		}
+	}
+
+	FString Decoded;
+	if (StatusCipher.Tick(InDeltaTime, Decoded) && StatusTagText)
+	{
+		StatusTagText->SetText(FText::FromString(Decoded));
 	}
 }
 
