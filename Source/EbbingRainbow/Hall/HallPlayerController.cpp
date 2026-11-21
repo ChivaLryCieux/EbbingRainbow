@@ -53,9 +53,14 @@ void AHallPlayerController::SetupInputComponent()
 
 void AHallPlayerController::OnKeyEscape()
 {
-	// 人员管理面板优先吃掉 Esc: 先关面板, 再谈观景/光标
+	// 面板优先吃掉 Esc: 先关面板, 再谈观景/光标
 	if (AHallHUD* HHUD = Cast<AHallHUD>(GetHUD()))
 	{
+		if (HHUD->IsGalacticPanelOpen())
+		{
+			HHUD->CloseGalacticPanel();
+			return;
+		}
 		if (HHUD->IsPersonnelPanelOpen())
 		{
 			HHUD->ClosePersonnelPanel();

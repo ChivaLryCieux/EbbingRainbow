@@ -7,6 +7,7 @@
 #include "HallHUD.generated.h"
 
 class UERHallHUD;
+class UERGalaCommandPanel;
 class UERPersonnelPanel;
 class UUserWidget;
 
@@ -44,9 +45,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Hall|Personnel")
 	UERPersonnelPanel* GetPersonnelPanel() const { return PersonnelPanel; }
 
+	/** 打开虹膜基金会银河委托/兵团整备终端 (InitialTab: 0=银河委托, 1=兵团整备) */
+	UFUNCTION(BlueprintCallable, Category = "Hall|Galactic")
+	void OpenGalacticPanel(int32 InitialTab = 0);
+
+	UFUNCTION(BlueprintCallable, Category = "Hall|Galactic")
+	void CloseGalacticPanel();
+
+	UFUNCTION(BlueprintPure, Category = "Hall|Galactic")
+	bool IsGalacticPanelOpen() const;
+
 private:
 	UFUNCTION()
 	void HandlePersonnelPanelClosed();
+
+	UFUNCTION()
+	void HandleGalacticPanelClosed();
 
 	/** 面板打开时强制释放光标; 关闭时恢复到打开前的输入状态 */
 	void ApplyPanelInputMode(bool bPanelOpen);
@@ -56,6 +70,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UERPersonnelPanel> PersonnelPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UERGalaCommandPanel> GalacticPanel;
 
 	/** 打开面板前的光标状态 (关闭时精确还原) */
 	bool bCursorWasVisibleBeforePanel = true;

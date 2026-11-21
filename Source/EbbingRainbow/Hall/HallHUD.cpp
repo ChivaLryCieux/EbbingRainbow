@@ -3,10 +3,17 @@
 #include "Hall/HallHUD.h"
 #include "Core/ERLog.h"
 #include "Hall/HallFPPawn.h"
+#include "UI/ERGalaCommandPanel.h"
 #include "UI/ERHallHUD.h"
 #include "UI/ERPersonnelPanel.h"
 #include "UI/ERUITheme.h"
+#include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
+#include "Misc/Paths.h"
+#include "TimerManager.h"
+#include "UnrealClient.h"
 
 AHallHUD::AHallHUD()
 {
@@ -35,6 +42,36 @@ void AHallHUD::BeginPlay()
 			HallWidget->AddToViewport(10);
 		}
 	}
+
+#if !UE_BUILD_SHIPPING
+	if (FParse::Param(FCommandLine::Get(), TEXT("-HallShot")))
+	{
+		if (UWorld* World = GetWorld())
+		{
+			FTimerHandle Tmp;
+			World->GetTimerManager().SetTimer(Tmp, []()
+			{
+				FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("HallShot"), true, true);
+			}, 1.5f, false);
+		}
+	}
+	if (FParse::Param(FCommandLine::Get(), TEXT("-GalaShot")))
+	{
+		if (UWorld* World = GetWorld())
+		{
+			TWeakObjectPtr<AHallHUD> Self(this);
+			FTimerHandle T1, T2;
+			World->GetTimerManager().SetTimer(T1, [Self]()
+			{
+				if (Self.IsValid()) { Self->OpenGalacticPanel(0); }
+			}, 1.2f, false);
+			World->GetTimerManager().SetTimer(T2, []()
+			{
+				FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("GalaShot"), true, true);
+			}, 1.8f, false);
+		}
+	}
+#endif
 }
 
 void AHallHUD::ToggleZenMode()
@@ -110,6 +147,50 @@ void AHallHUD::HandlePersonnelPanelClosed()
 	// 退场动画已结束: 面板自行 Collapsed, 这里只保证输入状态正确
 	ApplyPanelInputMode(false);
 	UE_LOG(LogERHall, Log, TEXT("[Hall] Personnel panel closed."));
+}
+
+void AHallHUD::OpenGalacticPanel(int32 InitialTab)
+{
+	APlayerController* PC = GetOwningPlayerController();
+	if (!PC) { return; }
+
+	if (!GalacticPanel)
+	{
+		GalacticPanel = CreateWidget<UERGalaCommandPanel>(PC, UERGalaCommandPanel::StaticClass());
+		if (!GalacticPanel)
+		{
+			UE_LOG(LogERHall, Error, TEXT("[Hall] Failed to create GalacticPanel."));
+			return;
+		}
+		GalacticPanel->OnPanelClosed.AddUniqueDynamic(this, &AHallHUD::HandleGalacticPanelClosed);
+		GalacticPanel->AddToViewport(25);
+	}
+
+	if (!GalacticPanel->IsPanelOpen())
+	{
+		bCursorWasVisibleBeforePanel = PC->bShowMouseCursor;
+		ApplyPanelInputMode(true);
+	}
+	GalacticPanel->OpenPanel(InitialTab);
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Galactic Command Panel opened (tab=%d)."), InitialTab);
+}
+
+void AHallHUD::CloseGalacticPanel()
+{
+	if (!GalacticPanel || !GalacticPanel->IsPanelOpen()) { return; }
+	GalacticPanel->ClosePanel();
+	ApplyPanelInputMode(false);
+}
+
+bool AHallHUD::IsGalacticPanelOpen() const
+{
+	return GalacticPanel && GalacticPanel->IsPanelOpen();
+}
+
+void AHallHUD::HandleGalacticPanelClosed()
+{
+	ApplyPanelInputMode(false);
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Galactic Command Panel closed."));
 }
 
 void AHallHUD::ApplyPanelInputMode(bool bPanelOpen)

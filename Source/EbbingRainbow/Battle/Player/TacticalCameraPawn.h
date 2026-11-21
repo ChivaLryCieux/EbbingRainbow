@@ -91,6 +91,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
 	void SnapTo(const FVector& WorldLocation);
 
+	/** 立即设置臂长与偏航 (无插值), 供 GameMode 指定开局视野;
+	 *  缩放-俯仰联动开启时同步重算俯仰; InYawDeg 缺省保持当前朝向 */
+	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
+	void SnapArmLength(float InArmLength, float InYawDeg = 1000.0f);
+
 	/** 设置平移范围 (XY) */
 	UFUNCTION(BlueprintCallable, Category = "Tactical Camera|Movement")
 	void SetMoveBounds(const FBox& InBounds);
@@ -198,6 +203,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Movement", meta = (ClampMin = "200.0", ClampMax = "4000.0", UIMin = "400.0", UIMax = "2500.0"))
 	float FocusArmLength = 1250.0f;
 
+	// ==========================================
+	// 大地形与时缓适配 (Large Terrain & Slow-Mo)
+	// ==========================================
+
+	/** 开启后焦点 Z 轴自动贴合地面高度, 且镜头自动避让山体遮挡 (大沙盘模式用) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Terrain")
+	bool bTerrainFollowingPivot = false;
+
+	/** 相机镜头与地表之间保持的最小垂直净空 (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Terrain", meta = (ClampMin = "100.0", ClampMax = "2000.0"))
+	float MinCameraGroundClearance = 420.0f;
+
+	/** 地形贴合射线半高 (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Terrain")
+	float TerrainTraceHalfHeight = 25000.0f;
+
+	/** 战术时缓期间相机保持 1:1 真实时间手感 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical Camera|Movement")
+	bool bUnscaledInTimeDilation = true;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -209,6 +234,7 @@ private:
 	void StartOrbit();
 	void StopOrbit();
 	float GetCoupledPitchForArmLength(float InArmLength) const;
+	bool SampleTerrainZ(float X, float Y, float& OutZ) const;
 
 	/** 把目标点夹到竞技场范围内 (跟随态每帧都要夹, 防止棋子走出边界把镜头带走) */
 	FVector ClampToBounds(const FVector& InLocation) const;

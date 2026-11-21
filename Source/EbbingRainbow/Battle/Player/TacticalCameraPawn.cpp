@@ -10,6 +10,7 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/WorldSettings.h"
 #include "Components/InputComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -121,6 +122,33 @@ void ATacticalCameraPawn::SetMoveBounds(const FBox& InBounds)
 void ATacticalCameraPawn::FocusOn(const FVector& WorldLocation)
 {
 	TargetLocation = ClampToBounds(WorldLocation);
+	if (bTerrainFollowingPivot)
+	{
+		float GroundZ = 0.0f;
+		if (SampleTerrainZ(TargetLocation.X, TargetLocation.Y, GroundZ))
+		{
+			TargetLocation.Z = GroundZ;
+		}
+	}
+}
+
+bool ATacticalCameraPawn::SampleTerrainZ(float X, float Y, float& OutZ) const
+{
+	UWorld* World = GetWorld();
+	if (!World) { return false; }
+
+	FHitResult Hit;
+	FCollisionObjectQueryParams ObjParams;
+	ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(TacticalCamTerrain), false, this);
+	const FVector A(X, Y, TerrainTraceHalfHeight);
+	const FVector B(X, Y, -TerrainTraceHalfHeight);
+	if (World->LineTraceSingleByObjectType(Hit, A, B, ObjParams, QueryParams))
+	{
+		OutZ = Hit.Location.Z;
+		return true;
+	}
+	return false;
 }
 
 FVector ATacticalCameraPawn::ClampToBounds(const FVector& InLocation) const
@@ -143,6 +171,25 @@ void ATacticalCameraPawn::SnapTo(const FVector& WorldLocation)
 {
 	FocusOn(WorldLocation);
 	SetActorLocation(TargetLocation);
+}
+
+void ATacticalCameraPawn::SnapArmLength(float InArmLength, float InYawDeg)
+{
+	TargetArmLength = FMath::Clamp(InArmLength, MinArmLength, MaxArmLength);
+	if (InYawDeg < 999.0f)
+	{
+		TargetYaw = InYawDeg;
+	}
+	if (bEnableZoomPitchCoupling)
+	{
+		TargetPitch = FMath::Clamp(GetCoupledPitchForArmLength(TargetArmLength), MinPitch, MaxPitch);
+		ManualPitchOffset = 0.0f;
+	}
+	if (SpringArm)
+	{
+		SpringArm->TargetArmLength = TargetArmLength;
+		SpringArm->SetRelativeRotation(FRotator(TargetPitch, TargetYaw, 0.0f));
+	}
 }
 
 void ATacticalCameraPawn::FocusOnUnit(ABattleUnit* Unit)
@@ -318,6 +365,14 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// 战术时缓期间相机保持 1:1 真实时间手感
+	float CamDt = DeltaSeconds;
+	if (bUnscaledInTimeDilation && GetWorld() && GetWorld()->GetWorldSettings())
+	{
+		const float TD = FMath::Max(0.05f, GetWorld()->GetWorldSettings()->GetEffectiveTimeDilation());
+		CamDt = FMath::Min(0.05f, DeltaSeconds / TD);
+	}
+
 	// 跟随态: 每帧把锚点贴到被跟随棋子上 —— 这是"敌人走位时镜头不动"的修复点。
 	// 棋子移动中用一个更快的插值速度, 保证不拖在后面; 停住后回落到常规聚焦速度。
 	float LocInterpSpeed = FocusInterpSpeed;
@@ -459,22 +514,27 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 
 			// 缩放越远平移越快，基准臂长按 2000 归一化
 			const float ZoomFactor = FMath::Max(0.35f, SpringArm->TargetArmLength / 2000.0f);
-			FocusOn(TargetLocation + Dir * PanSpeed * ZoomFactor * DeltaSeconds);
-			// 手动平移时直接跟随, 避免插值滞后
-			SetActorLocation(TargetLocation);
+			FocusOn(TargetLocation + Dir * PanSpeed * ZoomFactor * CamDt);
+			// 手动平移时 XY 直接跟随避免滞后, Z 平滑贴合地形防起伏跳变
+			const FVector CurLoc = GetActorLocation();
+			const float NextZ = bTerrainFollowingPivot
+				? FMath::FInterpTo(CurLoc.Z, TargetLocation.Z, CamDt, 10.0f)
+				: TargetLocation.Z;
+			SetActorLocation(FVector(TargetLocation.X, TargetLocation.Y, NextZ));
 			EnterFreeMode();
 		}
 
 		if (!bTypingInUI)
 		{
-			if (PC->IsInputKeyDown(EKeys::Q)) TargetYaw -= RotateSpeed * DeltaSeconds;
-			if (PC->IsInputKeyDown(EKeys::E)) TargetYaw += RotateSpeed * DeltaSeconds;
+			if (PC->IsInputKeyDown(EKeys::Q)) TargetYaw -= RotateSpeed * CamDt;
+			if (PC->IsInputKeyDown(EKeys::E)) TargetYaw += RotateSpeed * CamDt;
 		}
 	}
 
 	// 平滑聚焦 / 缩放 / 旋转
-	SetActorLocation(FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaSeconds, LocInterpSpeed));
-	SpringArm->TargetArmLength = FMath::FInterpTo(SpringArm->TargetArmLength, TargetArmLength, DeltaSeconds, ZoomInterpSpeed);
+	const FVector InterpLoc = FMath::VInterpTo(GetActorLocation(), TargetLocation, CamDt, LocInterpSpeed);
+	SetActorLocation(InterpLoc);
+	SpringArm->TargetArmLength = FMath::FInterpTo(SpringArm->TargetArmLength, TargetArmLength, CamDt, ZoomInterpSpeed);
 
 	// Yaw 保持归一化并按最短路径插值（与 FInterpTo 同公式），
 	// 防止累计圈数或归一化边界处出现“绕远路”式的多余旋转
@@ -484,7 +544,26 @@ void ATacticalCameraPawn::Tick(float DeltaSeconds)
 	const float YawDist = FMath::FindDeltaAngleDegrees(CurrentYaw, TargetYaw);
 	const float NewYaw = (YawDist * YawDist < SMALL_NUMBER)
 		? TargetYaw
-		: CurrentYaw + YawDist * FMath::Clamp(DeltaSeconds * RotateInterpSpeed, 0.0f, 1.0f);
-	const float NewPitch = FMath::FInterpTo(CurrentPitch, TargetPitch, DeltaSeconds, RotateInterpSpeed);
+		: CurrentYaw + YawDist * FMath::Clamp(CamDt * RotateInterpSpeed, 0.0f, 1.0f);
+	float NewPitch = FMath::FInterpTo(CurrentPitch, TargetPitch, CamDt, RotateInterpSpeed);
+
+	// 大地形防穿地保护: 预测镜头位置下方地形高度, 必要时自动加大俯角以保持净空
+	if (bTerrainFollowingPivot && SpringArm->TargetArmLength > KINDA_SMALL_NUMBER)
+	{
+		const FVector LookDir = FRotator(NewPitch, NewYaw, 0.0f).Vector();
+		const FVector EyePos = InterpLoc - LookDir * SpringArm->TargetArmLength;
+		float CamGroundZ = 0.0f;
+		if (SampleTerrainZ(EyePos.X, EyePos.Y, CamGroundZ))
+		{
+			const float RequiredZ = CamGroundZ + MinCameraGroundClearance;
+			if (EyePos.Z < RequiredZ)
+			{
+				const float Ratio = FMath::Clamp((RequiredZ - InterpLoc.Z) / SpringArm->TargetArmLength, 0.0f, 0.98f);
+				const float SafePitch = -FMath::RadiansToDegrees(FMath::Asin(Ratio));
+				NewPitch = FMath::Clamp(FMath::Min(NewPitch, SafePitch), -88.0f, MaxPitch);
+			}
+		}
+	}
+
 	SpringArm->SetRelativeRotation(FRotator(NewPitch, NewYaw, 0.0f));
 }

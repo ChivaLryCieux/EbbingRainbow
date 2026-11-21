@@ -80,10 +80,12 @@ void UERHallHUD::NativeConstruct()
 
 	if (PersonnelButton)
 	{
+		PersonnelButton->SetButtonTexts(INVTEXT("兵团整备"), INVTEXT("IRIS LEGION ROSTER"));
 		PersonnelButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandlePersonnelClicked);
 	}
 	if (RoutesButton)
 	{
+		RoutesButton->SetButtonTexts(INVTEXT("银河委托"), INVTEXT("GALACTIC CONTRACTS"));
 		RoutesButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleRoutesClicked);
 	}
 	if (ZenHintText && !ZenHintMessage.IsEmpty())
@@ -91,13 +93,26 @@ void UERHallHUD::NativeConstruct()
 		ZenHintText->SetText(ZenHintMessage);
 	}
 
+	const FString SloganTag = TEXT("IRIS FOUNDATION // GALACTIC MILITARY COMMAND SERVICES");
+	const FString SloganSub = TEXT("「 我们面向全银河提供军事指挥服务 」");
+	if (MastheadTagText)
+	{
+		MastheadTagText->SetText(FText::FromString(SloganTag));
+	}
+	if (MastheadMetaText)
+	{
+		MastheadMetaText->SetText(FText::FromString(SloganSub));
+		MastheadMetaText->SetFont(ERUI::FontBold(12, 120));
+		MastheadMetaText->SetColorAndOpacity(FSlateColor(ERUI::Theme()->Accent));
+	}
+
 	ApplyZenState(false);
 
 	if (bEnableEntranceAnimation && !IsDesignTime())
 	{
 		EntranceTrack.Trigger(FMath::Max(0.45f, EntranceDuration));
-		MastheadTagCipher.Start(TEXT("EBBING RAINBOW // SANCTUM TERMINAL"), 0.42f, 0.08f);
-		MastheadMetaCipher.Start(TEXT("SECTOR 00  /  ORBITAL SANCTUARY  /  STANDBY"), 0.46f, 0.20f);
+		MastheadTagCipher.Start(SloganTag, 0.42f, 0.08f);
+		MastheadMetaCipher.FinishImmediately();
 		if (PersonnelButton) { PersonnelButton->TriggerEntrancePulse(0.26f); }
 		if (RoutesButton)    { RoutesButton->TriggerEntrancePulse(0.36f); }
 		ApplyEntrancePose();
@@ -415,25 +430,34 @@ void UERHallHUD::LaunchRouteMap()
 
 void UERHallHUD::HandlePersonnelClicked()
 {
-	UE_LOG(LogERHall, Log, TEXT("[Hall] Personnel Management clicked."));
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Legion Roster clicked -> Galactic Panel (Tab 1)."));
 	BP_OnPersonnelClicked();
 
 	if (APlayerController* PC = GetOwningPlayer())
 	{
 		if (AHallHUD* HallHUD = Cast<AHallHUD>(PC->GetHUD()))
 		{
-			HallHUD->OpenPersonnelPanel();
+			HallHUD->OpenGalacticPanel(1);
 		}
 		else
 		{
-			UE_LOG(LogERHall, Warning, TEXT("[Hall] Personnel panel skipped: HUD is not AHallHUD."));
+			UE_LOG(LogERHall, Warning, TEXT("[Hall] Galactic panel skipped: HUD is not AHallHUD."));
 		}
 	}
 }
 
 void UERHallHUD::HandleRoutesClicked()
 {
-	UE_LOG(LogERHall, Log, TEXT("[Hall] Routes Management clicked -> Route Map."));
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Galactic Contracts clicked -> Galactic Panel (Tab 0)."));
 	BP_OnRoutesClicked();
+
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		if (AHallHUD* HallHUD = Cast<AHallHUD>(PC->GetHUD()))
+		{
+			HallHUD->OpenGalacticPanel(0);
+			return;
+		}
+	}
 	LaunchRouteMap();
 }
