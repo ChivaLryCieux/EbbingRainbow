@@ -11,7 +11,7 @@ assert m.init()
 ACT = "editor_toolset.toolsets.actor.ActorTools"
 OBJ = "editor_toolset.toolsets.object.ObjectTools"
 SCENE = "editor_toolset.toolsets.scene.SceneTools"
-BASE = "/Game/Battle/Maps/Lvl_Arena.Lvl_Arena:PersistentLevel."
+BASE = "/Game/Battle/Maps/Lvl_ConcreteArena.Lvl_ConcreteArena:PersistentLevel."
 
 
 def call(ts, tool, args=None):

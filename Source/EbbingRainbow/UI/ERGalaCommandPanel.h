@@ -9,37 +9,12 @@
 
 class UBorder;
 class UCanvasPanel;
+class UERActionButton;
 class UHorizontalBox;
 class UProgressBar;
 class UScrollBox;
 class UTextBlock;
 class UVerticalBox;
-
-/** 带整数载荷的轻量级 UButton (避免动态列表写大量 OnClicked0..N 样板函数) */
-UCLASS()
-class EBBINGRAINBOW_API UERGalaIndexButton : public UButton
-{
-	GENERATED_BODY()
-
-public:
-	void InitAction(int32 InIndex, TFunction<void(int32)> InCallback)
-	{
-		Index = InIndex;
-		Callback = MoveTemp(InCallback);
-		OnClicked.RemoveDynamic(this, &UERGalaIndexButton::HandleClicked);
-		OnClicked.AddDynamic(this, &UERGalaIndexButton::HandleClicked);
-	}
-
-private:
-	UFUNCTION()
-	void HandleClicked()
-	{
-		if (Callback) { Callback(Index); }
-	}
-
-	int32 Index = 0;
-	TFunction<void(int32)> Callback;
-};
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnGalaPanelClosed);
 
@@ -80,17 +55,11 @@ private:
 	void RebuildRosterList();
 	void SetActiveTab(int32 TabIndex);
 
-	UFUNCTION() void OnCloseClicked() { ClosePanel(); }
-	UFUNCTION() void OnRefreshContractsClicked();
-	UFUNCTION() void OnReinforceAllClicked();
+	void OnRefreshContractsClicked();
+	void OnReinforceAllClicked();
 
-	UButton* MakeStyledButton(const FText& Label, const FLinearColor& BgColor,
-		const FLinearColor& BorderColor, const FLinearColor& TextColor,
-		float PadX = 16.0f, float PadY = 8.0f, int32 FontSize = 11);
-
-	UERGalaIndexButton* MakeIndexedStyledButton(int32 Index, TFunction<void(int32)> Callback,
-		const FText& Label, const FLinearColor& BgColor, const FLinearColor& BorderColor,
-		const FLinearColor& TextColor, float PadX = 16.0f, float PadY = 8.0f, int32 FontSize = 11);
+	/** 「白底墨字彩条」按钮 (只含中文); OnClick 用 lambda 承载载荷 */
+	UERActionButton* MakeBoneButton(const FText& Label, int32 FontSize, bool bArrow, TFunction<void()> OnClick);
 
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> PanelTitleText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CreditsText;

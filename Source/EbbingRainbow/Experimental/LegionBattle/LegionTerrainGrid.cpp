@@ -2,6 +2,7 @@
 
 #include "Experimental/LegionBattle/LegionTerrainGrid.h"
 
+#include "Async/ParallelFor.h"
 #include "Core/ERLog.h"
 #include "Engine/World.h"
 #include "CollisionQueryParams.h"
@@ -71,7 +72,8 @@ void FLegionTerrainGrid::Build(UWorld* World, const FVector& InCenter, float InH
 
 			const float Grad = FMath::Sqrt(DZx * DZx + DZy * DZy);
 			C.SlopeDeg = FMath::RadiansToDegrees(FMath::Atan(Grad));
-			C.bWalkable = (C.SlopeDeg <= InMaxWalkableSlopeDeg);
+			C.bBaseWalkable = (C.SlopeDeg <= InMaxWalkableSlopeDeg);
+			C.bWalkable = C.bBaseWalkable;
 			if (C.bWalkable) { ++WalkableCount; }
 		}
 	}
@@ -371,6 +373,75 @@ float FLegionTerrainGrid::ComputeElevationMultiplier(float AttackerZ, float Defe
 	return FMath::Clamp(1.0f + DiffM * 0.03f, 0.80f, 1.35f);
 }
 
+void FLegionTerrainGrid::ResetTrees()
+{
+	for (FCell& C : Cells)
+	{
+		C.TreeCount = 0;
+		C.bWalkable = C.bBaseWalkable;
+	}
+}
+
+void FLegionTerrainGrid::AddTreeInfluence(const FVector& TreeWorld, float Radius)
+{
+	if (!IsBuilt()) { return; }
+	const int32 X0 = FMath::Max(0, FMath::FloorToInt((TreeWorld.X - Radius - OriginXY.X) / CellSize));
+	const int32 X1 = FMath::Min(GridWidth - 1, FMath::FloorToInt((TreeWorld.X + Radius - OriginXY.X) / CellSize));
+	const int32 Y0 = FMath::Max(0, FMath::FloorToInt((TreeWorld.Y - Radius - OriginXY.Y) / CellSize));
+	const int32 Y1 = FMath::Min(GridHeight - 1, FMath::FloorToInt((TreeWorld.Y + Radius - OriginXY.Y) / CellSize));
+	const float R2 = Radius * Radius;
+	for (int32 GY = Y0; GY <= Y1; ++GY)
+	{
+		for (int32 GX = X0; GX <= X1; ++GX)
+		{
+			const float CX = OriginXY.X + (GX + 0.5f) * CellSize;
+			const float CY = OriginXY.Y + (GY + 0.5f) * CellSize;
+			if (FMath::Square(CX - TreeWorld.X) + FMath::Square(CY - TreeWorld.Y) <= R2)
+			{
+				FCell& C = Cells[IndexOf(GX, GY)];
+				C.TreeCount = (uint8)FMath::Min<int32>(255, C.TreeCount + 1);
+			}
+		}
+	}
+}
+
+void FLegionTerrainGrid::ApplyTreeObstacles(int32 BlockThreshold)
+{
+	for (FCell& C : Cells)
+	{
+		C.bWalkable = C.bBaseWalkable && (int32)C.TreeCount < BlockThreshold;
+	}
+}
+
+int32 FLegionTerrainGrid::GetTreeCountWorld(const FVector& WorldPos) const
+{
+	int32 GX = 0, GY = 0;
+	if (!WorldToGrid(WorldPos, GX, GY)) { return 0; }
+	return Cells[IndexOf(GX, GY)].TreeCount;
+}
+
+float FLegionTerrainGrid::GetRangedCoverMultiplier(const FVector& WorldPos) const
+{
+	const int32 N = GetTreeCountWorld(WorldPos);
+	if (N <= 0) { return 1.0f; }
+	// 疏林 (1 冠) 减伤 12%, 林深 (2+ 冠) 减伤 25%
+	return N == 1 ? 0.88f : 0.75f;
+}
+
+void FLegionTerrainGrid::GetTreeStats(int32& OutBlocked, int32& OutCovered, int32& OutTotal) const
+{
+	OutBlocked = 0;
+	OutCovered = 0;
+	OutTotal = 0;
+	for (const FCell& C : Cells)
+	{
+		if (!C.bValid) { continue; }
+		++OutTotal;
+		if (C.TreeCount > 0) { ++OutCovered; }
+		if (C.bBaseWalkable && !C.bWalkable) { ++OutBlocked; }
+	}
+}
+
 void FLegionTerrainGrid::BuildMinimapPixels(int32 SizePx, TArray<FColor>& OutPixels) const
 {
 	OutPixels.Reset();
@@ -419,14 +490,32 @@ void FLegionTerrainGrid::BuildMinimapPixels(int32 SizePx, TArray<FColor>& OutPix
 
 		const int32 NX = FMath::RoundToInt(FX);
 		const int32 NY = FMath::RoundToInt(FY);
-		OutWalk = Cells[IndexOf(NX, NY)].bWalkable;
+		OutWalk = Cells[IndexOf(NX, NY)].bBaseWalkable;
+	};
+
+	// 林地覆盖度 (0..1): 树冠数双线性平滑, 2 冠即视为满林
+	auto SampleForest = [&](float U, float V) -> float
+	{
+		const float FX = FMath::Clamp(U * (float)GridWidth - 0.5f, 0.0f, (float)(GridWidth - 1));
+		const float FY = FMath::Clamp(V * (float)GridHeight - 0.5f, 0.0f, (float)(GridHeight - 1));
+		const int32 X0 = FMath::FloorToInt(FX);
+		const int32 Y0 = FMath::FloorToInt(FY);
+		const int32 X1 = FMath::Min(GridWidth - 1, X0 + 1);
+		const int32 Y1 = FMath::Min(GridHeight - 1, Y0 + 1);
+		const float TX = FX - (float)X0;
+		const float TY = FY - (float)Y0;
+		const float T0 = FMath::Lerp((float)Cells[IndexOf(X0, Y0)].TreeCount, (float)Cells[IndexOf(X1, Y0)].TreeCount, TX);
+		const float T1 = FMath::Lerp((float)Cells[IndexOf(X0, Y1)].TreeCount, (float)Cells[IndexOf(X1, Y1)].TreeCount, TX);
+		return FMath::Clamp(FMath::Lerp(T0, T1, TY) * 0.5f, 0.0f, 1.0f);
 	};
 
 	const float MinorStep = 500.0f;
 	const float MajorStep = 2500.0f;
 	const float InvPx = 1.0f / (float)SizePx;
+	// 高分辨率纹理放粗线宽, 使屏幕上的等高线粗细与 1536px 版本一致
+	const float ThickScale = FMath::Max(1.0f, (float)SizePx / 1536.0f);
 
-	for (int32 PY = 0; PY < SizePx; ++PY)
+	ParallelFor(SizePx, [&](int32 PY)
 	{
 		// 主相机 Yaw=90° 面朝 +Y: 上=+Y(北), 左=+X, 右=-X
 		const float V = 1.0f - ((float)PY + 0.5f) * InvPx;
@@ -450,13 +539,14 @@ void FLegionTerrainGrid::BuildMinimapPixels(int32 SizePx, TArray<FColor>& OutPix
 			auto ContourMask = [&](float Step, float PxThickness) -> float
 			{
 				const float Val = H / Step;
-				const float Fw = FMath::Max(GradPx / Step, 0.025f);
+				// 平缓处的最小带宽随 ThickScale 反向缩小, 保证高度带宽度不随纹理分辨率变化
+				const float Fw = FMath::Max(GradPx / Step, 0.025f / ThickScale);
 				const float Dist = FMath::Abs(FMath::Frac(Val - 0.5f) - 0.5f) / Fw;
 				return 1.0f - FMath::Clamp(Dist / PxThickness, 0.0f, 1.0f);
 			};
 
-			const float MinorA = ContourMask(MinorStep, 0.95f);
-			const float MajorA = ContourMask(MajorStep, 1.35f);
+			const float MinorA = ContourMask(MinorStep, 0.95f * ThickScale);
+			const float MajorA = ContourMask(MajorStep, 1.35f * ThickScale);
 
 			const float NormH = FMath::Clamp((H - MinZ) / RangeZ, 0.0f, 1.0f);
 			float Luma = FMath::Lerp(16.0f, 64.0f, NormH);
@@ -465,11 +555,20 @@ void FLegionTerrainGrid::BuildMinimapPixels(int32 SizePx, TArray<FColor>& OutPix
 				Luma *= 0.62f; // 陡崖略压暗, 小地图一眼可辨不可通行山脊
 			}
 
+			// 林地: 压暗 + 45° 斜纹阴影线, 战略图上一眼可辨密林/疏林
+			const float Forest = SampleForest(U, V);
+			if (Forest > 0.05f)
+			{
+				Luma *= FMath::Lerp(1.0f, 0.55f, Forest);
+				const int32 Period = FMath::Max(5, SizePx / 128);
+				if (((PX + PY) % Period) * 10 < Period * 3) { Luma = FMath::Lerp(Luma, 92.0f, 0.55f * Forest); }
+			}
+
 			Luma = FMath::Lerp(Luma, 132.0f, MinorA * 0.68f);
 			Luma = FMath::Lerp(Luma, 236.0f, MajorA * 0.92f);
 
 			const uint8 V8 = (uint8)FMath::Clamp(FMath::RoundToInt(Luma), 0, 255);
 			OutPixels[PY * SizePx + PX] = FColor(V8, V8, V8, 255);
 		}
-	}
+	});
 }

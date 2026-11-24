@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERHallHUD.h"
 #include "Animation/WidgetAnimation.h"
@@ -78,14 +78,17 @@ void UERHallHUD::NativeConstruct()
 		}
 	}
 
+	// 两个入口统一「白底墨字彩条」, 按钮上只有中文 (无英文副标)
 	if (PersonnelButton)
 	{
-		PersonnelButton->SetButtonTexts(INVTEXT("兵团整备"), INVTEXT("IRIS LEGION ROSTER"));
+		PersonnelButton->SetButtonTexts(INVTEXT("兵团整备"), FText::GetEmpty());
+		PersonnelButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
 		PersonnelButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandlePersonnelClicked);
 	}
 	if (RoutesButton)
 	{
-		RoutesButton->SetButtonTexts(INVTEXT("银河委托"), INVTEXT("GALACTIC CONTRACTS"));
+		RoutesButton->SetButtonTexts(INVTEXT("银河委托"), FText::GetEmpty());
+		RoutesButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
 		RoutesButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleRoutesClicked);
 	}
 	if (ZenHintText && !ZenHintMessage.IsEmpty())
@@ -93,7 +96,7 @@ void UERHallHUD::NativeConstruct()
 		ZenHintText->SetText(ZenHintMessage);
 	}
 
-	const FString SloganTag = TEXT("IRIS FOUNDATION // GALACTIC MILITARY COMMAND SERVICES");
+	const FString SloganTag = TEXT("虹膜基金会  ·  银河军事指挥服务");
 	const FString SloganSub = TEXT("「 我们面向全银河提供军事指挥服务 」");
 	if (MastheadTagText)
 	{
@@ -166,8 +169,8 @@ void UERHallHUD::BuildLayout()
 	if (!CornerReticle)
 	{
 		CornerReticle = WidgetTree->ConstructWidget<UERCornerReticle>(UERCornerReticle::StaticClass(), TEXT("CornerReticle"));
-		CornerReticle->TopRightCode = TEXT("ER // 58.01");
-		CornerReticle->BottomRightCode = TEXT("ORBITAL.SANCTUM");
+		CornerReticle->TopRightCode = TEXT("");
+		CornerReticle->BottomRightCode = TEXT("");
 		CornerReticle->ReticleColor = FLinearColor(0.95f, 0.95f, 0.92f, 0.46f);
 		CornerReticle->ShadowColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.65f);
 		CornerReticle->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
@@ -207,8 +210,8 @@ void UERHallHUD::BuildLayout()
 			S->SetPadding(FMargin(24.0f, 16.0f, 34.0f, 16.0f));
 		}
 
-		MastheadTagText = ERUI::MakeText(this, INVTEXT("EBBING RAINBOW // SANCTUM TERMINAL"), EERTypeScale::Micro, T->BoneSecondary, true);
-		MastheadTagText->SetFont(ERUI::FontRegular(9, 280));
+		MastheadTagText = ERUI::MakeText(this, INVTEXT("虹膜基金会  ·  银河军事指挥服务"), EERTypeScale::Micro, T->BoneSecondary, false);
+		MastheadTagText->SetFont(ERUI::FontBold(13, 120));
 		MCol->AddChildToVerticalBox(MastheadTagText);
 
 		MastheadTitleText = ERUI::MakeText(this, INVTEXT("虹不我与"), EERTypeScale::Display, T->Bone);
@@ -222,8 +225,8 @@ void UERHallHUD::BuildLayout()
 		MastheadDivider->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		MCol->AddChildToVerticalBox(MastheadDivider)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 7.0f));
 
-		MastheadMetaText = ERUI::MakeText(this, INVTEXT("SECTOR 00  /  ORBITAL SANCTUARY  /  STANDBY"), EERTypeScale::Micro, T->BoneTertiary, true);
-		MastheadMetaText->SetFont(ERUI::FontRegular(8, 220));
+		MastheadMetaText = ERUI::MakeText(this, INVTEXT("「 我们面向全银河提供军事指挥服务 」"), EERTypeScale::Micro, T->BoneTertiary, false);
+		MastheadMetaText->SetFont(ERUI::FontBold(14, 120));
 		MCol->AddChildToVerticalBox(MastheadMetaText);
 
 		UCanvasPanelSlot* MS = DashCanvas->AddChildToCanvas(MastOv);
@@ -245,10 +248,9 @@ void UERHallHUD::BuildLayout()
 
 		PersonnelButton = WidgetTree->ConstructWidget<UERHallButton>(UERHallButton::StaticClass(), TEXT("PersonnelButton"));
 		PersonnelButton->IndexCode = INVTEXT("01");
-		PersonnelButton->Label = INVTEXT("人员管理");
-		PersonnelButton->Caption = INVTEXT("PERSONNEL ROSTER");
-		PersonnelButton->AccentColor = T->AllyMark;
-		PersonnelButton->bPrimary = false;
+		PersonnelButton->Label = INVTEXT("兵团整备");
+		PersonnelButton->AccentColor = T->Accent;
+		PersonnelButton->bPrimary = true;
 		DockBox->AddChildToHorizontalBox(PersonnelButton);
 
 		USpacer* Gap = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass(), TEXT("DockSpacer"));
@@ -257,8 +259,7 @@ void UERHallHUD::BuildLayout()
 
 		RoutesButton = WidgetTree->ConstructWidget<UERHallButton>(UERHallButton::StaticClass(), TEXT("RoutesButton"));
 		RoutesButton->IndexCode = INVTEXT("02");
-		RoutesButton->Label = INVTEXT("航线管理");
-		RoutesButton->Caption = INVTEXT("EXPEDITION ROUTES");
+		RoutesButton->Label = INVTEXT("银河委托");
 		RoutesButton->AccentColor = T->Accent;
 		RoutesButton->bPrimary = true;
 		DockBox->AddChildToHorizontalBox(RoutesButton);

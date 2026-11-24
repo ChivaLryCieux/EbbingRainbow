@@ -11,6 +11,7 @@
 class UBorder;
 class UButton;
 class UCanvasPanel;
+class UERActionButton;
 class UERCornerReticle;
 class UERPersonnelMemberRow;
 class UERPrismBar;
@@ -155,6 +156,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SquadSummaryText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SquadStateText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> CloseButton;
+	UPROPERTY(Transient) TObjectPtr<UERActionButton> CloseActionButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> CloseGlyphText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechDivider> HeaderDivider;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> HeaderRule;

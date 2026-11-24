@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERPersonnelPanel.h"
 
@@ -10,6 +10,7 @@
 #include "Input/Events.h"
 #include "InputCoreTypes.h"
 #include "Run/RunSubsystem.h"
+#include "UI/ERActionButton.h"
 #include "UI/ERPersonnelMemberRow.h"
 #include "UI/ERStatCell.h"
 #include "UI/ERUIStatics.h"
@@ -115,6 +116,10 @@ void UERPersonnelPanel::BindDelegates()
 	if (CloseButton)
 	{
 		CloseButton->OnClicked.AddUniqueDynamic(this, &UERPersonnelPanel::HandleCloseClicked);
+	}
+	if (CloseActionButton)
+	{
+		CloseActionButton->OnActionClicked.AddUniqueDynamic(this, &UERPersonnelPanel::HandleCloseClicked);
 	}
 }
 
@@ -235,7 +240,7 @@ void UERPersonnelPanel::Build()
 		TSlot->SetVerticalAlignment(VAlign_Center);
 		TSlot->SetPadding(FMargin(14.0f, 0.0f, 0.0f, 0.0f));
 
-		HeaderCaption = ERUI::MakeText(this, INVTEXT("OPERATOR DOSSIER // SQUAD MANIFEST"), EERTypeScale::Micro, T->BoneSecondary, true);
+		HeaderCaption = ERUI::MakeText(this, INVTEXT("干员档案  ·  小队名册"), EERTypeScale::Micro, T->BoneSecondary, true);
 		HeaderCaption->SetFont(MakeFont(T, 9, 280, false));
 		TitleCol->AddChildToVerticalBox(HeaderCaption);
 
@@ -272,27 +277,10 @@ void UERPersonnelPanel::Build()
 		SquadStateText->SetFont(MakeFont(T, 8, 180, false));
 		StatusCol->AddChildToVerticalBox(SquadStateText)->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 0.0f));
 
-		CloseButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("CloseButton"));
-		{
-			FButtonStyle Style;
-			const FSlateBrush Tr = ERUI::TransparentBrush();
-			Style.SetNormal(Tr); Style.SetHovered(Tr); Style.SetPressed(Tr); Style.SetDisabled(Tr);
-			Style.SetNormalPadding(FMargin(0.0f)); Style.SetPressedPadding(FMargin(0.0f));
-			CloseButton->SetStyle(Style);
-			CloseButton->SetCursor(EMouseCursor::Hand);
-		}
-		{
-			UBorder* CloseBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CloseRing"));
-			CloseBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.015f, 0.017f, 0.022f, 0.92f), 1.0f, FLinearColor(0.92f, 0.92f, 0.90f, 0.36f)));
-			CloseBox->SetBrushColor(FLinearColor::White);
-			CloseBox->SetPadding(FMargin(16.0f, 8.0f));
-			CloseButton->SetContent(CloseBox);
-
-			CloseGlyphText = ERUI::MakeText(this, INVTEXT("×  ESC"), EERTypeScale::Micro, T->Bone, true);
-			CloseGlyphText->SetFont(MakeFont(T, 11, 200, true));
-			CloseBox->SetContent(CloseGlyphText);
-		}
-		TopRightRow->AddChildToHorizontalBox(CloseButton)->SetVerticalAlignment(VAlign_Center);
+		// 「白底墨字彩条」返回按钮 (只含中文)
+		CloseActionButton = UERActionButton::Make(this, INVTEXT("返回大厅"), 24, true);
+		CloseActionButton->SetMinSize(200.0f, 0.0f);
+		TopRightRow->AddChildToHorizontalBox(CloseActionButton)->SetVerticalAlignment(VAlign_Center);
 
 		UCanvasPanelSlot* S = Root->AddChildToCanvas(TopRightRow);
 		S->SetAnchors(FAnchors(1.0f, 0.0f));
@@ -319,7 +307,7 @@ void UERPersonnelPanel::Build()
 		IdxTag->SetContent(PortraitIndexText);
 		IdxRow->AddChildToHorizontalBox(IdxTag)->SetVerticalAlignment(VAlign_Center);
 
-		PortraitCaptionText = ERUI::MakeText(this, INVTEXT("SQUAD SELECT // [1-4] 切换干员档案"), EERTypeScale::Micro, T->BoneSecondary, true);
+		PortraitCaptionText = ERUI::MakeText(this, INVTEXT("按 1 至 4 切换干员档案"), EERTypeScale::Micro, T->BoneSecondary, true);
 		PortraitCaptionText->SetFont(MakeFont(T, 8, 220, false));
 		UHorizontalBoxSlot* CapSlot = IdxRow->AddChildToHorizontalBox(PortraitCaptionText);
 		CapSlot->SetVerticalAlignment(VAlign_Center);
@@ -397,7 +385,7 @@ void UERPersonnelPanel::Build()
 	InfoDivider->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	InfoCol->AddChildToVerticalBox(InfoDivider)->SetPadding(FMargin(0.0f, 22.0f, 0.0f, 0.0f));
 
-	StatsTitleText = ERUI::MakeText(this, INVTEXT("基本属性 // ATTRIBUTES"), EERTypeScale::Micro, T->BoneTertiary, true);
+	StatsTitleText = ERUI::MakeText(this, INVTEXT("基本属性"), EERTypeScale::Micro, T->BoneTertiary, true);
 	StatsTitleText->SetFont(MakeFont(T, 9, 240, false));
 	InfoCol->AddChildToVerticalBox(StatsTitleText)->SetPadding(FMargin(0.0f, 20.0f, 0.0f, 0.0f));
 
@@ -409,7 +397,7 @@ void UERPersonnelPanel::Build()
 	SecondaryStatsBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	InfoCol->AddChildToVerticalBox(SecondaryStatsBox)->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 0.0f));
 
-	ResistTitleText = ERUI::MakeText(this, INVTEXT("四学派抗性 // RESISTANCE"), EERTypeScale::Micro, T->BoneTertiary, true);
+	ResistTitleText = ERUI::MakeText(this, INVTEXT("四学派抗性"), EERTypeScale::Micro, T->BoneTertiary, true);
 	ResistTitleText->SetFont(MakeFont(T, 9, 240, false));
 	InfoCol->AddChildToVerticalBox(ResistTitleText)->SetPadding(FMargin(0.0f, 24.0f, 0.0f, 0.0f));
 
@@ -417,7 +405,7 @@ void UERPersonnelPanel::Build()
 	ResistBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	InfoCol->AddChildToVerticalBox(ResistBox)->SetPadding(FMargin(0.0f, 12.0f, 0.0f, 0.0f));
 
-	SkillsTitleText = ERUI::MakeText(this, INVTEXT("战术技能 // LOADOUT"), EERTypeScale::Micro, T->BoneTertiary, true);
+	SkillsTitleText = ERUI::MakeText(this, INVTEXT("战术技能"), EERTypeScale::Micro, T->BoneTertiary, true);
 	SkillsTitleText->SetFont(MakeFont(T, 9, 240, false));
 	InfoCol->AddChildToVerticalBox(SkillsTitleText)->SetPadding(FMargin(0.0f, 24.0f, 0.0f, 0.0f));
 
@@ -428,7 +416,7 @@ void UERPersonnelPanel::Build()
 	InfoCol->AddChildToVerticalBox(WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass(), TEXT("DetailBottomSpacer")))
 		->SetSize(FillSize());
 
-	FooterHintText = ERUI::MakeText(this, INVTEXT("EBBING RAINBOW // OPERATOR ARCHIVE SYSTEM"), EERTypeScale::Micro, ERUI::Fade(T->BoneTertiary, 0.7f), true);
+	FooterHintText = ERUI::MakeText(this, INVTEXT("虹不我与  ·  干员档案系统"), EERTypeScale::Micro, ERUI::Fade(T->BoneTertiary, 0.7f), true);
 	FooterHintText->SetFont(MakeFont(T, 8, 260, false));
 	InfoCol->AddChildToVerticalBox(FooterHintText);
 }
@@ -703,11 +691,11 @@ void UERPersonnelPanel::RefreshHeader()
 				MaxSum += Unit.Stats.MaxIntegrity;
 			}
 			const int32 Percent = MaxSum > 0.0f ? FMath::RoundToInt(100.0f * Sum / MaxSum) : 100;
-			SquadStateText->SetText(FText::FromString(FString::Printf(TEXT("EXPEDITION ACTIVE // 平均完整度 %d%%"), Percent)));
+			SquadStateText->SetText(FText::FromString(FString::Printf(TEXT("远征进行中  ·  平均完整度 %d%%"), Percent)));
 		}
 		else
 		{
-			SquadStateText->SetText(INVTEXT("STANDBY // 尚未启程"));
+			SquadStateText->SetText(INVTEXT("待命  ·  尚未启程"));
 		}
 	}
 }
@@ -795,16 +783,16 @@ void UERPersonnelPanel::RefreshDetail()
 
 		MakeStatCell(PrimaryStatsBox, INVTEXT("完整度 // HP"), IntegrityValue, IntegrityTint);
 		MakeStatCell(PrimaryStatsBox, INVTEXT("行动点 // AP"), FText::FromString(FString::Printf(TEXT("%d"), Stats.MaxAP)), T->Bone);
-		MakeStatCell(PrimaryStatsBox, INVTEXT("先攻 // INIT"), FText::FromString(FString::Printf(TEXT("%d"), Stats.Initiative)), T->Bone);
-		MakeStatCell(PrimaryStatsBox, INVTEXT("闪避 // EVA"), FormatPercent(Stats.EvasionRate, false), T->Bone);
+		MakeStatCell(PrimaryStatsBox, INVTEXT("先攻"), FText::FromString(FString::Printf(TEXT("%d"), Stats.Initiative)), T->Bone);
+		MakeStatCell(PrimaryStatsBox, INVTEXT("闪避"), FormatPercent(Stats.EvasionRate, false), T->Bone);
 	}
 
 	if (SecondaryStatsBox)
 	{
 		SecondaryStatsBox->ClearChildren();
-		MakeStatCell(SecondaryStatsBox, INVTEXT("暴击 // CRIT"), FormatPercent(Stats.CritChance, false), T->BoneSecondary);
-		MakeStatCell(SecondaryStatsBox, INVTEXT("暴伤 // MULT"), FormatPercent(Stats.CritMultiplier, false), T->BoneSecondary);
-		MakeStatCell(SecondaryStatsBox, INVTEXT("命中 // ACC"), FormatPercent(Stats.Accuracy, true), T->BoneSecondary);
+		MakeStatCell(SecondaryStatsBox, INVTEXT("暴击"), FormatPercent(Stats.CritChance, false), T->BoneSecondary);
+		MakeStatCell(SecondaryStatsBox, INVTEXT("暴伤"), FormatPercent(Stats.CritMultiplier, false), T->BoneSecondary);
+		MakeStatCell(SecondaryStatsBox, INVTEXT("命中"), FormatPercent(Stats.Accuracy, true), T->BoneSecondary);
 	}
 
 	// ---- 四学派抗性 ----
@@ -969,7 +957,7 @@ FText UERPersonnelPanel::GetSquadSummary() const
 
 FText UERPersonnelPanel::GetSquadState() const
 {
-	return HasRunState() ? INVTEXT("EXPEDITION ACTIVE") : INVTEXT("STANDBY // 尚未启程");
+	return HasRunState() ? INVTEXT("远征进行中") : INVTEXT("待命  ·  尚未启程");
 }
 
 bool UERPersonnelPanel::HasRunState() const

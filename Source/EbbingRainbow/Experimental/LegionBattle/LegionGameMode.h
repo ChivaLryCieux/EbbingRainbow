@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -8,6 +8,7 @@
 #include "Experimental/LegionBattle/LegionTypes.h"
 #include "LegionGameMode.generated.h"
 
+class ALegionForest;
 class ALegionUnit;
 class UAnimationAsset;
 class UMaterialInterface;
@@ -100,6 +101,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion")
 	TSubclassOf<ALegionUnit> LegionClass;
 
+	// ---------------- 林地 (树木障碍 + 远程掩体) ----------------
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Forest")
+	bool bSpawnForest = true;
+
+	/** 无合同时的林地种子; 有合同则用合同 TerrainSeed; 命令行 -ForestSeed=N 优先 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Forest")
+	int32 DefaultForestSeed = 20261;
+
+	/** 各部署带两侧清空的半纵深 (cm), 保证开局阵地与空降点无树 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Forest")
+	float ForestClearHalfDepth = 2800.0f;
+
 	// ---------------- 士兵资产 ----------------
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Assets")
@@ -141,6 +155,10 @@ public:
 	const TArray<TObjectPtr<ALegionUnit>>& GetEnemyLegions() const { return EnemyLegions; }
 	const FLegionTerrainGrid& GetTerrainGrid() const { return TerrainGrid; }
 	UTexture2D* GetMinimapTexture() const { return MinimapTexture; }
+	/** 等高线地图视角用高分辨率纹理 (无则退回小地图纹理) */
+	UTexture2D* GetStrategicMapTexture() const { return StrategicMapTexture ? StrategicMapTexture : MinimapTexture; }
+	/** 地图放大后切换的超高精度纹理 (可能为空) */
+	UTexture2D* GetDetailMapTexture() const { return DetailMapTexture; }
 	bool WorldToMinimapUV(const FVector& WorldPos, FVector2D& OutUV) const;
 	FVector MinimapUVToWorld(const FVector2D& UV) const;
 	const TArray<FPendingEnemyWave>& GetPendingWaves() const { return PendingWaves; }
@@ -186,11 +204,15 @@ private:
 		const FVector& Location, float YawDeg, int32 CampaignId, const FString& Callsign, int32 SyncLevel);
 	ALegionUnit* FindNearestEnemy(const ALegionUnit* From) const;
 	void LoadRuntimeAssets();
+	void SpawnForest();
 	void SpawnWaveLegion(const FPendingEnemyWave& Wave);
 	void CheckBattleEnd();
 	void HandleAutoShot();
 
 	FLegionTerrainGrid TerrainGrid;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ALegionForest> Forest;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<ALegionUnit>> PlayerLegions;
@@ -213,6 +235,8 @@ private:
 	UPROPERTY(Transient) TArray<TObjectPtr<UAnimationAsset>> CachedAnimAttacks;
 	UPROPERTY(Transient) TArray<TObjectPtr<UAnimationAsset>> CachedAnimDeaths;
 	UPROPERTY(Transient) TObjectPtr<UTexture2D> MinimapTexture;
+	UPROPERTY(Transient) TObjectPtr<UTexture2D> StrategicMapTexture;
+	UPROPERTY(Transient) TObjectPtr<UTexture2D> DetailMapTexture;
 	bool bUseAnimatedAlly = true;
 	bool bUseAnimatedEnemy = true;
 	FLinearColor EnemySkeletalTint = FLinearColor(0.92f, 0.14f, 0.12f, 1.0f);
@@ -222,7 +246,7 @@ private:
 	int32 InitialEnemySoldiersTotal = 0;
 
 	FString BattleTitleText = TEXT("军团演武");
-	FString BattleSubText = TEXT("IRIS COMMAND SANDBOX // MULTI-CORPS SIMULATION");
+	FString BattleSubText = TEXT("虹膜基金会  ·  多兵团战术演武");
 
 	ELegionTimeMode TimeMode = ELegionTimeMode::Normal;
 	float Elapsed = 0.0f;

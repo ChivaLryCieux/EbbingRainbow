@@ -1,20 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Battle/Units/BattleUnit.h"
+#include "Battle/Units/TurretAnimInstance.h"
 #include "Core/ERLog.h"
 #include "Battle/Core/UBattleContext.h"
+#include "Battle/Core/BattleManager.h"
 #include "Core/ERAssetCatalog.h"
 #include "Core/ERCollisionChannels.h"
 #include "Battle/Skills/BattleSkillData.h"
 #include "Battle/Skills/BattleSkillComponent.h"
+#include "Battle/Skills/BattleEventHub.h"
 #include "Battle/Skills/BattleResolver.h"
 #include "Battle/Skills/BattleSkillLibrary.h"
 #include "Battle/Terrain/BattleTerrainQuery.h"
 #include "Battle/FX/BattleFloatingText.h"
+#include "UI/ERUnitLabelWidget.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Components/TextRenderComponent.h"
+#include "Components/WidgetComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
@@ -90,22 +94,25 @@ ABattleUnit::ABattleUnit()
 		TeamDisc->SetMaterial(0, DiscMatFinder.Object);
 	}
 
-	Label = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
-	Label->SetupAttachment(GetRootComponent());
-	Label->SetRelativeLocation(FVector(0.0f, 0.0f, 88.0f + 70.0f));
-	Label->SetHorizontalAlignment(EHTA_Center);
-	Label->SetVerticalAlignment(EVRTA_TextCenter);
-	Label->SetWorldSize(26.0f);
-	Label->SetCanEverAffectNavigation(false);
+	LabelWidgetComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("LabelWidgetComp"));
+	LabelWidgetComp->SetupAttachment(GetRootComponent());
+	LabelWidgetComp->SetRelativeLocation(FVector(0.0f, 0.0f, 88.0f + 56.0f));
+	LabelWidgetComp->SetWidgetSpace(EWidgetSpace::Screen);
+	LabelWidgetComp->SetDrawAtDesiredSize(true);
+	LabelWidgetComp->SetPivot(FVector2D(0.5f, 1.0f));
+	LabelWidgetComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	LabelWidgetComp->SetCanEverAffectNavigation(false);
+	LabelWidgetComp->SetWidgetClass(UERUnitLabelWidget::StaticClass());
 }
 
 void ABattleUnit::EnsurePresentationAssets()
 {
-	if (bPresentationReady)
+	if (bPresentationReady && PresentationTeam == Team)
 	{
 		return;
 	}
 	bPresentationReady = true;
+	PresentationTeam = Team;
 
 	UERAssetCatalog* Catalog = UERAssetCatalog::Get(this);
 	if (!Catalog)
@@ -113,19 +120,62 @@ void ABattleUnit::EnsurePresentationAssets()
 		return; // 无世界 (CDO/编辑器预览): 保持白模圆柱
 	}
 
-	// 接入 UE Manny 人形骨骼网格体与动画资产。
+	AttackAnimSequence = nullptr;
+	MoveAnimSequence = nullptr;
+	MoveMontage = nullptr;
+	AttackAnimations.Reset();
+	HitReactionFrontAnimations.Reset();
+	HitReactionBackAnimations.Reset();
+	DeathAnimations.Reset();
+	SkelMeshMIDs.Reset();
+
+	if (Team == EBattleTeam::Enemy)
+	{
+		// 默认敌方棋子: 科幻四足炮台 + 纯 C++ 程序化骨骼动画 + PA_scifiturret 布娃娃
+		if (USkeletalMesh* TurretMesh = Catalog->LoadAsset<USkeletalMesh>(
+			TEXT("/Game/SciFiturretasset/Meshes/SKM_scifiturret.SKM_scifiturret")))
+		{
+			GetMesh()->SetSkeletalMeshAsset(TurretMesh);
+			GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
+			GetMesh()->SetRelativeRotation(FRotator::ZeroRotator);
+			GetMesh()->SetRelativeScale3D(FVector(0.78f));
+			if (BodyMesh)
+			{
+				BodyMesh->SetVisibility(false);
+			}
+		}
+
+		GetMesh()->SetAnimInstanceClass(UTurretAnimInstance::StaticClass());
+		if (UTurretAnimInstance* TurretAnim = Cast<UTurretAnimInstance>(GetMesh()->GetAnimInstance()))
+		{
+			TurretAnim->SetSeedPhase((float)(GetUniqueID() % 97) * 0.73f);
+		}
+		if (LabelWidgetComp)
+		{
+			LabelWidgetComp->SetRelativeLocation(FVector(0.0f, 0.0f, 88.0f + 72.0f));
+		}
+		return;
+	}
+
+	// 我方默认棋子: 接入 UE Manny 人形骨骼网格体与动画资产。
 	// 原先在构造函数里 ConstructorHelpers 硬引用 14 个资产 —— 每张图加载 CDO 都拖一遍
-	// (大厅也不放过); 挪到首个运行时单位 BeginPlay, 目录缓存后所有单位共享
+	// (大厅也不放过); 挪到运行时 BeginPlay/InitUnit, 目录缓存后同阵营共享
 	if (USkeletalMesh* Manny = Catalog->LoadAsset<USkeletalMesh>(
 		TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple")))
 	{
 		GetMesh()->SetSkeletalMeshAsset(Manny);
 		GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
 		GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+		GetMesh()->SetRelativeScale3D(FVector(1.0f));
 		if (BodyMesh)
 		{
 			BodyMesh->SetVisibility(false);
 		}
+	}
+
+	if (LabelWidgetComp)
+	{
+		LabelWidgetComp->SetRelativeLocation(FVector(0.0f, 0.0f, 88.0f + 56.0f));
 	}
 
 	if (UClass* ABP = Catalog->LoadAsset<UClass>(
@@ -203,7 +253,7 @@ void ABattleUnit::BeginPlay()
 		DiscMID = TeamDisc->CreateAndSetMaterialInstanceDynamic(0);
 	}
 
-	if (GetMesh())
+	if (GetMesh() && Team != EBattleTeam::Enemy)
 	{
 		for (int32 i = 0; i < GetMesh()->GetNumMaterials(); ++i)
 		{
@@ -381,6 +431,9 @@ void ABattleUnit::InitUnit(const FBattleUnitStats& InStats, EBattleTeam InTeam)
 	AP = Stats.MaxAP;
 	Barrier = 0.0f;
 
+	// SpawnActor->BeginPlay 时 Team 尚为默认 Player；此处确定敌我阵营后再切换表现资产
+	EnsurePresentationAssets();
+
 	// 技能系统 2.0: 技能由 Id 经内置目录装配 (肉鸽构筑持久化同款路径)
 	if (SkillComp)
 	{
@@ -477,9 +530,16 @@ void ABattleUnit::UpdateVisualColor()
 		}
 	}
 
-	if (Label)
+	if (LabelWidgetComp)
 	{
-		Label->SetTextRenderColor(BaseColor.ToFColor(true));
+		if (!LabelWidgetComp->GetUserWidgetObject() && GetWorld() && GetWorld()->IsGameWorld())
+		{
+			LabelWidgetComp->InitWidget();
+		}
+		if (UERUnitLabelWidget* LW = Cast<UERUnitLabelWidget>(LabelWidgetComp->GetUserWidgetObject()))
+		{
+			LW->SetLabelColor(BaseColor);
+		}
 	}
 }
 
@@ -552,44 +612,54 @@ void ABattleUnit::UpdateDiscVisual(float DeltaSeconds)
 
 void ABattleUnit::RefreshLabel()
 {
-	if (Label)
+	if (!LabelWidgetComp)
 	{
-		if (!IsAlive())
+		return;
+	}
+	if (!LabelWidgetComp->GetUserWidgetObject() && GetWorld() && GetWorld()->IsGameWorld())
+	{
+		LabelWidgetComp->InitWidget();
+	}
+	UERUnitLabelWidget* LW = Cast<UERUnitLabelWidget>(LabelWidgetComp->GetUserWidgetObject());
+	if (!LW)
+	{
+		return;
+	}
+
+	if (!IsAlive())
+	{
+		LW->SetLabelText(FText::FromString(FString::Printf(TEXT("%s\n[已损毁]"), *Stats.DisplayName)));
+		LW->SetLabelColor(FLinearColor(0.45f, 0.45f, 0.48f, 1.0f));
+		return;
+	}
+
+	const float MaxIntegrity = SkillComp ? SkillComp->GetEffectiveMaxIntegrity() : Stats.MaxIntegrity;
+	const int32 MaxAP = SkillComp ? SkillComp->GetEffectiveMaxAP() : Stats.MaxAP;
+	const int32 EffectiveInit = FMath::RoundToInt(SkillComp ? SkillComp->GetEffectiveInitiative() : (float)Stats.Initiative);
+
+	FString StatusStr;
+	if (Barrier > 0.0f)
+	{
+		StatusStr = FString::Printf(TEXT("%s\n完整度 %.0f/%.0f (+%.0f护盾)  AP %d/%d  先攻 %d"),
+			*Stats.DisplayName, Integrity, MaxIntegrity, Barrier, AP, MaxAP, EffectiveInit);
+	}
+	else
+	{
+		StatusStr = FString::Printf(TEXT("%s\n完整度 %.0f/%.0f  AP %d/%d  先攻 %d"),
+			*Stats.DisplayName, Integrity, MaxIntegrity, AP, MaxAP, EffectiveInit);
+	}
+
+	// 状态摘要 (燃烧 x2 (1) · 导电 ...)
+	if (SkillComp)
+	{
+		const FString StatusSummary = SkillComp->GetStatusSummary();
+		if (!StatusSummary.IsEmpty())
 		{
-			Label->SetText(FText::FromString(FString::Printf(TEXT("%s\n[已损毁]"), *Stats.DisplayName)));
-			Label->SetTextRenderColor(FColor(100, 100, 100));
-		}
-		else
-		{
-			const float MaxIntegrity = SkillComp ? SkillComp->GetEffectiveMaxIntegrity() : Stats.MaxIntegrity;
-			const int32 MaxAP = SkillComp ? SkillComp->GetEffectiveMaxAP() : Stats.MaxAP;
-			const int32 EffectiveInit = FMath::RoundToInt(SkillComp ? SkillComp->GetEffectiveInitiative() : (float)Stats.Initiative);
-
-			FString StatusStr;
-			if (Barrier > 0.0f)
-			{
-				StatusStr = FString::Printf(TEXT("%s\n完整度 %.0f/%.0f (+%.0f护盾)  AP %d/%d  先攻 %d"),
-					*Stats.DisplayName, Integrity, MaxIntegrity, Barrier, AP, MaxAP, EffectiveInit);
-			}
-			else
-			{
-				StatusStr = FString::Printf(TEXT("%s\n完整度 %.0f/%.0f  AP %d/%d  先攻 %d"),
-					*Stats.DisplayName, Integrity, MaxIntegrity, AP, MaxAP, EffectiveInit);
-			}
-
-			// 状态摘要 (燃烧 x2 (1) · 导电 ...)
-			if (SkillComp)
-			{
-				const FString StatusSummary = SkillComp->GetStatusSummary();
-				if (!StatusSummary.IsEmpty())
-				{
-					StatusStr += FString::Printf(TEXT("\n%s"), *StatusSummary);
-				}
-			}
-
-			Label->SetText(FText::FromString(StatusStr));
+			StatusStr += FString::Printf(TEXT("\n%s"), *StatusSummary);
 		}
 	}
+
+	LW->SetLabelText(FText::FromString(StatusStr));
 }
 
 bool ABattleUnit::PlanMove(const FVector& Destination, TArray<FVector>& OutPath, float& OutCostAP, bool& bOutTruncated) const
@@ -745,6 +815,37 @@ void ABattleUnit::FinishMove()
 	GetCharacterMovement()->Velocity = FVector::ZeroVector;
 	StopMoveAnimation();
 	OnMoveFinished.Broadcast(this);
+	TryAutoEndTurn();
+}
+
+void ABattleUnit::TryAutoEndTurn()
+{
+	// 仅我方: 敌方回合的结束时机归 AIDirector, 两边都发会重复推进回合
+	if (AP > 0 || !IsAlive() || Team != EBattleTeam::Player)
+	{
+		return;
+	}
+	UBattleContext* Ctx = UBattleContext::Get(GetWorld());
+	UBattleManager* Mgr = Ctx ? Ctx->GetManager() : nullptr;
+	if (!Mgr || Mgr->GetActiveUnit() != this || Mgr->GetBattleState() != EBattleState::TurnActive)
+	{
+		return;
+	}
+	// 留一个节拍让命中结算/飘字落地, 触发时再复核一遍 (期间玩家可能已手动结束回合)
+	const TWeakObjectPtr<ABattleUnit> Self(this);
+	const TWeakObjectPtr<UBattleManager> MgrWeak(Mgr);
+	GetWorldTimerManager().SetTimer(AutoEndTurnTimer,
+		[Self, MgrWeak]()
+		{
+			UBattleManager* M = MgrWeak.Get();
+			if (Self.IsValid() && M && Self->AP <= 0
+				&& M->GetActiveUnit() == Self.Get()
+				&& M->GetBattleState() == EBattleState::TurnActive)
+			{
+				M->EndCurrentTurn();
+			}
+		},
+		0.45f, false);
 }
 
 bool ABattleUnit::CanUseSkill(int32 SkillIndex, const ABattleUnit* Target, FString& OutReason) const
@@ -855,6 +956,11 @@ bool ABattleUnit::ExecuteSkill(int32 SkillIndex, ABattleUnit* Target)
 	PendingSkillLevel = Spec->Level;
 	PendingTargetLocation = Target ? Target->GetActorLocation() : GetActorLocation() + GetActorForwardVector() * 250.0f;
 
+	if (UBattleEventHub* Hub = UBattleEventHub::Get(GetWorld()))
+	{
+		Hub->OnSkillCastStarted.Broadcast(this, Skill, Target, PendingTargetLocation, HitDelay);
+	}
+
 	if (HitDelay > KINDA_SMALL_NUMBER)
 	{
 		GetWorldTimerManager().ClearTimer(PendingHitTimerHandle);
@@ -884,12 +990,14 @@ void ABattleUnit::ApplyPendingHit()
 	// 施法者被打断: 本次技能作废
 	if (!IsAlive() || !Skill)
 	{
+		TryAutoEndTurn();
 		return;
 	}
 
 	// 单体目标已倒: 目标类技能作废 (AoE 落点类仍结算)
 	if ((!Target || !Target->IsAlive()) && !Skill->AoE.IsArea())
 	{
+		TryAutoEndTurn();
 		return;
 	}
 
@@ -900,6 +1008,7 @@ void ABattleUnit::ApplyPendingHit()
 
 	// 全部数值结算交给 Resolver 管线 (命中/暴击/地形/反应/状态/事件)
 	UBattleResolver::ResolveSkill(this, Target, Context.TargetLocation, Skill, Level, Context);
+	TryAutoEndTurn();
 }
 
 void ABattleUnit::CancelPendingHit()
@@ -914,12 +1023,17 @@ void ABattleUnit::CancelPendingHit()
 void ABattleUnit::PlayMoveAnimation()
 {
 	USkeletalMeshComponent* MeshComp = GetMesh();
-	if (!MoveAnimSequence || !MeshComp)
+	if (!MeshComp)
 	{
 		return;
 	}
 	UAnimInstance* AnimInst = MeshComp->GetAnimInstance();
-	if (!AnimInst)
+	if (UTurretAnimInstance* TurretAnim = Cast<UTurretAnimInstance>(AnimInst))
+	{
+		TurretAnim->SetMoving(true, MoveSpeed);
+		return;
+	}
+	if (!MoveAnimSequence || !AnimInst)
 	{
 		return;
 	}
@@ -940,16 +1054,23 @@ void ABattleUnit::PlayMoveAnimation()
 void ABattleUnit::StopMoveAnimation()
 {
 	USkeletalMeshComponent* MeshComp = GetMesh();
-	if (!MeshComp || !MoveMontage)
+	if (!MeshComp)
 	{
 		return;
 	}
-	if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
+	UAnimInstance* AnimInst = MeshComp->GetAnimInstance();
+	if (UTurretAnimInstance* TurretAnim = Cast<UTurretAnimInstance>(AnimInst))
 	{
-		if (AnimInst->Montage_IsPlaying(MoveMontage))
-		{
-			AnimInst->Montage_Stop(0.15f, MoveMontage);
-		}
+		TurretAnim->SetMoving(false, 0.0f);
+		return;
+	}
+	if (!MoveMontage || !AnimInst)
+	{
+		return;
+	}
+	if (AnimInst->Montage_IsPlaying(MoveMontage))
+	{
+		AnimInst->Montage_Stop(0.15f, MoveMontage);
 	}
 }
 
@@ -1024,6 +1145,15 @@ void ABattleUnit::RestoreAnimBlueprint()
 
 float ABattleUnit::PlayAttackAnimation()
 {
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		if (UTurretAnimInstance* TurretAnim = Cast<UTurretAnimInstance>(MeshComp->GetAnimInstance()))
+		{
+			TurretAnim->TriggerAttack(0.55f);
+			return 0.16f;
+		}
+	}
+
 	if (AttackAnimations.Num() == 0)
 	{
 		return 0.0f;
@@ -1076,6 +1206,14 @@ void ABattleUnit::PlayHitReaction(const FVector& FromWorldLocation)
 
 	if (Pool.Num() == 0)
 	{
+		if (USkeletalMeshComponent* MeshComp = GetMesh())
+		{
+			if (UTurretAnimInstance* TurretAnim = Cast<UTurretAnimInstance>(MeshComp->GetAnimInstance()))
+			{
+				const FVector LocalFrom = MeshComp->GetComponentTransform().InverseTransformVectorNoScale(ToSource);
+				TurretAnim->TriggerHit(LocalFrom, 0.38f);
+			}
+		}
 		return;
 	}
 
@@ -1136,8 +1274,8 @@ void ABattleUnit::StartDeathRagdoll(AActor* DamageCauser, float DamageAmount)
 		PlayOneShotAnimation(DeathAnim);
 	}
 
-	// 先倒地再切物理, 过渡比瞬间布娃娃自然
-	if (RagdollBlendDelay <= KINDA_SMALL_NUMBER)
+	// 先倒地再切物理, 过渡比瞬间布娃娃自然；无死亡动作资产 (如四足炮台) 则直接切物理塌陷
+	if (!DeathAnim || RagdollBlendDelay <= KINDA_SMALL_NUMBER)
 	{
 		EnableRagdoll();
 	}
@@ -1231,25 +1369,6 @@ void ABattleUnit::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void ABattleUnit::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-
-	// 头顶文字朝向摄像机: 仅当镜头或自身移动才重算 (原每帧无条件 SetWorldRotation)
-	if (Label)
-	{
-		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
-		{
-			if (PC->PlayerCameraManager)
-			{
-				const FVector CamLoc = PC->PlayerCameraManager->GetCameraLocation();
-				const FVector SelfLoc = Label->GetComponentLocation();
-				if (!CamLoc.Equals(LastLabelCamLoc, 0.5f) || !SelfLoc.Equals(LastLabelSelfLoc, 1.0f))
-				{
-					LastLabelCamLoc = CamLoc;
-					LastLabelSelfLoc = SelfLoc;
-					Label->SetWorldRotation((CamLoc - SelfLoc).Rotation());
-				}
-			}
-		}
-	}
 
 	// 光环状态 (选中脉冲/受击闪白)
 	UpdateDiscVisual(DeltaSeconds);

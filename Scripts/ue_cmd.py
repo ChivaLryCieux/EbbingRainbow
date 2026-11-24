@@ -1,11 +1,13 @@
-"""Compatibility shim — real implementation lives in SteerAgents."""
-import os
+"""Compatibility shim — real implementation lives in the SteerAgents repo."""
 import sys
+from mcp_call import _steer_src
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "..", "SteerAgents", "client"))
-from steeragents.console import find_cmd_box, run_cmd, run_py  # noqa: F401
-from steeragents.toolsets import connect
+_src = _steer_src()
+if _src:
+    sys.path.insert(0, _src)
+
+from steeragents.console import find_cmd_box, run_cmd, run_py  # noqa: F401,E402
+from steeragents.toolsets import connect  # noqa: E402
 
 if __name__ == "__main__":
     m = connect()

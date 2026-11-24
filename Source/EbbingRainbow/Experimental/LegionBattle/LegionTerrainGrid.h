@@ -35,6 +35,28 @@ public:
 	/** 计算高低差战术加成倍率 (攻击方相对受击方的高度优势, 范围约 0.80 ~ 1.35) */
 	static float ComputeElevationMultiplier(float AttackerZ, float DefenderZ);
 
+	// ---------------- 林地 (树木障碍与掩体) ----------------
+
+	/** 清空树木影响, 恢复纯坡度可通行性 */
+	void ResetTrees();
+
+	/** 登记一棵树: 树冠半径内所有格中心的 TreeCount +1 */
+	void AddTreeInfluence(const FVector& TreeWorld, float Radius);
+
+	/** 按 TreeCount >= BlockThreshold 把密林格标为不可通行 (坡度可通行性不变) */
+	void ApplyTreeObstacles(int32 BlockThreshold);
+
+	/** 世界坐标所在格的树冠覆盖数 (越界返回 0) */
+	int32 GetTreeCountWorld(const FVector& WorldPos) const;
+
+	/** 远程攻击命中该位置时的林地掩体倍率 (1 = 无掩体) */
+	float GetRangedCoverMultiplier(const FVector& WorldPos) const;
+
+	/** 统计: 因树被封锁的格数 / 有树冠覆盖的格数 / 总格数 */
+	void GetTreeStats(int32& OutBlocked, int32& OutCovered, int32& OutTotal) const;
+
+	float GetCellSize() const { return CellSize; }
+
 	/** 生成黑白等高线小地图像素数据 (RGBA8, 上北+Y / 右东+X) */
 	void BuildMinimapPixels(int32 SizePx, TArray<FColor>& OutPixels) const;
 
@@ -47,7 +69,12 @@ private:
 		float HeightZ = 0.0f;
 		float SlopeDeg = 0.0f;
 		bool bValid = false;
+		/** 当前可通行 = 坡度可通行 && 未被密林封锁 */
 		bool bWalkable = false;
+		/** 仅由坡度决定的可通行性 */
+		bool bBaseWalkable = false;
+		/** 覆盖本格中心的树冠数 */
+		uint8 TreeCount = 0;
 	};
 
 	FORCEINLINE int32 IndexOf(int32 GX, int32 GY) const { return GY * GridWidth + GX; }

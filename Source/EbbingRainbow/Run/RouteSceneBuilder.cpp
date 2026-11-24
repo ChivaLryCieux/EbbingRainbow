@@ -428,10 +428,10 @@ void ARouteSceneBuilder::BuildLighting(int32 RunSeed)
 	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
 	{
 		if (!KeyLight) { KeyLight = *It; }
-		else
+		else if (ULightComponent* ExtraLC = It->GetLightComponent())
 		{
-			It->GetComponent()->SetIntensity(0.0f);
-			It->GetComponent()->SetCastShadows(false);
+			ExtraLC->SetIntensity(0.0f);
+			ExtraLC->SetCastShadows(false);
 		}
 	}
 	if (!KeyLight)
@@ -444,13 +444,15 @@ void ARouteSceneBuilder::BuildLighting(int32 RunSeed)
 	if (KeyLight)
 	{
 		KeyLight->SetActorRotation(FRotator(-42.0f, 18.0f, 0.0f));
-		UDirectionalLightComponent* LC = KeyLight->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(4.5f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(235, 242, 255)));
-		LC->SetCastShadows(true);
-		LC->ForwardShadingPriority = 1;
-		LC->SetLightingChannels(true, false, false);
+		if (UDirectionalLightComponent* LC = Cast<UDirectionalLightComponent>(KeyLight->GetLightComponent()))
+		{
+			LC->SetMobility(EComponentMobility::Movable);
+			LC->SetIntensity(4.5f);
+			LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(235, 242, 255)));
+			LC->SetCastShadows(true);
+			LC->ForwardShadingPriority = 1;
+			LC->SetLightingChannels(true, false, false);
+		}
 	}
 	if (ASkyLight* Sky = World->SpawnActor<ASkyLight>(
 		ASkyLight::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, P))

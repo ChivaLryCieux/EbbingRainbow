@@ -544,4 +544,13 @@ void UBattleSkillLibrary::BuildDefaults()
 		Row.BonusStatuses.Add(Bonus);
 		Interactions->Rows.Add(Row);
 	}
+
+	// 统一同步技能 ThemeColor 与各自学派色 (MakeSkill 构造时仅设默认力学蓝，需在学科确定后回填)
+	for (UBattleSkillData* Skill : Skills)
+	{
+		if (Skill)
+		{
+			Skill->ThemeColor = UBattleSkillData::GetDisciplineDefaultColor(Skill->Discipline);
+		}
+	}
 }

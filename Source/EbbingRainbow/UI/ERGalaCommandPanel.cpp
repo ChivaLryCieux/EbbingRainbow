@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERGalaCommandPanel.h"
 
@@ -20,6 +20,7 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Core/ERLog.h"
+#include "UI/ERActionButton.h"
 #include "UI/ERUIStatics.h"
 #include "UI/ERUITheme.h"
 #include "UI/Primitives/ERTechPrimitives.h"
@@ -68,8 +69,8 @@ void UERGalaCommandPanel::SetActiveTab(int32 TabIndex)
 	if (PanelTitleText)
 	{
 		PanelTitleText->SetText(ActiveTab == 0
-			? INVTEXT("虹膜基金会 // 银河委托与战局终端")
-			: INVTEXT("虹膜基金会 // 虹膜兵团整备终端"));
+			? INVTEXT("虹膜基金会  ·  银河委托与战局终端")
+			: INVTEXT("虹膜基金会  ·  虹膜兵团整备终端"));
 	}
 	if (ContractsPage)
 	{
@@ -81,54 +82,11 @@ void UERGalaCommandPanel::SetActiveTab(int32 TabIndex)
 	}
 }
 
-UButton* UERGalaCommandPanel::MakeStyledButton(const FText& Label, const FLinearColor& BgColor,
-	const FLinearColor& BorderColor, const FLinearColor& TextColor,
-	float PadX, float PadY, int32 FontSize)
+UERActionButton* UERGalaCommandPanel::MakeBoneButton(const FText& Label, int32 FontSize, bool bArrow,
+	TFunction<void()> OnClick)
 {
-	UButton* B = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-	FSlateBrush Tr = ERUI::TransparentBrush();
-	FButtonStyle BS;
-	BS.SetNormal(Tr); BS.SetHovered(Tr); BS.SetPressed(Tr); BS.SetDisabled(Tr);
-	BS.SetNormalPadding(FMargin(0.0f)); BS.SetPressedPadding(FMargin(0.0f));
-	B->SetStyle(BS);
-	B->SetCursor(EMouseCursor::Hand);
-
-	UBorder* Frame = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-	Frame->SetBrush(ERUI::RoundedBrush(0.0f, BgColor, 1.0f, BorderColor));
-	Frame->SetBrushColor(FLinearColor::White);
-	Frame->SetPadding(FMargin(PadX, PadY));
-	B->SetContent(Frame);
-
-	UTextBlock* Txt = ERUI::MakeText(this, Label, EERTypeScale::Caption, TextColor, true);
-	Txt->SetFont(ERUI::FontBold(FontSize, 100));
-	Txt->SetJustification(ETextJustify::Center);
-	Frame->SetContent(Txt);
-	return B;
-}
-
-UERGalaIndexButton* UERGalaCommandPanel::MakeIndexedStyledButton(int32 Index, TFunction<void(int32)> Callback,
-	const FText& Label, const FLinearColor& BgColor, const FLinearColor& BorderColor,
-	const FLinearColor& TextColor, float PadX, float PadY, int32 FontSize)
-{
-	UERGalaIndexButton* B = WidgetTree->ConstructWidget<UERGalaIndexButton>(UERGalaIndexButton::StaticClass());
-	B->InitAction(Index, MoveTemp(Callback));
-	FSlateBrush Tr = ERUI::TransparentBrush();
-	FButtonStyle BS;
-	BS.SetNormal(Tr); BS.SetHovered(Tr); BS.SetPressed(Tr); BS.SetDisabled(Tr);
-	BS.SetNormalPadding(FMargin(0.0f)); BS.SetPressedPadding(FMargin(0.0f));
-	B->SetStyle(BS);
-	B->SetCursor(EMouseCursor::Hand);
-
-	UBorder* Frame = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-	Frame->SetBrush(ERUI::RoundedBrush(0.0f, BgColor, 1.0f, BorderColor));
-	Frame->SetBrushColor(FLinearColor::White);
-	Frame->SetPadding(FMargin(PadX, PadY));
-	B->SetContent(Frame);
-
-	UTextBlock* Txt = ERUI::MakeText(this, Label, EERTypeScale::Caption, TextColor, true);
-	Txt->SetFont(ERUI::FontBold(FontSize, 100));
-	Txt->SetJustification(ETextJustify::Center);
-	Frame->SetContent(Txt);
+	UERActionButton* B = UERActionButton::Make(this, Label, FontSize, bArrow);
+	B->SetNativeClick(MoveTemp(OnClick));
 	return B;
 }
 
@@ -167,20 +125,20 @@ void UERGalaCommandPanel::BuildLayout()
 		S->SetOffsets(FMargin(48.0f, 28.0f, 48.0f, 32.0f));
 	}
 
-	// ---- 1. 顶栏: 虹膜基金会标题 + 口号 + 经费 + 页签切换 + 关闭 ----
+	// ---- 1. 顶栏: 虹膜基金会标题 + 口号 + 经费 + 返回 ----
 	{
 		UHorizontalBox* HeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 
 		UVerticalBox* BrandCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		PanelTitleText = ERUI::MakeText(this, INVTEXT("虹膜基金会 // 银河军事指挥总署"), EERTypeScale::Title, T->Bone);
-		PanelTitleText->SetFont(ERUI::FontBold(28, 60));
+		PanelTitleText = ERUI::MakeText(this, INVTEXT("虹膜基金会  ·  银河军事指挥总署"), EERTypeScale::Title, T->Bone);
+		PanelTitleText->SetFont(ERUI::FontBold(34, 80));
 		BrandCol->AddChildToVerticalBox(PanelTitleText);
 
 		UTextBlock* Slogan = ERUI::MakeText(this,
-			INVTEXT("「 我们面向全银河提供军事指挥服务 」  //  IRIS FOUNDATION COMMAND NETWORK"),
-			EERTypeScale::Caption, T->Accent, true);
-		Slogan->SetFont(ERUI::FontBold(12, 160));
-		BrandCol->AddChildToVerticalBox(Slogan)->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 0.0f));
+			INVTEXT("「 我们面向全银河提供军事指挥服务 」"),
+			EERTypeScale::Caption, T->Accent, false);
+		Slogan->SetFont(ERUI::FontBold(17, 120));
+		BrandCol->AddChildToVerticalBox(Slogan)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
 
 		{
 			UHorizontalBoxSlot* S = HeaderRow->AddChildToHorizontalBox(BrandCol);
@@ -188,26 +146,26 @@ void UERGalaCommandPanel::BuildLayout()
 			S->SetVerticalAlignment(VAlign_Center);
 		}
 
-		// 遥测经费与周期
+		// 经费与周期
 		UVerticalBox* StatCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		CreditsText = ERUI::MakeText(this, INVTEXT("FUNDS: 1200 CR"), EERTypeScale::Title, T->Bone, true);
-		CreditsText->SetFont(ERUI::FontBold(22, 40));
+		CreditsText = ERUI::MakeText(this, INVTEXT("经费 1200 信用点"), EERTypeScale::Title, T->Bone, false);
+		CreditsText->SetFont(ERUI::FontBold(28, 40));
 		CreditsText->SetJustification(ETextJustify::Right);
 		StatCol->AddChildToVerticalBox(CreditsText);
 
-		CycleText = ERUI::MakeText(this, INVTEXT("CYCLE 01 // IRIS LINK ONLINE"), EERTypeScale::Micro, T->BoneTertiary, true);
-		CycleText->SetFont(ERUI::FontRegular(9, 220));
+		CycleText = ERUI::MakeText(this, INVTEXT("第 01 周期 · 虹膜神经链路在线"), EERTypeScale::Micro, T->BoneSecondary, false);
+		CycleText->SetFont(ERUI::FontBold(15, 60));
 		CycleText->SetJustification(ETextJustify::Right);
 		StatCol->AddChildToVerticalBox(CycleText);
 		{
 			UHorizontalBoxSlot* S = HeaderRow->AddChildToHorizontalBox(StatCol);
 			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(0.0f, 0.0f, 24.0f, 0.0f));
+			S->SetPadding(FMargin(0.0f, 0.0f, 28.0f, 0.0f));
 		}
 
 		// 仅保留返回大厅按钮 (兵团整备与银河委托为两块互相独立、不可互达的面板)
-		UButton* CloseBtn = MakeStyledButton(INVTEXT("ESC  返回大厅"), T->InkPanel, T->DangerColor, T->BoneSecondary, 16.0f, 10.0f, 11);
-		CloseBtn->OnClicked.AddDynamic(this, &UERGalaCommandPanel::OnCloseClicked);
+		UERActionButton* CloseBtn = MakeBoneButton(INVTEXT("返回大厅"), 26, true, [this]() { ClosePanel(); });
+		CloseBtn->SetMinSize(220.0f, 0.0f);
 		HeaderRow->AddChildToHorizontalBox(CloseBtn)->SetVerticalAlignment(VAlign_Center);
 
 		MainCol->AddChildToVerticalBox(HeaderRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
@@ -249,29 +207,30 @@ void UERGalaCommandPanel::BuildLayout()
 			S->SetPadding(FMargin(0.0f, 0.0f, 24.0f, 0.0f));
 		}
 
-		UTextBlock* Sec1Title = ERUI::MakeText(this, INVTEXT("GALACTIC WARFRONT // 银河三方势力态势"), EERTypeScale::Caption, T->BoneSecondary, true);
-		Sec1Title->SetFont(ERUI::FontBold(12, 160));
-		LeftCol->AddChildToVerticalBox(Sec1Title)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+		LeftCol->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("银河三方势力态势"), 22))
+			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
 		FactionListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		LeftCol->AddChildToVerticalBox(FactionListBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
-		UTextBlock* Sec2Title = ERUI::MakeText(this, INVTEXT("SECTOR CONTROL // 重点星区归属"), EERTypeScale::Caption, T->BoneSecondary, true);
-		Sec2Title->SetFont(ERUI::FontBold(12, 160));
-		LeftCol->AddChildToVerticalBox(Sec2Title)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+		LeftCol->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("重点星区归属"), 22))
+			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
 		SectorListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		LeftCol->AddChildToVerticalBox(SectorListBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
+		// 上一战况 (骨白栏目卡, 默认折叠)
 		LastOutcomeBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-		LastOutcomeBox->SetBrush(ERUI::RoundedBrush(0.0f, T->ObsidianElevated, 1.0f, T->Accent));
-		LastOutcomeBox->SetBrushColor(FLinearColor::White);
-		LastOutcomeBox->SetPadding(FMargin(14.0f, 10.0f));
+		LastOutcomeBox->SetBrush(FSlateBrush());
 		LastOutcomeBox->SetVisibility(ESlateVisibility::Collapsed);
-		LastOutcomeText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, T->Bone);
-		LastOutcomeText->SetFont(ERUI::FontRegular(12, 30));
-		LastOutcomeText->SetAutoWrapText(true);
-		LastOutcomeBox->SetContent(LastOutcomeText);
+		{
+			ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->Accent, true, FMargin(18.0f, 12.0f));
+			LastOutcomeBox->SetContent(Card.Root);
+			LastOutcomeText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, ERUI::InkText(), false);
+			LastOutcomeText->SetFont(ERUI::FontBold(16, 30));
+			LastOutcomeText->SetAutoWrapText(true);
+			Card.Content->AddChildToVerticalBox(LastOutcomeText);
+		}
 		LeftCol->AddChildToVerticalBox(LastOutcomeBox);
 
 		// 右侧: 阵营军事委托列表
@@ -279,9 +238,7 @@ void UERGalaCommandPanel::BuildLayout()
 		{
 			UHorizontalBoxSlot* S = Page0->AddChildToHorizontalBox(RightCol);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			// 比例 1 : 1.55 左右
 		}
-		// 用 SizeBox 辅助让右侧占更多宽度 (先简单把左侧设为 0.42 权重, 右侧 0.58 权重)
 		if (UHorizontalBoxSlot* LS = Cast<UHorizontalBoxSlot>(LeftScroll->Slot))
 		{
 			FSlateChildSize SZ(ESlateSizeRule::Fill);
@@ -296,17 +253,15 @@ void UERGalaCommandPanel::BuildLayout()
 		}
 
 		UHorizontalBox* ContractHeader = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		UTextBlock* Sec3Title = ERUI::MakeText(this, INVTEXT("INCOMING CONTRACTS // 待接取军事委托"), EERTypeScale::Caption, T->BoneSecondary, true);
-		Sec3Title->SetFont(ERUI::FontBold(12, 160));
 		{
-			UHorizontalBoxSlot* S = ContractHeader->AddChildToHorizontalBox(Sec3Title);
+			UHorizontalBoxSlot* S = ContractHeader->AddChildToHorizontalBox(ERUI::MakeSectionBar(this, INVTEXT("待接取军事委托"), 22));
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			S->SetVerticalAlignment(VAlign_Center);
+			S->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
 		}
-		UButton* RefreshBtn = MakeStyledButton(INVTEXT("↻  刷新加密频道"), T->ObsidianElevated, T->BoneGhost, T->BoneSecondary, 12.0f, 6.0f, 10);
-		RefreshBtn->OnClicked.AddDynamic(this, &UERGalaCommandPanel::OnRefreshContractsClicked);
-		ContractHeader->AddChildToHorizontalBox(RefreshBtn);
-		RightCol->AddChildToVerticalBox(ContractHeader)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+		UERActionButton* RefreshBtn = MakeBoneButton(INVTEXT("刷新加密频道"), 21, false, [this]() { OnRefreshContractsClicked(); });
+		ContractHeader->AddChildToHorizontalBox(RefreshBtn)->SetVerticalAlignment(VAlign_Center);
+		RightCol->AddChildToVerticalBox(ContractHeader)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
 		UScrollBox* ContractScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
 		{
@@ -331,21 +286,20 @@ void UERGalaCommandPanel::BuildLayout()
 		}
 
 		UHorizontalBox* TopBar = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		RosterSummaryText = ERUI::MakeText(this, INVTEXT("IRIS LINKED LEGIONS"), EERTypeScale::Body, T->BoneSecondary);
-		RosterSummaryText->SetFont(ERUI::FontBold(13, 60));
+		RosterSummaryText = ERUI::MakeText(this, INVTEXT("虹膜链接兵团"), EERTypeScale::Body, T->Bone, false);
+		RosterSummaryText->SetFont(ERUI::FontBold(21, 60));
 		{
 			UHorizontalBoxSlot* S = TopBar->AddChildToHorizontalBox(RosterSummaryText);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			S->SetVerticalAlignment(VAlign_Center);
 		}
 
-		UButton* ReinforceAllBtn = MakeStyledButton(INVTEXT("一键满编补员"), T->Bone, T->Bone, T->PureInk, 16.0f, 8.0f, 11);
-		ReinforceAllBtn->OnClicked.AddDynamic(this, &UERGalaCommandPanel::OnReinforceAllClicked);
+		UERActionButton* ReinforceAllBtn = MakeBoneButton(INVTEXT("一键满编补员"), 24, false, [this]() { OnReinforceAllClicked(); });
 		TopBar->AddChildToHorizontalBox(ReinforceAllBtn)->SetVerticalAlignment(VAlign_Center);
-		Page1->AddChildToVerticalBox(TopBar)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+		Page1->AddChildToVerticalBox(TopBar)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
 		RecruitBarBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		Page1->AddChildToVerticalBox(RecruitBarBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+		Page1->AddChildToVerticalBox(RecruitBarBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
 		UScrollBox* RosterScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
 		{
@@ -364,11 +318,11 @@ void UERGalaCommandPanel::RefreshAll()
 
 	if (CreditsText)
 	{
-		CreditsText->SetText(FText::FromString(FString::Printf(TEXT("FUNDS: %d CR"), Campaign->GetCredits())));
+		CreditsText->SetText(FText::FromString(FString::Printf(TEXT("经费 %d 信用点"), Campaign->GetCredits())));
 	}
 	if (CycleText)
 	{
-		CycleText->SetText(FText::FromString(FString::Printf(TEXT("CYCLE %02d // IRIS NEURAL LINK ONLINE"), Campaign->GetCycleIndex())));
+		CycleText->SetText(FText::FromString(FString::Printf(TEXT("第 %02d 周期 · 虹膜神经链路在线"), Campaign->GetCycleIndex())));
 	}
 
 	RebuildFactionAndSectorList();
@@ -385,70 +339,57 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 	FactionListBox->ClearChildren();
 	for (const FFactionStatus& F : Campaign->GetFactions())
 	{
-		UBorder* Card = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-		Card->SetBrush(ERUI::RoundedBrush(0.0f, T->InkPanel, 1.0f, T->BoneGhost));
-		Card->SetBrushColor(FLinearColor::White);
-		Card->SetPadding(FMargin(14.0f, 10.0f));
-
-		UVerticalBox* Col = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		Card->SetContent(Col);
+		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, F.Color, false, FMargin(16.0f, 12.0f));
 
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		UTextBlock* NameTxt = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("%s  [%s]"), *F.DisplayName, *F.CodeName)),
-			EERTypeScale::Caption, F.Color, true);
-		NameTxt->SetFont(ERUI::FontBold(13, 60));
+		UTextBlock* NameTxt = ERUI::MakeText(this, FText::FromString(F.DisplayName), EERTypeScale::Caption, ERUI::InkText(), false);
+		NameTxt->SetFont(ERUI::FontBold(21, 60));
 		{
 			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(NameTxt);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		}
 		UTextBlock* PctTxt = ERUI::MakeText(this,
 			FText::FromString(FString::Printf(TEXT("控制率 %.1f%%  ·  声望 %+d"), F.GalacticControl, F.Reputation)),
-			EERTypeScale::Micro, T->Bone, true);
-		PctTxt->SetFont(ERUI::FontBold(11, 80));
+			EERTypeScale::Micro, ERUI::InkText(0.8f), false);
+		PctTxt->SetFont(ERUI::FontBold(16, 40));
 		Row->AddChildToHorizontalBox(PctTxt);
-		Col->AddChildToVerticalBox(Row);
+		Card.Content->AddChildToVerticalBox(Row);
 
 		UProgressBar* Bar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass());
 		Bar->SetPercent(FMath::Clamp(F.GalacticControl / 100.0f, 0.0f, 1.0f));
 		Bar->SetFillColorAndOpacity(F.Color);
-		Col->AddChildToVerticalBox(Bar)->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 5.0f));
+		Card.Content->AddChildToVerticalBox(Bar)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 6.0f));
 
-		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(F.DoctrineBrief), EERTypeScale::Micro, T->BoneTertiary);
-		Brief->SetFont(ERUI::FontRegular(10, 20));
+		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(F.DoctrineBrief), EERTypeScale::Micro, ERUI::InkText(0.62f), false);
+		Brief->SetFont(ERUI::FontRegular(14, 20));
 		Brief->SetAutoWrapText(true);
-		Col->AddChildToVerticalBox(Brief);
+		Card.Content->AddChildToVerticalBox(Brief);
 
-		FactionListBox->AddChildToVerticalBox(Card)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+		FactionListBox->AddChildToVerticalBox(Card.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 	}
 
 	SectorListBox->ClearChildren();
 	for (const FGalacticSector& Sec : Campaign->GetSectors())
 	{
-		UBorder* RowBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-		RowBox->SetBrush(ERUI::RoundedBrush(0.0f, T->ObsidianElevated, 1.0f, T->BoneGhost));
-		RowBox->SetBrushColor(FLinearColor::White);
-		RowBox->SetPadding(FMargin(12.0f, 6.0f));
+		const FLinearColor OwnerCol = ERGalacticMeta::GetFactionColor(Sec.ControllingFaction);
+		ERUI::FBoneCard Row = ERUI::MakeBoneCard(this, OwnerCol, false, FMargin(14.0f, 8.0f), false);
 
-		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		RowBox->SetContent(Row);
-
-		UTextBlock* SecName = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("%s  (%s)"), *Sec.Name, *Sec.Code)),
-			EERTypeScale::Micro, T->Bone);
-		SecName->SetFont(ERUI::FontRegular(11, 40));
+		UHorizontalBox* H = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		UTextBlock* SecName = ERUI::MakeText(this, FText::FromString(Sec.Name), EERTypeScale::Micro, ERUI::InkText(), false);
+		SecName->SetFont(ERUI::FontBold(18, 40));
 		{
-			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(SecName);
+			UHorizontalBoxSlot* S = H->AddChildToHorizontalBox(SecName);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		}
 
 		UTextBlock* OwnerTxt = ERUI::MakeText(this,
 			FText::FromString(ERGalacticMeta::GetFactionName(Sec.ControllingFaction)),
-			EERTypeScale::Micro, ERGalacticMeta::GetFactionColor(Sec.ControllingFaction), true);
-		OwnerTxt->SetFont(ERUI::FontBold(11, 80));
-		Row->AddChildToHorizontalBox(OwnerTxt);
+			EERTypeScale::Micro, ERUI::InkText(0.78f), false);
+		OwnerTxt->SetFont(ERUI::FontBold(17, 60));
+		H->AddChildToHorizontalBox(OwnerTxt);
+		Row.Content->AddChildToVerticalBox(H);
 
-		SectorListBox->AddChildToVerticalBox(RowBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
+		SectorListBox->AddChildToVerticalBox(Row.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 6.0f));
 	}
 
 	if (LastOutcomeBox && LastOutcomeText)
@@ -458,7 +399,7 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 		{
 			LastOutcomeBox->SetVisibility(ESlateVisibility::Visible);
 			LastOutcomeText->SetText(FText::FromString(FString::Printf(
-				TEXT("上一战况 [%s]: %s\n经费 +%d CR · 我方伤亡 %d · %s控制率 %+.1f%%"),
+				TEXT("上一战况 [%s]: %s\n经费 +%d 信用点 · 我方伤亡 %d · %s控制率 %+.1f%%"),
 				Out.bVictory ? TEXT("胜利") : TEXT("撤离"),
 				*Out.ContractTitle,
 				Out.CreditsEarned,
@@ -482,33 +423,14 @@ void UERGalaCommandPanel::RebuildContractList()
 	ContractListBox->ClearChildren();
 	for (const FGalacticContract& C : Campaign->GetAvailableContracts())
 	{
-		UOverlay* CardOv = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
 		const FLinearColor EmpCol = ERGalacticMeta::GetFactionColor(C.Employer);
-
-		UERTechFrame* Frame = WidgetTree->ConstructWidget<UERTechFrame>(UERTechFrame::StaticClass());
-		Frame->Chamfer = FVector4(0.0f, 16.0f, 0.0f, 0.0f);
-		Frame->FillColor = T->ObsidianElevated;
-		Frame->BorderColor = T->BoneGhost;
-		Frame->AccentEdge = EERAccentEdge::Left;
-		Frame->AccentColor = EmpCol;
-		Frame->AccentThickness = 4.0f;
-		Frame->bDrawCornerBrackets = true;
-		{
-			UOverlaySlot* S = CardOv->AddChildToOverlay(Frame);
-			S->SetHorizontalAlignment(HAlign_Fill);
-			S->SetVerticalAlignment(VAlign_Fill);
-		}
-
-		UVerticalBox* Inner = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		{
-			UOverlaySlot* S = CardOv->AddChildToOverlay(Inner);
-			S->SetPadding(FMargin(22.0f, 16.0f, 22.0f, 16.0f));
-		}
+		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, EmpCol, false, FMargin(22.0f, 16.0f));
+		UVerticalBox* Inner = Card.Content;
 
 		// 标题行
 		UHorizontalBox* TopRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		UTextBlock* Title = ERUI::MakeText(this, FText::FromString(C.Title), EERTypeScale::Title, T->Bone);
-		Title->SetFont(ERUI::FontBold(19, 40));
+		UTextBlock* Title = ERUI::MakeText(this, FText::FromString(C.Title), EERTypeScale::Title, ERUI::InkText(), false);
+		Title->SetFont(ERUI::FontBold(26, 40));
 		{
 			UHorizontalBoxSlot* S = TopRow->AddChildToHorizontalBox(Title);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -517,8 +439,8 @@ void UERGalaCommandPanel::RebuildContractList()
 		FString Stars;
 		for (int32 s = 0; s < 5; ++s) { Stars += (s < C.DangerRating) ? TEXT("★") : TEXT("☆"); }
 		UTextBlock* DangerTxt = ERUI::MakeText(this, FText::FromString(FString::Printf(TEXT("威胁 %s"), *Stars)),
-			EERTypeScale::Caption, T->Accent, true);
-		DangerTxt->SetFont(ERUI::FontBold(12, 80));
+			EERTypeScale::Caption, FLinearColor(0.58f, 0.31f, 0.0f, 1.0f), false);
+		DangerTxt->SetFont(ERUI::FontBold(18, 60));
 		TopRow->AddChildToHorizontalBox(DangerTxt);
 		Inner->AddChildToVerticalBox(TopRow);
 
@@ -530,42 +452,44 @@ void UERGalaCommandPanel::RebuildContractList()
 				*ERGalacticMeta::GetFactionName(C.Employer),
 				*ERGalacticMeta::GetFactionName(C.EnemyFaction),
 				*SecName)),
-			EERTypeScale::Micro, EmpCol, true);
-		Meta->SetFont(ERUI::FontBold(11, 80));
-		Inner->AddChildToVerticalBox(Meta)->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 6.0f));
+			EERTypeScale::Micro, ERUI::InkText(0.82f), false);
+		Meta->SetFont(ERUI::FontBold(16, 40));
+		Inner->AddChildToVerticalBox(Meta)->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 7.0f));
 
 		// 简报
-		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(C.Briefing), EERTypeScale::Body, T->BoneSecondary);
-		Brief->SetFont(ERUI::FontRegular(12, 20));
+		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(C.Briefing), EERTypeScale::Body, ERUI::InkText(0.68f), false);
+		Brief->SetFont(ERUI::FontRegular(16, 20));
 		Brief->SetAutoWrapText(true);
-		Inner->AddChildToVerticalBox(Brief)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+		Inner->AddChildToVerticalBox(Brief)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
 		// 敌情与报酬 + 出击按钮
 		UHorizontalBox* BotRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		UTextBlock* Intel = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("敌情: %d 波次 · %d 名作战单位  |  酬金: +%d CR  |  控制权 %+.1f%%"),
+			FText::FromString(FString::Printf(TEXT("敌情: %d 波次 · %d 名作战单位  |  酬金: +%d 信用点  |  控制权 %+.1f%%"),
 				C.EnemyWaves.Num(), C.GetTotalEnemySoldiers(), C.RewardCredits, C.ControlShift)),
-			EERTypeScale::Micro, T->Bone, true);
-		Intel->SetFont(ERUI::FontBold(11, 50));
+			EERTypeScale::Micro, ERUI::InkText(), false);
+		Intel->SetFont(ERUI::FontBold(16, 30));
+		Intel->SetAutoWrapText(true);
 		{
 			UHorizontalBoxSlot* S = BotRow->AddChildToHorizontalBox(Intel);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			S->SetVerticalAlignment(VAlign_Center);
+			S->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
 		}
 
-		UERGalaIndexButton* DeployBtn = MakeIndexedStyledButton(C.ContractId,
-			[this](int32 ContractId)
+		const int32 ContractId = C.ContractId;
+		UERActionButton* DeployBtn = MakeBoneButton(INVTEXT("接入虹膜 · 出击部署"), 24, true,
+			[this, ContractId]()
 			{
 				if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
 				{
 					Camp->AcceptAndDeployContract(ContractId, this);
 				}
-			},
-			INVTEXT("接入虹膜 · 出击部署 →"), T->Bone, T->Bone, T->PureInk, 18.0f, 9.0f, 12);
+			});
 		BotRow->AddChildToHorizontalBox(DeployBtn)->SetVerticalAlignment(VAlign_Center);
 		Inner->AddChildToVerticalBox(BotRow);
 
-		ContractListBox->AddChildToVerticalBox(CardOv)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		ContractListBox->AddChildToVerticalBox(Card.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 	}
 }
 
@@ -589,8 +513,8 @@ void UERGalaCommandPanel::RebuildRosterList()
 	}
 
 	RecruitBarBox->ClearChildren();
-	UTextBlock* RecLabel = ERUI::MakeText(this, INVTEXT("新兵团扩编: "), EERTypeScale::Micro, T->BoneSecondary, true);
-	RecLabel->SetFont(ERUI::FontBold(11, 80));
+	UTextBlock* RecLabel = ERUI::MakeText(this, INVTEXT("新兵团扩编："), EERTypeScale::Micro, T->BoneSecondary, false);
+	RecLabel->SetFont(ERUI::FontBold(18, 60));
 	RecruitBarBox->AddChildToHorizontalBox(RecLabel)->SetVerticalAlignment(VAlign_Center);
 
 	static const ELegionClass AllClasses[4] = {
@@ -602,36 +526,31 @@ void UERGalaCommandPanel::RebuildRosterList()
 		const ELegionClass Cls = AllClasses[i];
 		const int32 Cost = Campaign->GetRecruitCost(Cls);
 		const bool bCanAfford = bCanRecruitMore && (Campaign->GetCredits() >= Cost);
-		UERGalaIndexButton* Btn = MakeIndexedStyledButton((int32)Cls,
-			[this](int32 RawClass)
+		UERActionButton* Btn = MakeBoneButton(
+			FText::FromString(FString::Printf(TEXT("招募%s · %d 信用点"), *ERGalacticMeta::GetClassName(Cls), Cost)),
+			20, false,
+			[this, Cls]()
 			{
 				if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
 				{
-					if (Camp->RecruitLegion((ELegionClass)RawClass))
-					{
-						RefreshAll();
-					}
+					if (Camp->RecruitLegion(Cls)) { RefreshAll(); }
 				}
-			},
-			FText::FromString(FString::Printf(TEXT("+ %s (%d CR)"), *ERGalacticMeta::GetClassName(Cls), Cost)),
-			T->ObsidianElevated, bCanAfford ? T->AllyMark : T->BoneGhost,
-			bCanAfford ? T->Bone : T->BoneTertiary, 12.0f, 6.0f, 10);
-		Btn->SetIsEnabled(bCanAfford);
-		RecruitBarBox->AddChildToHorizontalBox(Btn)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+			});
+		Btn->SetAccentColor(T->AllyMark, false);
+		Btn->SetButtonEnabled(bCanAfford);
+		RecruitBarBox->AddChildToHorizontalBox(Btn)->SetPadding(FMargin(10.0f, 0.0f, 0.0f, 0.0f));
 	}
 
 	RosterListBox->ClearChildren();
 	for (const FManagedLegionData& L : Campaign->GetPlayerLegions())
 	{
-		UBorder* Card = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-		Card->SetBrush(ERUI::RoundedBrush(0.0f, T->ObsidianElevated, 1.0f, T->BoneGhost));
-		Card->SetBrushColor(FLinearColor::White);
-		Card->SetPadding(FMargin(18.0f, 12.0f));
+		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, L.GetMissingSoldiers() > 0 ? T->Accent : T->AllyMark, false, FMargin(20.0f, 14.0f));
 
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		Card->SetContent(Row);
+		Card.Content->AddChildToVerticalBox(Row);
 
 		UVerticalBox* InfoCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		InfoCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		{
 			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(InfoCol);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -639,10 +558,10 @@ void UERGalaCommandPanel::RebuildRosterList()
 		}
 
 		UTextBlock* NameTxt = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("%s   [%s]   ·   AI 同步 LV.%d"),
+			FText::FromString(FString::Printf(TEXT("%s   ·   %s   ·   虹膜同步 %d 级"),
 				*L.Callsign, *ERGalacticMeta::GetClassCode(L.Archetype), L.SyncLevel)),
-			EERTypeScale::Title, T->Bone);
-		NameTxt->SetFont(ERUI::FontBold(16, 40));
+			EERTypeScale::Title, ERUI::InkText(), false);
+		NameTxt->SetFont(ERUI::FontBold(23, 40));
 		InfoCol->AddChildToVerticalBox(NameTxt);
 
 		UTextBlock* RoleTxt = ERUI::MakeText(this,
@@ -650,61 +569,61 @@ void UERGalaCommandPanel::RebuildRosterList()
 				*ERGalacticMeta::GetClassRoleDesc(L.Archetype),
 				*ERGalacticMeta::GetClassSkillName(L.Archetype),
 				L.BattlesSurvived)),
-			EERTypeScale::Micro, T->BoneSecondary);
-		RoleTxt->SetFont(ERUI::FontRegular(11, 20));
-		InfoCol->AddChildToVerticalBox(RoleTxt)->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 0.0f));
+			EERTypeScale::Micro, ERUI::InkText(0.66f), false);
+		RoleTxt->SetFont(ERUI::FontBold(15, 20));
+		InfoCol->AddChildToVerticalBox(RoleTxt)->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 0.0f));
 
 		UTextBlock* CountTxt = ERUI::MakeText(this,
 			FText::FromString(FString::Printf(TEXT("兵员  %d / %d"), L.AliveSoldiers, L.MaxSoldiers)),
-			EERTypeScale::Title, L.GetMissingSoldiers() > 0 ? T->Accent : T->AllyMark, true);
-		CountTxt->SetFont(ERUI::FontBold(18, 40));
+			EERTypeScale::Title, L.GetMissingSoldiers() > 0 ? FLinearColor(0.58f, 0.31f, 0.0f, 1.0f) : FLinearColor(0.02f, 0.30f, 0.62f, 1.0f), false);
+		CountTxt->SetFont(ERUI::FontBold(24, 40));
 		{
 			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(CountTxt);
 			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(0.0f, 0.0f, 20.0f, 0.0f));
+			S->SetPadding(FMargin(0.0f, 0.0f, 22.0f, 0.0f));
 		}
 
 		const int32 ReinforceCost = L.GetFullReinforceCost();
 		const bool bNeedReinforce = L.GetMissingSoldiers() > 0 && Campaign->GetCredits() >= L.GetReinforceCostPerSoldier();
-		UERGalaIndexButton* ReinfBtn = MakeIndexedStyledButton(L.LegionId,
-			[this](int32 Lid)
+		const int32 LegionId = L.LegionId;
+		UERActionButton* ReinfBtn = MakeBoneButton(
+			FText::FromString(L.GetMissingSoldiers() > 0
+				? FString::Printf(TEXT("补充兵员 · %d 信用点"), ReinforceCost)
+				: TEXT("兵员满编")),
+			20, false,
+			[this, LegionId]()
 			{
 				if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
 				{
-					if (Camp->ReinforceLegion(Lid)) { RefreshAll(); }
+					if (Camp->ReinforceLegion(LegionId)) { RefreshAll(); }
 				}
-			},
-			FText::FromString(L.GetMissingSoldiers() > 0
-				? FString::Printf(TEXT("补充兵员 (%d CR)"), ReinforceCost)
-				: TEXT("兵员满编")),
-			T->InkPanel, bNeedReinforce ? T->Accent : T->BoneGhost,
-			bNeedReinforce ? T->Bone : T->BoneTertiary, 12.0f, 8.0f, 10);
-		ReinfBtn->SetIsEnabled(bNeedReinforce);
+			});
+		ReinfBtn->SetButtonEnabled(bNeedReinforce);
 		Row->AddChildToHorizontalBox(ReinfBtn)->SetVerticalAlignment(VAlign_Center);
 
 		USpacer* Gap = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
-		Gap->SetSize(FVector2D(10.0f, 1.0f));
+		Gap->SetSize(FVector2D(12.0f, 1.0f));
 		Row->AddChildToHorizontalBox(Gap);
 
 		const int32 SyncCost = L.GetSyncUpgradeCost();
 		const bool bCanUpgrade = (L.SyncLevel < 5) && (Campaign->GetCredits() >= SyncCost);
-		UERGalaIndexButton* UpgBtn = MakeIndexedStyledButton(L.LegionId,
-			[this](int32 Lid)
+		UERActionButton* UpgBtn = MakeBoneButton(
+			FText::FromString(L.SyncLevel >= 5
+				? TEXT("虹膜同步已满级")
+				: FString::Printf(TEXT("升级同步 · %d 信用点"), SyncCost)),
+			20, false,
+			[this, LegionId]()
 			{
 				if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
 				{
-					if (Camp->UpgradeLegionSync(Lid)) { RefreshAll(); }
+					if (Camp->UpgradeLegionSync(LegionId)) { RefreshAll(); }
 				}
-			},
-			FText::FromString(L.SyncLevel >= 5
-				? TEXT("AI 同步已满级")
-				: FString::Printf(TEXT("升级同步 (%d CR)"), SyncCost)),
-			T->InkPanel, bCanUpgrade ? T->AllyMark : T->BoneGhost,
-			bCanUpgrade ? T->Bone : T->BoneTertiary, 12.0f, 8.0f, 10);
-		UpgBtn->SetIsEnabled(bCanUpgrade);
+			});
+		UpgBtn->SetAccentColor(T->AllyMark, false);
+		UpgBtn->SetButtonEnabled(bCanUpgrade);
 		Row->AddChildToHorizontalBox(UpgBtn)->SetVerticalAlignment(VAlign_Center);
 
-		RosterListBox->AddChildToVerticalBox(Card)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+		RosterListBox->AddChildToVerticalBox(Card.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 	}
 }
 

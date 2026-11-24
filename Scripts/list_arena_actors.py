@@ -2,7 +2,7 @@ import unreal
 
 lvl = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 if lvl:
-    ok = lvl.load_level("/Game/Battle/Maps/Lvl_Arena")
+    ok = lvl.load_level("/Game/Battle/Maps/Lvl_ConcreteArena")
     unreal.log("LOAD_LEVEL %s" % ok)
 
 sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)

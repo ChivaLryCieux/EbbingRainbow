@@ -91,13 +91,15 @@ void ER::Atmosphere::SpawnVoidAtmosphere(AActor* Owner, FRandomStream& Rng, TArr
 	if (ADirectionalLight* Key = World->SpawnActor<ADirectionalLight>(
 		ADirectionalLight::StaticClass(), Origin, FRotator(PitchDeg, YawDeg, 0.0f), P))
 	{
-		UDirectionalLightComponent* LC = Key->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(7.5f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(255, 244, 229))); // 微暖白
-		LC->SetCastShadows(true);
-		LC->LightSourceAngle = 0.8f;
-		LC->ForwardShadingPriority = 3; // 三盏各不同优先级, 消多主光警告
+		if (UDirectionalLightComponent* LC = Cast<UDirectionalLightComponent>(Key->GetLightComponent()))
+		{
+			LC->SetMobility(EComponentMobility::Movable);
+			LC->SetIntensity(7.5f);
+			LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(255, 244, 229))); // 微暖白
+			LC->SetCastShadows(true);
+			LC->LightSourceAngle = 0.8f;
+			LC->ForwardShadingPriority = 3; // 三盏各不同优先级, 消多主光警告
+		}
 		Key->SetActorRotation(FRotator(PitchDeg, YawDeg, 0.0f));
 		OutSpawned.Add(Key);
 	}
@@ -106,13 +108,15 @@ void ER::Atmosphere::SpawnVoidAtmosphere(AActor* Owner, FRandomStream& Rng, TArr
 	if (ADirectionalLight* Fill = World->SpawnActor<ADirectionalLight>(
 		ADirectionalLight::StaticClass(), Origin, FRotator(-25.0f, YawDeg + 160.0f, 0.0f), P))
 	{
-		UDirectionalLightComponent* LC = Fill->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(0.9f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(120, 140, 175))); // 冷蓝灰
-		LC->SetCastShadows(false);
-		LC->bAffectTranslucentLighting = true;
-		LC->ForwardShadingPriority = 2;
+		if (UDirectionalLightComponent* LC = Cast<UDirectionalLightComponent>(Fill->GetLightComponent()))
+		{
+			LC->SetMobility(EComponentMobility::Movable);
+			LC->SetIntensity(0.9f);
+			LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(120, 140, 175))); // 冷蓝灰
+			LC->SetCastShadows(false);
+			LC->bAffectTranslucentLighting = true;
+			LC->ForwardShadingPriority = 2;
+		}
 		OutSpawned.Add(Fill);
 	}
 
@@ -120,12 +124,14 @@ void ER::Atmosphere::SpawnVoidAtmosphere(AActor* Owner, FRandomStream& Rng, TArr
 	if (ADirectionalLight* Bounce = World->SpawnActor<ADirectionalLight>(
 		ADirectionalLight::StaticClass(), Origin, FRotator(65.0f, YawDeg + 180.0f, 0.0f), P))
 	{
-		UDirectionalLightComponent* LC = Bounce->GetComponent();
-		LC->SetMobility(EComponentMobility::Movable);
-		LC->SetIntensity(1.4f);
-		LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(90, 105, 140)));
-		LC->SetCastShadows(false);
-		LC->ForwardShadingPriority = 1;
+		if (UDirectionalLightComponent* LC = Cast<UDirectionalLightComponent>(Bounce->GetLightComponent()))
+		{
+			LC->SetMobility(EComponentMobility::Movable);
+			LC->SetIntensity(1.4f);
+			LC->SetLightColor(FLinearColor::FromSRGBColor(FColor(90, 105, 140)));
+			LC->SetCastShadows(false);
+			LC->ForwardShadingPriority = 1;
+		}
 		OutSpawned.Add(Bounce);
 	}
 

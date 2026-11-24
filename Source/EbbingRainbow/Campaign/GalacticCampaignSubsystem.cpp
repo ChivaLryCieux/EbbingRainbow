@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Campaign/GalacticCampaignSubsystem.h"
 
@@ -119,10 +119,10 @@ void UGalacticCampaignSubsystem::InitStarterLegions()
 		PlayerLegions.Add(L);
 	};
 
-	AddStarter(TEXT("IRIS-01 // 铁砧盾卫"), ELegionClass::Shieldbearer, 20);
-	AddStarter(TEXT("IRIS-02 // 折戟矛阵"), ELegionClass::Pikeman,      20);
-	AddStarter(TEXT("IRIS-03 // 绯红刃锋"), ELegionClass::Vanguard,     18);
-	AddStarter(TEXT("IRIS-04 // 远瞳齐射"), ELegionClass::Marksman,     16);
+	AddStarter(TEXT("虹膜一号 // 铁砧盾卫"), ELegionClass::Shieldbearer, 20);
+	AddStarter(TEXT("虹膜二号 // 折戟矛阵"), ELegionClass::Pikeman,      20);
+	AddStarter(TEXT("虹膜三号 // 绯红刃锋"), ELegionClass::Vanguard,     18);
+	AddStarter(TEXT("虹膜四号 // 远瞳齐射"), ELegionClass::Marksman,     16);
 }
 
 const FFactionStatus* UGalacticCampaignSubsystem::FindFaction(EFactionId Faction) const
@@ -512,7 +512,7 @@ bool UGalacticCampaignSubsystem::RecruitLegion(ELegionClass Archetype)
 	L.MaxSoldiers = (Archetype == ELegionClass::Marksman) ? 16 : 20;
 	L.AliveSoldiers = L.MaxSoldiers;
 	L.SyncLevel = 1;
-	L.Callsign = FString::Printf(TEXT("IRIS-%02d // %s"), L.LegionId, *ERGalacticMeta::GetClassName(Archetype));
+	L.Callsign = FString::Printf(TEXT("虹膜%s号 // %s"), *ERGalacticMeta::GetChineseOrdinal(L.LegionId), *ERGalacticMeta::GetClassName(Archetype));
 	PlayerLegions.Add(L);
 
 	OnCampaignUpdated.Broadcast();

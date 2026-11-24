@@ -7,11 +7,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mcp_call import MCP
 from mcp_admin import text_of
 
-PPV = "/Game/Battle/Maps/UEDPIE_0_Lvl_Arena.Lvl_Arena:PersistentLevel.PostProcessVolume_1"
-SUN = "/Game/Battle/Maps/UEDPIE_0_Lvl_Arena.Lvl_Arena:PersistentLevel.DirectionalLight_0.LightComponent0"
-SKY = "/Game/Battle/Maps/UEDPIE_0_Lvl_Arena.Lvl_Arena:PersistentLevel.SkyLight_0.SkyLightComponent0"
-HDRI_GEO = "/Game/Battle/Maps/UEDPIE_0_Lvl_Arena.Lvl_Arena:PersistentLevel.HDRIBackdrop_C_1.Geometry"
-HDRI_SKY = "/Game/Battle/Maps/UEDPIE_0_Lvl_Arena.Lvl_Arena:PersistentLevel.HDRIBackdrop_C_1.Skylight"
+PPV = "/Game/Battle/Maps/UEDPIE_0_Lvl_ConcreteArena.Lvl_ConcreteArena:PersistentLevel.PostProcessVolume_1"
+SUN = "/Game/Battle/Maps/UEDPIE_0_Lvl_ConcreteArena.Lvl_ConcreteArena:PersistentLevel.DirectionalLight_0.LightComponent0"
+SKY = "/Game/Battle/Maps/UEDPIE_0_Lvl_ConcreteArena.Lvl_ConcreteArena:PersistentLevel.SkyLight_0.SkyLightComponent0"
+HDRI_GEO = "/Game/Battle/Maps/UEDPIE_0_Lvl_ConcreteArena.Lvl_ConcreteArena:PersistentLevel.HDRIBackdrop_C_1.Geometry"
+HDRI_SKY = "/Game/Battle/Maps/UEDPIE_0_Lvl_ConcreteArena.Lvl_ConcreteArena:PersistentLevel.HDRIBackdrop_C_1.Skylight"
 
 m = MCP()
 assert m.init()

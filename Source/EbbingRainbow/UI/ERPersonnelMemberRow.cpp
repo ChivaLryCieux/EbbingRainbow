@@ -154,7 +154,7 @@ void UERPersonnelMemberRow::Build()
 	TextCol->AddChildToVerticalBox(NameRow);
 
 	MemberIndexText = ERUI::MakeText(this, INVTEXT("01"), EERTypeScale::Micro, T->BoneTertiary, true);
-	MemberIndexText->SetFont(ERUI::FontBold(9, 140));
+	MemberIndexText->SetFont(ERUI::FontBold(13, 100));
 	{
 		UHorizontalBoxSlot* S = NameRow->AddChildToHorizontalBox(MemberIndexText);
 		S->SetVerticalAlignment(VAlign_Bottom);
@@ -162,7 +162,7 @@ void UERPersonnelMemberRow::Build()
 	}
 
 	MemberName = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone);
-	MemberName->SetFont(ERUI::FontBold(20, 20));
+	MemberName->SetFont(ERUI::FontBold(24, 20));
 	NameRow->AddChildToHorizontalBox(MemberName)->SetVerticalAlignment(VAlign_Bottom);
 
 	UHorizontalBox* SchoolRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("SchoolRow"));
@@ -183,11 +183,11 @@ void UERPersonnelMemberRow::Build()
 	}
 
 	MemberSchool = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneTertiary);
-	MemberSchool->SetFont(ERUI::FontRegular(9, 100));
+	MemberSchool->SetFont(ERUI::FontBold(13, 60));
 	SchoolRow->AddChildToHorizontalBox(MemberSchool)->SetVerticalAlignment(VAlign_Center);
 
 	MemberIntegrity = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->BoneSecondary, true);
-	MemberIntegrity->SetFont(ERUI::FontBold(17, 0));
+	MemberIntegrity->SetFont(ERUI::FontBold(21, 0));
 	MemberIntegrity->SetJustification(ETextJustify::Right);
 	UHorizontalBoxSlot* IntegritySlot = Row->AddChildToHorizontalBox(MemberIntegrity);
 	IntegritySlot->SetVerticalAlignment(VAlign_Center);
@@ -292,46 +292,32 @@ void UERPersonnelMemberRow::RefreshVisuals(float DeltaTime, bool bDesignPreview)
 		SweepProgress = FMath::Min(1.0f, SweepProgress + DeltaTime / 0.36f);
 	}
 
-	// 明日方舟标志性黑白反转选中态: 选中=反白石膏底+极墨黑字+4px 学派点睛条; 未选=哑光黑曜石底+纯白字
-	const FLinearColor DarkFill = FMath::Lerp(FLinearColor(0.014f, 0.016f, 0.020f, 0.78f), FLinearColor(0.028f, 0.030f, 0.038f, 0.92f), H01);
-	const FLinearColor SelectedFill(0.93f, 0.93f, 0.91f, 0.97f);
-	const FLinearColor Fill = FMath::Lerp(DarkFill, SelectedFill, S01);
-
-	const FLinearColor Border = FMath::Lerp(
-		FLinearColor(0.92f, 0.92f, 0.90f, 0.10f + 0.24f * H01),
-		FLinearColor(1.00f, 1.00f, 0.98f, 0.95f),
-		S01);
-	const FLinearColor EdgeBarCol = FMath::Lerp(FLinearColor(0.92f, 0.92f, 0.90f, 0.14f + 0.30f * H01), Accent, S01);
-
+	// 统一「白底墨字彩条」: 骨白底 + 学派点睛条, 选中 = 加粗墨框 + 微抬
 	if (RowFrame)
 	{
-		RowFrame->SetFrameColors(Fill, Border, Border, EdgeBarCol);
+		ERUI::StyleBoneFrame(RowFrame, FMath::Max(H01, S01), true, S01 > 0.5f, Accent, false);
 		RowFrame->SetMotionState(1.0f, FMath::Max(H01, S01 * 0.5f), SweepProgress);
 	}
 	if (RowBorder)
 	{
-		RowBorder->SetBrush(ERUI::RoundedBrush(0.0f, Fill, 1.0f, Border));
+		RowBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.93f, 0.93f, 0.91f, 0.96f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.4f)));
 		RowBorder->SetBrushColor(FLinearColor::White);
 	}
 	if (SelectRule)
 	{
-		SelectRule->SetColorAndOpacity(EdgeBarCol);
+		SelectRule->SetColorAndOpacity(Accent);
 	}
 
 	if (ThumbFrame)
 	{
-		const FLinearColor ThumbOut = FMath::Lerp(FLinearColor(0.92f, 0.92f, 0.90f, 0.18f + 0.20f * H01), T->PureInk, S01);
-		ThumbFrame->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.95f), 1.0f, ThumbOut));
+		ThumbFrame->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.95f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.55f + 0.3f * S01)));
 		ThumbFrame->SetBrushColor(FLinearColor::White);
 	}
 
-	const FLinearColor NameCol = FMath::Lerp(ERUI::Fade(T->Bone, 0.68f + 0.30f * H01), T->PureInk, S01);
-	const FLinearColor SubCol  = FMath::Lerp(ERUI::Fade(T->Bone, 0.42f + 0.18f * H01), ERUI::Fade(T->PureInk, 0.65f), S01);
-	const FLinearColor IdxCol  = FMath::Lerp(ERUI::Fade(T->Bone, 0.30f + 0.20f * H01), ERUI::Fade(T->PureInk, 0.52f), S01);
-	const FLinearColor IntCol  = bLowIntegrity
-		? T->DangerColor
-		: FMath::Lerp(ERUI::Fade(T->Bone, 0.55f + 0.25f * H01), T->PureInk, S01);
-
+	const FLinearColor NameCol = ERUI::InkText();
+	const FLinearColor SubCol  = ERUI::InkText(0.66f);
+	const FLinearColor IdxCol  = ERUI::InkText(0.5f);
+	const FLinearColor IntCol  = bLowIntegrity ? FLinearColor(0.62f, 0.04f, 0.02f, 1.0f) : ERUI::InkText(0.8f);
 	if (MemberIndexText) { MemberIndexText->SetColorAndOpacity(FSlateColor(IdxCol)); }
 	if (MemberName)      { MemberName->SetColorAndOpacity(FSlateColor(NameCol)); }
 	if (MemberSchool)    { MemberSchool->SetColorAndOpacity(FSlateColor(SubCol)); }

@@ -169,11 +169,10 @@ bool FWFC3DSolver::CollapseSlot(int32 SlotIndex)
 
 	if (ChosenIndex == INDEX_NONE)
 	{
-		// 备底保护
-		for (TConstSetBitIterator<> It(Slot.Candidates); It; ++It)
+		// 备底保护: 取第一个可用候选 (用 if 避免 DebugGame 下 for+break 触发 C4702 不可达代码)
+		if (TConstSetBitIterator<> It(Slot.Candidates); It)
 		{
 			ChosenIndex = It.GetIndex();
-			break;
 		}
 	}
 
@@ -274,10 +273,9 @@ bool FWFC3DSolver::Propagate()
 				if (RemainingCount == 1)
 				{
 					NeighborSlot.bCollapsed = true;
-					for (TConstSetBitIterator<> It(NeighborSlot.Candidates); It; ++It)
+					if (TConstSetBitIterator<> It(NeighborSlot.Candidates); It)
 					{
 						NeighborSlot.FinalModuleIndex = It.GetIndex();
-						break;
 					}
 					RemoveUncollapsedSlot(NeighborIndex);
 				}

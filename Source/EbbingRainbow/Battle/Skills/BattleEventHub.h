@@ -19,6 +19,9 @@ class UBattleStatusEffect;
  */
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnBattleSkillActivated, ABattleUnit* /*Caster*/, const UBattleSkillData* /*Skill*/);
+DECLARE_MULTICAST_DELEGATE_FiveParams(FOnBattleSkillCastStarted, ABattleUnit* /*Caster*/, const UBattleSkillData* /*Skill*/, ABattleUnit* /*Target*/, const FVector& /*TargetLocation*/, float /*HitDelay*/);
+DECLARE_MULTICAST_DELEGATE_FourParams(FOnBattleSkillAreaTriggered, ABattleUnit* /*Caster*/, const UBattleSkillData* /*Skill*/, const FVector& /*TargetLocation*/, float /*Radius*/);
+DECLARE_MULTICAST_DELEGATE_SixParams(FOnBattleChainArcTriggered, ABattleUnit* /*Caster*/, ABattleUnit* /*FromUnit*/, ABattleUnit* /*ToUnit*/, const UBattleSkillData* /*Skill*/, int32 /*JumpIndex*/, float /*Delay*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnBattleHitResolved, const FBattleHitResult& /*Hit*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnBattleDamageResolved, const FBattleDamageEvent& /*Damage*/);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnBattleStatusChanged, ABattleUnit* /*Unit*/, const UBattleStatusEffect* /*Status*/, bool /*bApplied*/);
@@ -36,6 +39,9 @@ public:
 	static UBattleEventHub* Get(const UWorld* World);
 
 	FOnBattleSkillActivated OnSkillActivated;
+	FOnBattleSkillCastStarted OnSkillCastStarted;
+	FOnBattleSkillAreaTriggered OnSkillAreaTriggered;
+	FOnBattleChainArcTriggered OnChainArcTriggered;
 	FOnBattleHitResolved OnHitResolved;
 	FOnBattleDamageResolved OnDamageResolved;
 	FOnBattleStatusChanged OnStatusChanged;

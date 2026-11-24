@@ -8,7 +8,7 @@ from ue_shot import connect, call
 m = connect()
 OBJ = "editor_toolset.toolsets.object.ObjectTools"
 MI = "editor_toolset.toolsets.material_instance.MaterialInstanceTools"
-BASE = "/Game/Battle/Maps/Lvl_Arena.Lvl_Arena:PersistentLevel."
+BASE = "/Game/Battle/Maps/Lvl_ConcreteArena.Lvl_ConcreteArena:PersistentLevel."
 SKY = BASE + "SkyLight_0.SkyLightComponent0"
 DOME = BASE + "StaticMeshActor_0.StaticMeshComponent0"
 PPV = BASE + "PostProcessVolume_1"

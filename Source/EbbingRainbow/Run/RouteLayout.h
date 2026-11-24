@@ -6,8 +6,8 @@
 #include "Run/RunTypes.h"
 
 /**
- * 航线图布局的唯一真相源: Slate 叠加层(SRouteMapOverlay)与 3D 场景(ARouteSceneBuilder)
- * 共用, 保证 3D 光晕/连线严格落在 Slate 节点正下方。
+ * 航线图布局的唯一真相源: UMG 叠加层(UERRouteHUD::GetMapLayout)与 3D 场景(ARouteSceneBuilder)
+ * 共用, 保证 3D 光晕/连线严格落在 UI 节点正下方。
  * 画布是 MapW x MapH 的虚拟像素空间, 等比缩放进 (视口 - PadTop - PadBottom)。
  */
 namespace ERRouteLayout

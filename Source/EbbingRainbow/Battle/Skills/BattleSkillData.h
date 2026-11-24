@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "GameplayTagContainer.h"
+#include "Battle/FX/BattleVFXTypes.h"
 #include "Battle/Skills/BattleSkillTypes.h"
 #include "BattleSkillData.generated.h"
 
@@ -200,6 +201,10 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Skill|Visuals")
 	TObjectPtr<class UAnimSequence> CastAnimation = nullptr;
+
+	/** 技能特效表现配置 (Niagara 槽位 / 可选蓝图演出覆盖 / 主题色) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Skill|Visuals")
+	FBattleSkillVFXConfig VFX;
 
 	// ---------------- 8. 接口 ----------------
 

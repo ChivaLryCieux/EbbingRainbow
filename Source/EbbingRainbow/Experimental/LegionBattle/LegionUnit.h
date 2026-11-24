@@ -77,6 +77,19 @@ public:
 	const FLegionArchetypeStats& GetArchetypeStats() const { return ArchetypeStats; }
 	ELegionState GetLegionState() const { return State; }
 	ALegionUnit* GetAttackTarget() const { return AttackTarget.Get(); }
+
+	// ---- 当前命令 (供地图 / HUD 绘制路线、终点与朝向箭头) ----
+	bool HasMoveOrder() const { return bHasMoveDestination && !bWiped; }
+	FVector GetMoveDestination() const { return MoveDestination; }
+	bool HasCustomFacing() const { return bHasCustomFacing; }
+	float GetDesiredFacingYaw() const { return DesiredFacingYaw; }
+	/** 剩余路径点 (已走过的不含; 末点为终点) */
+	void GetRemainingPath(TArray<FVector>& OutPoints) const
+	{
+		OutPoints.Reset();
+		for (int32 i = FMath::Max(0, WaypointIndex); i < Waypoints.Num(); ++i) { OutPoints.Add(Waypoints[i]); }
+		if (OutPoints.Num() == 0 && bHasMoveDestination) { OutPoints.Add(MoveDestination); }
+	}
 	float GetLegionHP() const { return LegionHP; }
 	float GetLegionMaxHP() const { return (float)Soldiers.Num() * FMath::Max(1, SoldierHP); }
 	int32 GetCampaignLegionId() const { return CampaignLegionId; }

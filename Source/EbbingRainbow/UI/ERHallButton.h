@@ -51,8 +51,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ExposeOnSpawn = "true"))
 	FText Label = INVTEXT("航线管理");
 
+	/** 副标 (已废弃: 按钮禁止中英文并存, 留空即不显示; 仅为兼容旧蓝图序列化而保留) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ExposeOnSpawn = "true"))
-	FText Caption = INVTEXT("EXPEDITION ROUTES");
+	FText Caption;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (ExposeOnSpawn = "true"))
 	FLinearColor AccentColor = FLinearColor(0.96f, 0.56f, 0.04f, 1.0f);
@@ -64,10 +65,10 @@ public:
 	bool bApplyWidthOverride = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (EditCondition = "bApplyWidthOverride"))
-	float ButtonWidth = 312.0f;
+	float ButtonWidth = 360.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	float ButtonHeight = 74.0f;
+	float ButtonHeight = 88.0f;
 
 	/** 保留旧属性以兼容已有蓝图序列化 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")

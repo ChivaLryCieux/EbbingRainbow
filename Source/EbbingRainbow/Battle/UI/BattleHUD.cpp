@@ -22,7 +22,7 @@ void ABattleHUD::BeginPlay()
 	// 防御性保护：若意外在 Hall 关卡下运行了 BattleHUD，自动回退显示大厅 UI，避免用户看到战斗黑屏或错误界面
 	if (GetWorld() && GetWorld()->GetMapName().Contains(TEXT("Hall")))
 	{
-		UE_LOG(LogERBattleUI, Warning, TEXT("[BattleHUD] Hall level detected under BattleHUD! Spawning HallMainWidget fallback."));
+		UE_LOG(LogERBattleUI, Warning, TEXT("[BattleHUD] Hall level detected under BattleHUD! Spawning HallHUD widget fallback."));
 		if (APlayerController* PC = GetOwningPlayerController())
 		{
 			PC->bShowMouseCursor = true;

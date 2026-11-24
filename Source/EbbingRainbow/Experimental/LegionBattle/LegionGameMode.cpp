@@ -1,17 +1,19 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Experimental/LegionBattle/LegionGameMode.h"
 
-#include "Battle/Player/TacticalCameraPawn.h"
 #include "Campaign/GalacticCampaignSubsystem.h"
 #include "Core/ERAssetCatalog.h"
 #include "Core/ERLog.h"
+#include "Experimental/LegionBattle/LegionCommanderPawn.h"
+#include "Experimental/LegionBattle/LegionForest.h"
 #include "Experimental/LegionBattle/LegionHUD.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
 
 #include "Animation/AnimationAsset.h"
 #include "Camera/CameraActor.h"
+#include "Containers/Ticker.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
@@ -27,7 +29,7 @@
 
 ALegionGameMode::ALegionGameMode()
 {
-	DefaultPawnClass = ATacticalCameraPawn::StaticClass();
+	DefaultPawnClass = ALegionCommanderPawn::StaticClass();
 	PlayerControllerClass = ALegionPlayerController::StaticClass();
 	HUDClass = ALegionHUD::StaticClass();
 	LegionClass = ALegionUnit::StaticClass();
@@ -151,33 +153,40 @@ void ALegionGameMode::StartPlay()
 		DeployCenter.Z = CenterZ;
 	}
 
-	// 生成左上角黑白等高线小地图纹理 (256x256)
+	// 林地: 必须在地图纹理烘焙与兵团布阵之前 (密林会改写可通行格并体现在战略图上)
+	SpawnForest();
+
+	// 生成黑白等高线地图纹理: 256px 角标小地图 + 1536px 全屏战略图 (后者覆盖 ~2K 视口不糊)
 	if (TerrainGrid.IsBuilt())
 	{
-		constexpr int32 MapPx = 256;
-		TArray<FColor> Pixels;
-		TerrainGrid.BuildMinimapPixels(MapPx, Pixels);
-		if (Pixels.Num() == MapPx * MapPx)
+		auto BakeMapTexture = [&](int32 MapPx) -> UTexture2D*
 		{
-			MinimapTexture = UTexture2D::CreateTransient(MapPx, MapPx, PF_B8G8R8A8);
-			if (MinimapTexture)
+			TArray<FColor> Pixels;
+			TerrainGrid.BuildMinimapPixels(MapPx, Pixels);
+			if (Pixels.Num() != MapPx * MapPx) { return nullptr; }
+			UTexture2D* Tex = UTexture2D::CreateTransient(MapPx, MapPx, PF_B8G8R8A8);
+			if (!Tex) { return nullptr; }
+			Tex->SRGB = true;
+			Tex->Filter = TF_Bilinear;
+			Tex->AddressX = TA_Clamp;
+			Tex->AddressY = TA_Clamp;
+			if (FTexturePlatformData* PD = Tex->GetPlatformData())
 			{
-				MinimapTexture->SRGB = true;
-				MinimapTexture->Filter = TF_Bilinear;
-				MinimapTexture->AddressX = TA_Clamp;
-				MinimapTexture->AddressY = TA_Clamp;
-				if (FTexturePlatformData* PD = MinimapTexture->GetPlatformData())
+				if (PD->Mips.Num() > 0)
 				{
-					if (PD->Mips.Num() > 0)
-					{
-						void* Data = PD->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
-						FMemory::Memcpy(Data, Pixels.GetData(), Pixels.Num() * sizeof(FColor));
-						PD->Mips[0].BulkData.Unlock();
-						MinimapTexture->UpdateResource();
-					}
+					void* Data = PD->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+					FMemory::Memcpy(Data, Pixels.GetData(), Pixels.Num() * sizeof(FColor));
+					PD->Mips[0].BulkData.Unlock();
+					Tex->UpdateResource();
 				}
 			}
-		}
+			return Tex;
+		};
+
+		MinimapTexture = BakeMapTexture(256);
+		StrategicMapTexture = BakeMapTexture(1536);
+		// 等高线地图视角放大后换用的高精度图 (BuildMinimapPixels 内部多线程烘焙)
+		DetailMapTexture = BakeMapTexture(3072);
 	}
 
 	// 2. 从战役子系统读取委托编成, 或走独立演武沙盘预设
@@ -194,7 +203,7 @@ void ALegionGameMode::StartPlay()
 	{
 		const FGalacticContract& Contract = Campaign->GetActiveContract();
 		BattleTitleText = Contract.Title;
-		BattleSubText = FString::Printf(TEXT("CONTRACT // %s VS %s · SECTOR %02d"),
+		BattleSubText = FString::Printf(TEXT("委托  ·  %s 对 %s  ·  第 %02d 星区"),
 			*ERGalacticMeta::GetFactionCode(Contract.Employer),
 			*ERGalacticMeta::GetFactionCode(Contract.EnemyFaction),
 			Contract.TargetSectorId + 1);
@@ -249,8 +258,8 @@ void ALegionGameMode::StartPlay()
 
 			if (W.DelaySeconds <= 0.01f)
 			{
-				const FString Label = FString::Printf(TEXT("%s-%02d"),
-					*ERGalacticMeta::GetClassCode(W.Archetype), EnemyLegions.Num() + 1);
+				const FString Label = FString::Printf(TEXT("敌军%s号 // %s"),
+					*ERGalacticMeta::GetChineseOrdinal(EnemyLegions.Num() + 1), *ERGalacticMeta::GetClassName(W.Archetype));
 				if (ALegionUnit* L = SpawnLegion(ELegionTeam::Enemy, W.Archetype, W.SoldierCount,
 					DropPos, -90.0f, INDEX_NONE, Label, 1))
 				{
@@ -270,7 +279,7 @@ void ALegionGameMode::StartPlay()
 	{
 		// 独立沙盘演武模式: 四兵种齐上阵 (4v4 默认, 支持命令行 -LegionLegions / -LegionSoldiers 压测)
 		BattleTitleText = TEXT("虹膜军团演武");
-		BattleSubText = TEXT("IRIS FOUNDATION // MULTI-CORPS TACTICAL SANDBOX");
+		BattleSubText = TEXT("虹膜基金会  ·  多兵团战术演武");
 
 		const int32 N = FMath::Max(1, LegionsPerSide);
 		bUseAnimatedAlly = (CachedAllySkel != nullptr) && (N * SoldiersPerLegion <= MaxAnimatedSoldiersPerSide);
@@ -289,7 +298,7 @@ void ALegionGameMode::StartPlay()
 				: FVector(X, DeployCenter.Y - LineDistance * 0.5f, DeployCenter.Z);
 			if (ALegionUnit* L = SpawnLegion(ELegionTeam::Player, C, SoldiersPerLegion,
 				PPos, 90.0f, i + 1,
-				FString::Printf(TEXT("IRIS-%02d // %s"), i + 1, *ERGalacticMeta::GetClassName(C)), 1))
+				FString::Printf(TEXT("虹膜%s号 // %s"), *ERGalacticMeta::GetChineseOrdinal(i + 1), *ERGalacticMeta::GetClassName(C)), 1))
 			{
 				PlayerLegions.Add(L);
 				InitialPlayerCounts.Add(i + 1, SoldiersPerLegion);
@@ -300,7 +309,7 @@ void ALegionGameMode::StartPlay()
 				: FVector(X, DeployCenter.Y + LineDistance * 0.5f, DeployCenter.Z);
 			if (ALegionUnit* L = SpawnLegion(ELegionTeam::Enemy, C, SoldiersPerLegion,
 				EPos, -90.0f, INDEX_NONE,
-				FString::Printf(TEXT("HOSTILE-%02d // %s"), i + 1, *ERGalacticMeta::GetClassName(C)), 1))
+				FString::Printf(TEXT("敌军%s号 // %s"), *ERGalacticMeta::GetChineseOrdinal(i + 1), *ERGalacticMeta::GetClassName(C)), 1))
 			{
 				EnemyLegions.Add(L);
 				InitialEnemySoldiersTotal += SoldiersPerLegion;
@@ -308,26 +317,30 @@ void ALegionGameMode::StartPlay()
 		}
 	}
 
-	// 3. 配置大地形贴地战术摄像机
+	// 3. 第一人称指挥官: 站到我方战线身后, 面朝敌方
 	if (APlayerController* PC = World->GetFirstPlayerController())
 	{
-		if (ATacticalCameraPawn* Cam = Cast<ATacticalCameraPawn>(PC->GetPawn()))
+		if (APawn* Pawn = PC->GetPawn())
 		{
-			Cam->bTerrainFollowingPivot = true;
-			Cam->MinArmLength = 800.0f;
-			Cam->MaxArmLength = MaxZoomArmLength;
-			Cam->DefaultArmLength = InitialArmLength;
-			Cam->DefaultYaw = InitialYawDeg;
-			Cam->ClosePitch = -28.0f;
-			Cam->FarPitch = -68.0f;
-			Cam->EdgeScrollMargin = EdgeScrollMarginPx;
-			Cam->PanSpeed = CameraPanSpeed;
-			Cam->ZoomStep = 450.0f;
-			Cam->SetMoveBounds(FBox(
-				DeployCenter + FVector(-CameraBoundExtent, -CameraBoundExtent, -20000.0f),
-				DeployCenter + FVector(CameraBoundExtent, CameraBoundExtent, 20000.0f)));
-			Cam->SnapTo(DeployCenter + FVector(0.0f, -700.0f, 0.0f));
-			Cam->SnapArmLength(InitialArmLength, InitialYawDeg);
+			FVector Start = DeployCenter;
+			if (PlayerLegions.Num() > 0)
+			{
+				float SumX = 0.0f, MinY = MAX_FLT;
+				int32 N = 0;
+				for (const ALegionUnit* L : PlayerLegions)
+				{
+					if (!L) { continue; }
+					SumX += L->GetActorLocation().X;
+					MinY = FMath::Min(MinY, L->GetActorLocation().Y);
+					++N;
+				}
+				if (N > 0) { Start = FVector(SumX / N, MinY - 2200.0f, DeployCenter.Z); }
+			}
+			if (TerrainGrid.IsBuilt()) { Start = TerrainGrid.ClampToWalkable(Start); }
+			float GroundZ = Start.Z, Slope = 0.0f;
+			TerrainGrid.SampleHeightAndSlope(Start, GroundZ, Slope);
+			Pawn->SetActorLocation(FVector(Start.X, Start.Y, GroundZ + 120.0f), false, nullptr, ETeleportType::TeleportPhysics);
+			PC->SetControlRotation(FRotator(-4.0f, InitialYawDeg, 0.0f));
 		}
 	}
 
@@ -335,6 +348,75 @@ void ALegionGameMode::StartPlay()
 
 	UE_LOG(LogERLegion, Log, TEXT("[Legion] Deployed %d ally legions vs %d enemy legions (+%d pending waves), animated=%d"),
 		PlayerLegions.Num(), EnemyLegions.Num(), PendingWaves.Num(), (int32)bUseAnimatedAlly);
+}
+
+void ALegionGameMode::SpawnForest()
+{
+	if (!bSpawnForest || !TerrainGrid.IsBuilt() || FParse::Param(FCommandLine::Get(), TEXT("NoForest"))) { return; }
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+
+	int32 Seed = DefaultForestSeed;
+	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+	{
+		if (Campaign->HasActiveContract()) { Seed = Campaign->GetActiveContract().TerrainSeed; }
+	}
+	FParse::Value(FCommandLine::Get(), TEXT("-ForestSeed="), Seed);
+
+	// 部署带: 我方线 / 敌方线 / 延迟空降线 (见 StartPlay 的布阵公式), 两侧各清空 ForestClearHalfDepth
+	const float Half = TerrainGrid.GetWorldSpan() * 0.5f;
+	const FVector GC = TerrainGrid.GetGridCenter();
+	TArray<FBox2D> Exclusions;
+	for (const float Frac : { -0.5f, 0.5f, 0.72f })
+	{
+		const float Y = DeployCenter.Y + LineDistance * Frac;
+		Exclusions.Add(FBox2D(FVector2D(GC.X - Half, Y - ForestClearHalfDepth), FVector2D(GC.X + Half, Y + ForestClearHalfDepth)));
+	}
+
+	if (!Forest)
+	{
+		FActorSpawnParameters P;
+		P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Forest = World->SpawnActor<ALegionForest>(FVector::ZeroVector, FRotator::ZeroRotator, P);
+	}
+	if (!Forest) { return; }
+
+	// 连通性: 三条纵向车道 (我方线 -> 敌方线) 中, 无树时本就连通的, 种树后也必须连通
+	struct FLane { FVector From, To; bool bBaseOk = false; };
+	TArray<FLane> Lanes;
+	for (const float DX : { -9000.0f, 0.0f, 9000.0f })
+	{
+		FLane L;
+		L.From = TerrainGrid.ClampToWalkable(FVector(DeployCenter.X + DX, DeployCenter.Y - LineDistance * 0.5f, DeployCenter.Z));
+		L.To = TerrainGrid.ClampToWalkable(FVector(DeployCenter.X + DX, DeployCenter.Y + LineDistance * 0.5f, DeployCenter.Z));
+		Lanes.Add(L);
+	}
+	TerrainGrid.ResetTrees();
+	for (FLane& L : Lanes)
+	{
+		TArray<FVector> Tmp;
+		L.bBaseOk = TerrainGrid.FindPath(L.From, L.To, Tmp);
+	}
+
+	bool bOk = false;
+	for (const float Scale : { 1.0f, 0.7f, 0.45f })
+	{
+		Forest->Generate(World, TerrainGrid, Seed, Scale, Exclusions);
+		bOk = true;
+		for (const FLane& L : Lanes)
+		{
+			TArray<FVector> Tmp;
+			if (L.bBaseOk && !TerrainGrid.FindPath(L.From, L.To, Tmp)) { bOk = false; break; }
+		}
+		if (bOk) { break; }
+		UE_LOG(LogERLegion, Warning, TEXT("[Forest] seed=%d scale=%.2f blocks a lane, retry thinner"), Seed, Scale);
+	}
+	if (!bOk)
+	{
+		Forest->ClearTrees();
+		TerrainGrid.ResetTrees();
+		UE_LOG(LogERLegion, Warning, TEXT("[Forest] seed=%d could not keep lanes open, forest disabled"), Seed);
+	}
 }
 
 ALegionUnit* ALegionGameMode::SpawnLegion(ELegionTeam Team, ELegionClass Archetype, int32 SoldierCount,
@@ -396,8 +478,8 @@ FVector ALegionGameMode::MinimapUVToWorld(const FVector2D& UV) const
 
 void ALegionGameMode::SpawnWaveLegion(const FPendingEnemyWave& Wave)
 {
-	const FString Label = FString::Printf(TEXT("REINF-%s-%02d"),
-		*ERGalacticMeta::GetClassCode(Wave.Spec.Archetype), EnemyLegions.Num() + 1);
+	const FString Label = FString::Printf(TEXT("增援%s号 // %s"),
+		*ERGalacticMeta::GetChineseOrdinal(EnemyLegions.Num() + 1), *ERGalacticMeta::GetClassName(Wave.Spec.Archetype));
 	if (ALegionUnit* L = SpawnLegion(ELegionTeam::Enemy, Wave.Spec.Archetype, Wave.Spec.SoldierCount,
 		Wave.DropLocation, -90.0f, INDEX_NONE, Label, 1))
 	{
@@ -653,5 +735,45 @@ void ALegionGameMode::HandleAutoShot()
 	{
 		PC->SetViewTargetWithBlend(PC->GetPawn(), 0.4f, VTBlend_Linear);
 		AutoShotStage = 4;
+	}
+	else if (AutoShotStage == 4 && AutoShotTimer > 3.0f)
+	{
+		// 回到第一人称视角后截一张战场视角图
+		FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionFPS"), true, true);
+		AutoShotStage = 5;
+	}
+	else if (AutoShotStage == 5 && AutoShotTimer > 4.5f)
+	{
+		// 等高线地图视角会暂停世界 (本 Tick 随之停摆), 所以改用 Core Ticker 延时截图
+		if (ALegionPlayerController* LPC = Cast<ALegionPlayerController>(PC))
+		{
+			LPC->SetStrategicMapOpen(true);
+		}
+		// 世界暂停后本 Tick 停摆, 后续步骤都走 Core Ticker:
+		//  +0.6s 跑地图交互自检 (缩放 / 点番号 / 集火 / 机动), 保持地图打开并下好命令
+		//  +1.8s 截图 (带命令线 / 终点靶标 / 朝向箭头)
+		//  +2.6s 点「返回战场」并收尾自检, +3.2s 截第一人称里的命令反馈
+		TWeakObjectPtr<ALegionPlayerController> WeakPC = Cast<ALegionPlayerController>(PC);
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakPC](float)
+		{
+			if (ALegionPlayerController* P = WeakPC.Get()) { P->RunMapSelfTest(false); }
+			return false;
+		}), 0.6f);
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+		{
+			FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionMap"), true, true);
+			return false;
+		}), 1.8f);
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakPC](float)
+		{
+			if (ALegionPlayerController* P = WeakPC.Get()) { P->FinishMapSelfTest(); }
+			return false;
+		}), 2.6f);
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+		{
+			FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionOrders"), true, true);
+			return false;
+		}), 3.4f);
+		AutoShotStage = 6;
 	}
 }

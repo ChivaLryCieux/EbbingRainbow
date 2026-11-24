@@ -25,6 +25,7 @@ public class EbbingRainbow : ModuleRules
 			// UERUISettings (UDeveloperSettings)
 			"DeveloperSettings",
 			"ProceduralMeshComponent",
+			"Niagara",
 			// 技能系统 2.0: 标签容器 (技能/状态/反应表的语义标识)
 			"GameplayTags"
 		});

@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERBattleResult.h"
 #include "Animation/WidgetAnimation.h"
@@ -199,7 +199,7 @@ void UERBattleResult::Build()
 		S->SetAutoSize(true);
 	}
 
-	StatusTagText = ERUI::MakeText(this, INVTEXT("OPERATION CLEARED // TACTICAL SUMMARY"), EERTypeScale::Micro, T->BoneSecondary, true);
+	StatusTagText = ERUI::MakeText(this, INVTEXT("作战完成  ·  战术总结"), EERTypeScale::Micro, T->BoneSecondary, true);
 	StatusTagText->SetFont(ERUI::FontRegular(10, 360));
 	Col->AddChildToVerticalBox(StatusTagText)->SetHorizontalAlignment(HAlign_Center);
 
@@ -277,7 +277,7 @@ void UERBattleResult::SetResult(bool bWon, const FText& Title, const FText& Subt
 		ResultTrack.FinishImmediately();
 		if (StatusTagText)
 		{
-			StatusTagText->SetText(bWon ? INVTEXT("OPERATION CLEARED // TACTICAL SUMMARY") : INVTEXT("SIGNAL LOST // OPERATION TERMINATED"));
+			StatusTagText->SetText(bWon ? INVTEXT("作战完成  ·  战术总结") : INVTEXT("信号丢失  ·  行动终止"));
 		}
 	}
 

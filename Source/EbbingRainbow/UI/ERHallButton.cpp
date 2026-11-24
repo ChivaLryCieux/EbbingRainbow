@@ -127,7 +127,7 @@ void UERHallButton::Build()
 	}
 
 	IndexText = ERUI::MakeText(this, IndexCode, EERTypeScale::Title, T->BoneSecondary, true);
-	IndexText->SetFont(ERUI::FontBold(24, 40));
+	IndexText->SetFont(ERUI::FontBold(30, 40));
 	{
 		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(IndexText);
 		S->SetVerticalAlignment(VAlign_Center);
@@ -143,15 +143,17 @@ void UERHallButton::Build()
 	}
 
 	LabelText = ERUI::MakeText(this, Label, EERTypeScale::Title, T->Bone);
-	LabelText->SetFont(ERUI::FontBold(20, 60));
+	LabelText->SetFont(ERUI::FontBold(32, 100));
 	TextCol->AddChildToVerticalBox(LabelText);
 
+	// 按钮禁止中英文并存: 副标行保留控件 (兼容旧蓝图绑定) 但默认折叠
 	CaptionText = ERUI::MakeText(this, Caption, EERTypeScale::Micro, T->BoneTertiary, true);
 	CaptionText->SetFont(ERUI::FontRegular(8, 240));
-	TextCol->AddChildToVerticalBox(CaptionText)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
+	CaptionText->SetVisibility(ESlateVisibility::Collapsed);
+	TextCol->AddChildToVerticalBox(CaptionText);
 
 	ArrowText = ERUI::MakeText(this, INVTEXT("→"), EERTypeScale::Title, T->BoneSecondary, true);
-	ArrowText->SetFont(ERUI::FontBold(18, 0));
+	ArrowText->SetFont(ERUI::FontBold(26, 0));
 	{
 		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(ArrowText);
 		S->SetVerticalAlignment(VAlign_Center);
@@ -163,7 +165,12 @@ void UERHallButton::SyncStaticProperties()
 {
 	if (IndexText)   { IndexText->SetText(IndexCode); }
 	if (LabelText)   { LabelText->SetText(Label); }
-	if (CaptionText && !CaptionCipher.IsRunning()) { CaptionText->SetText(Caption); }
+	bPrimary = true; // 全工程统一「白底墨字彩条」, 不再提供黑底次按钮
+	if (CaptionText)
+	{
+		CaptionText->SetVisibility(Caption.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+		if (!CaptionCipher.IsRunning()) { CaptionText->SetText(Caption); }
+	}
 	if (ButtonSizeBox)
 	{
 		if (bApplyWidthOverride)
@@ -201,7 +208,7 @@ void UERHallButton::SetAccentAndPrimary(FLinearColor InAccent, bool bInPrimary)
 
 void UERHallButton::TriggerEntrancePulse(float DelaySeconds)
 {
-	CaptionCipher.Start(Caption.ToString(), 0.36f, DelaySeconds);
+	if (!Caption.IsEmpty()) { CaptionCipher.Start(Caption.ToString(), 0.36f, DelaySeconds); }
 	SweepProgress = 0.01f;
 }
 

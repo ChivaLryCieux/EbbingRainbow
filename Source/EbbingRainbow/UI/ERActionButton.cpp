@@ -12,6 +12,7 @@
 #include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
+#include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 
 TSharedRef<SWidget> UERActionButton::RebuildWidget()
@@ -105,48 +106,95 @@ void UERActionButton::Build()
 	}
 	WidgetTree->RootWidget = HitButton;
 
+	ButtonSizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("ButtonSizeBox"));
+	if (MinButtonWidth > 0.0f) { ButtonSizeBox->SetMinDesiredWidth(MinButtonWidth); }
+	if (MinButtonHeight > 0.0f) { ButtonSizeBox->SetMinDesiredHeight(MinButtonHeight); }
+	HitButton->SetContent(ButtonSizeBox);
+
 	UOverlay* Ov = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("ButtonOverlay"));
 	Ov->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	HitButton->SetContent(Ov);
+	ButtonSizeBox->SetContent(Ov);
 
-	// 机能风切角底板 (在明亮灰混凝土战场上绝对锐利高对比)
+	// 「白底墨字彩条」切角底板: 反白石膏 + 墨黑描边 + 四角刻度 + 左侧点睛条
 	ButtonFrame = WidgetTree->ConstructWidget<UERTechFrame>(UERTechFrame::StaticClass(), TEXT("ButtonFrame"));
-	ButtonFrame->Chamfer = FVector4(0.0f, 10.0f, 0.0f, 10.0f);
-	ButtonFrame->FillColor = FLinearColor(0.008f, 0.009f, 0.012f, 0.90f);
-	ButtonFrame->BorderColor = FLinearColor(0.92f, 0.92f, 0.90f, 0.28f);
+	ButtonFrame->Chamfer = FVector4(0.0f, 12.0f, 0.0f, 12.0f);
+	ButtonFrame->BorderThickness = 1.0f;
 	ButtonFrame->bDrawCornerBrackets = true;
-	ButtonFrame->BracketLength = 7.0f;
-	ButtonFrame->BracketColor = FLinearColor(0.92f, 0.92f, 0.90f, 0.72f);
+	ButtonFrame->BracketLength = 8.0f;
+	ButtonFrame->BracketThickness = 1.4f;
 	ButtonFrame->AccentEdge = EERAccentEdge::Left;
-	ButtonFrame->AccentThickness = 3.0f;
-	ButtonFrame->AccentColor = T->Accent;
+	ButtonFrame->AccentThickness = 4.0f;
+	ButtonFrame->AccentColor = AccentColor;
+	ButtonFrame->bUsePrismAccent = bPrismAccent;
 	ButtonFrame->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	ERUI::StyleBoneFrame(ButtonFrame, 0.0f, true, false, AccentColor, bPrismAccent);
 	{
 		UOverlaySlot* S = Ov->AddChildToOverlay(ButtonFrame);
 		S->SetHorizontalAlignment(HAlign_Fill);
 		S->SetVerticalAlignment(VAlign_Fill);
 	}
 
-	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("Row"));
-	Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	ContentRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("Row"));
+	ContentRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	{
-		UOverlaySlot* S = Ov->AddChildToOverlay(Row);
+		UOverlaySlot* S = Ov->AddChildToOverlay(ContentRow);
 		S->SetHorizontalAlignment(HAlign_Center);
 		S->SetVerticalAlignment(VAlign_Center);
-		S->SetPadding(FMargin(22.0f, 12.0f));
+		S->SetPadding(FMargin(FontSize * 1.1f + 8.0f, FontSize * 0.5f + 4.0f));
 	}
 
-	LabelText = ERUI::MakeText(this, Label, EERTypeScale::Body, T->Bone);
-	LabelText->SetFont(ERUI::FontBold(14, 120));
-	Row->AddChildToHorizontalBox(LabelText)->SetVerticalAlignment(VAlign_Center);
+	LabelText = ERUI::MakeText(this, Label, EERTypeScale::Body, ERUI::InkText());
+	LabelText->SetFont(ERUI::FontBold(FontSize, 80));
+	ContentRow->AddChildToHorizontalBox(LabelText)->SetVerticalAlignment(VAlign_Center);
 
-	ArrowText = ERUI::MakeText(this, ArrowSymbol, EERTypeScale::Body, T->BoneSecondary, true);
-	ArrowText->SetFont(ERUI::FontBold(15, 0));
-	UHorizontalBoxSlot* ArSlot = Row->AddChildToHorizontalBox(ArrowText);
+	ArrowText = ERUI::MakeText(this, ArrowSymbol, EERTypeScale::Body, ERUI::InkText(0.62f), true);
+	ArrowText->SetFont(ERUI::FontBold(FMath::Max(14, FontSize - 2), 0));
+	UHorizontalBoxSlot* ArSlot = ContentRow->AddChildToHorizontalBox(ArrowText);
 	ArSlot->SetVerticalAlignment(VAlign_Center);
-	ArSlot->SetPadding(FMargin(10.0f, 0.0f, 0.0f, 0.0f));
+	ArSlot->SetPadding(FMargin(12.0f, 0.0f, 0.0f, 0.0f));
 
 	ApplyStyle(0.0f);
+}
+
+UERActionButton* UERActionButton::Make(UUserWidget* Owner, const FText& InLabel, int32 InFontSize,
+	bool bInShowArrow, bool bInPrism)
+{
+	UERActionButton* B = Owner->WidgetTree->ConstructWidget<UERActionButton>(UERActionButton::StaticClass());
+	B->Label = InLabel;
+	B->FontSize = InFontSize;
+	B->bShowArrow = bInShowArrow;
+	B->bPrismAccent = bInPrism;
+	return B;
+}
+
+void UERActionButton::SetAccentColor(FLinearColor InAccent, bool bPrism)
+{
+	AccentColor = InAccent;
+	bPrismAccent = bPrism;
+	ApplyStyle(0.0f);
+}
+
+void UERActionButton::SetFontSize(int32 InFontSize)
+{
+	FontSize = InFontSize;
+	if (LabelText) { LabelText->SetFont(ERUI::FontBold(FontSize, 80)); }
+	if (ArrowText) { ArrowText->SetFont(ERUI::FontBold(FMath::Max(14, FontSize - 2), 0)); }
+	if (ContentRow)
+	{
+		if (UOverlaySlot* S = Cast<UOverlaySlot>(ContentRow->Slot))
+		{
+			S->SetPadding(FMargin(FontSize * 1.1f + 8.0f, FontSize * 0.5f + 4.0f));
+		}
+	}
+}
+
+void UERActionButton::SetMinSize(float InMinWidth, float InMinHeight)
+{
+	MinButtonWidth = InMinWidth;
+	MinButtonHeight = InMinHeight;
+	if (!ButtonSizeBox) { return; }
+	if (InMinWidth > 0.0f) { ButtonSizeBox->SetMinDesiredWidth(InMinWidth); } else { ButtonSizeBox->ClearMinDesiredWidth(); }
+	if (InMinHeight > 0.0f) { ButtonSizeBox->SetMinDesiredHeight(InMinHeight); } else { ButtonSizeBox->ClearMinDesiredHeight(); }
 }
 
 void UERActionButton::SetLabel(const FText& InLabel)
@@ -234,32 +282,11 @@ void UERActionButton::ApplyStyle(float DeltaTime)
 
 	if (ButtonFrame)
 	{
-		if (!bEnabledState)
-		{
-			ButtonFrame->SetFrameColors(
-				FLinearColor(0.008f, 0.009f, 0.012f, 0.52f),
-				ERUI::Fade(BoneCol, 0.10f),
-				ERUI::Fade(BoneCol, 0.16f),
-				ERUI::Fade(BoneCol, 0.12f));
-		}
-		else if (bUrgent)
-		{
-			// 紧急态(无剩余AP): 标志性高对比反白石膏底 + 极墨黑字 + 折射暖金点睛条
-			ButtonFrame->SetFrameColors(
-				FMath::Lerp(FLinearColor(0.93f, 0.93f, 0.91f, 0.95f), FLinearColor(1.0f, 1.0f, 0.98f, 1.0f), FMath::Max(H01, Pulse * 0.4f)),
-				FLinearColor(0.01f, 0.01f, 0.02f, 0.45f),
-				FLinearColor(0.01f, 0.01f, 0.02f, 0.85f),
-				AccentCol);
-		}
-		else
-		{
-			ButtonFrame->SetFrameColors(
-				FMath::Lerp(FLinearColor(0.008f, 0.009f, 0.012f, 0.90f), FLinearColor(0.024f, 0.026f, 0.032f, 0.96f), H01),
-				ERUI::Fade(BoneCol, 0.24f + 0.58f * H01),
-				ERUI::Fade(BoneCol, 0.65f + 0.35f * H01),
-				FMath::Lerp(ERUI::Fade(BoneCol, 0.35f), AccentCol, H01));
-		}
-		ButtonFrame->SetMotionState(1.0f, H01, SweepProgress);
+		// 统一「白底墨字彩条」: 紧急态改用折射暖金单色条并随呼吸提亮, 其余用本按钮的点睛色/光谱条
+		const float Hover = bUrgent ? FMath::Max(H01, Pulse * 0.4f) : H01;
+		ERUI::StyleBoneFrame(ButtonFrame, Hover, bEnabledState, bUrgent,
+			bUrgent ? T->Accent : AccentColor, bUrgent ? false : bPrismAccent);
+		ButtonFrame->SetMotionState(1.0f, Hover, bEnabledState ? SweepProgress : 1.0f);
 	}
 	else if (HitButton)
 	{
@@ -281,15 +308,15 @@ void UERActionButton::ApplyStyle(float DeltaTime)
 		}
 	}
 
-	const FLinearColor TextCol = !bEnabledState ? TertiaryCol
-		: (bUrgent && ButtonFrame) ? T->PureInk
-		: (bUrgent ? AccentCol : BoneCol);
+	const FLinearColor TextCol = ButtonFrame
+		? (bEnabledState ? ERUI::InkText() : ERUI::InkText(0.6f))
+		: (!bEnabledState ? TertiaryCol : (bUrgent ? AccentCol : BoneCol));
 	if (LabelText) { LabelText->SetColorAndOpacity(FSlateColor(TextCol)); }
 	if (ArrowText)
 	{
 		ArrowText->SetVisibility(bShowArrow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
-		ArrowText->SetColorAndOpacity(FSlateColor(bEnabledState ? TextCol : TertiaryCol));
-		ArrowText->SetRenderTranslation(FVector2D(5.0f * HoverA, 0.0f));
+		ArrowText->SetColorAndOpacity(FSlateColor(ButtonFrame ? ERUI::Fade(TextCol, 0.72f) : TextCol));
+		ArrowText->SetRenderTranslation(FVector2D(6.0f * HoverA, 0.0f));
 	}
 
 	const float Scale = FMath::Lerp(1.0f, 0.965f, FMath::Clamp(PressA, 0.0f, 1.0f));
@@ -311,6 +338,7 @@ void UERActionButton::HandleClicked()
 {
 	PressSpring.Impulse(6.0f);
 	OnActionClicked.Broadcast();
+	if (NativeCallback) { NativeCallback(); }
 }
 
 UWidget* UERActionButton::GetHoverCheckWidget() const

@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Experimental/AITacticalCommand/ERAICommandPanel.h"
 #include "Blueprint/WidgetTree.h"
@@ -57,7 +57,7 @@ UERAICommandPanel* UERAICommandPanel::InstallOnBattleHUD(UUserWidget* OwnerHUD, 
 	if (!ToggleBtn)
 	{
 		ToggleBtn = Tree->ConstructWidget<UERActionButton>(UERActionButton::StaticClass(), TEXT("AIConnectButton"));
-		ToggleBtn->Label = INVTEXT("AI 链路 // PRTS");
+		ToggleBtn->Label = INVTEXT("战术链路");
 		ToggleBtn->bShowArrow = false;
 		ToggleBtn->ContentPadding = FMargin(16.0f, 8.0f);
 		UCanvasPanelSlot* BtnSlot = RootCanvas->AddChildToCanvas(ToggleBtn);
@@ -200,14 +200,14 @@ void UERAICommandPanel::BuildLayout()
 		TitleSlot->SetVerticalAlignment(VAlign_Center);
 		TitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
-		HeaderCaptionText = ERUI::MakeText(this, INVTEXT("PRTS // NEURAL TACTICAL LINK"), EERTypeScale::Micro, T->BoneTertiary, true);
+		HeaderCaptionText = ERUI::MakeText(this, INVTEXT("战术神经链路"), EERTypeScale::Micro, T->BoneTertiary, true);
 		HeaderCaptionText->SetFont(ERUI::FontRegular(8, 260));
 		TitleCol->AddChildToVerticalBox(HeaderCaptionText);
 
 		UHorizontalBox* TitleLine = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TitleLine"));
 		TitleCol->AddChildToVerticalBox(TitleLine)->SetPadding(FMargin(0.0f, 1.0f, 0.0f, 0.0f));
 
-		UTextBlock* Title = ERUI::MakeText(this, INVTEXT("AI 战术链路"), EERTypeScale::Title, T->Bone);
+		UTextBlock* Title = ERUI::MakeText(this, INVTEXT("战术链路"), EERTypeScale::Title, T->Bone);
 		Title->SetFont(ERUI::FontBold(22, 60));
 		TitleLine->AddChildToHorizontalBox(Title)->SetVerticalAlignment(VAlign_Center);
 
@@ -216,7 +216,7 @@ void UERAICommandPanel::BuildLayout()
 		StatusBadgeBorder->SetBrush(ERUI::RoundedBrush(0.0f, T->Accent));
 		StatusBadgeBorder->SetBrushColor(FLinearColor::White);
 		StatusBadgeBorder->SetPadding(FMargin(8.0f, 2.0f));
-		StatusBadgeText = ERUI::MakeText(this, INVTEXT("NO KEY"), EERTypeScale::Micro, T->PureInk, true);
+		StatusBadgeText = ERUI::MakeText(this, INVTEXT("未配置密钥"), EERTypeScale::Micro, T->PureInk, true);
 		StatusBadgeText->SetFont(ERUI::FontBold(9, 140));
 		StatusBadgeBorder->SetContent(StatusBadgeText);
 		UHorizontalBoxSlot* BadgeSlot = TitleLine->AddChildToHorizontalBox(StatusBadgeBorder);
@@ -229,7 +229,7 @@ void UERAICommandPanel::BuildLayout()
 		SetSlot->SetVerticalAlignment(VAlign_Center);
 		SetSlot->SetPadding(FMargin(8.0f, 0.0f, 6.0f, 0.0f));
 
-		CloseButton = MakeTechButton(TEXT("CLOSE"), false,
+		CloseButton = MakeTechButton(TEXT("关闭"), false,
 			FLinearColor(0.018f, 0.020f, 0.026f, 0.92f), FLinearColor(0.92f, 0.92f, 0.90f, 0.32f), T->Bone);
 		Header->AddChildToHorizontalBox(CloseButton)->SetVerticalAlignment(VAlign_Center);
 	}
@@ -259,7 +259,7 @@ void UERAICommandPanel::BuildLayout()
 		UHorizontalBox* PresetRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("PresetRow"));
 		DrawerInner->AddChildToVerticalBox(PresetRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
 
-		UTextBlock* PresetCap = ERUI::MakeText(this, INVTEXT("PRESET //"), EERTypeScale::Micro, T->BoneTertiary, true);
+		UTextBlock* PresetCap = ERUI::MakeText(this, INVTEXT("预设"), EERTypeScale::Micro, T->BoneTertiary, true);
 		PresetCap->SetFont(ERUI::FontRegular(8, 200));
 		PresetRow->AddChildToHorizontalBox(PresetCap)->SetVerticalAlignment(VAlign_Center);
 
@@ -297,9 +297,9 @@ void UERAICommandPanel::BuildLayout()
 			InSlot->SetVerticalAlignment(VAlign_Center);
 		};
 
-		AddConfigRow(TEXT("URL"),   EndpointInput, INVTEXT("https://api.deepseek.com/v1/chat/completions"), false);
-		AddConfigRow(TEXT("MODEL"), ModelInput,    INVTEXT("deepseek-chat"), false);
-		AddConfigRow(TEXT("KEY"),   ApiKeyInput,   INVTEXT("sk-... (仅保存在本地 Saved/ER_AIConfig.json)"), true);
+		AddConfigRow(TEXT("接口地址"),   EndpointInput, INVTEXT("https://api.deepseek.com/v1/chat/completions"), false);
+		AddConfigRow(TEXT("模型"), ModelInput,    INVTEXT("deepseek-chat"), false);
+		AddConfigRow(TEXT("密钥"),   ApiKeyInput,   INVTEXT("sk-... (仅保存在本地 Saved/ER_AIConfig.json)"), true);
 
 		UHorizontalBox* SaveRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		DrawerInner->AddChildToVerticalBox(SaveRow)->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 0.0f));
@@ -333,7 +333,7 @@ void UERAICommandPanel::BuildLayout()
 		UVerticalBox* IdxCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		IdxRow->AddChildToHorizontalBox(IdxCol)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
-		UTextBlock* IdxHeader = ERUI::MakeText(this, INVTEXT("TELEMETRY // UNIT INDEX"), EERTypeScale::Micro, T->BoneTertiary, true);
+		UTextBlock* IdxHeader = ERUI::MakeText(this, INVTEXT("单位索引"), EERTypeScale::Micro, T->BoneTertiary, true);
 		IdxHeader->SetFont(ERUI::FontRegular(8, 220));
 		IdxCol->AddChildToVerticalBox(IdxHeader);
 
@@ -389,7 +389,7 @@ void UERAICommandPanel::BuildLayout()
 		InputRow->AddChildToHorizontalBox(ClearLogButton)->SetVerticalAlignment(VAlign_Center);
 	}
 
-	AppendLogLine(EERAICommandLogKind::System, TEXT("PRTS 战术链路已就绪。支持多轮上下文追问，点击「新对话」可重置记忆。"));
+	AppendLogLine(EERAICommandLogKind::System, TEXT("战术链路已就绪。支持多轮上下文追问，点击「新对话」可重置记忆。"));
 }
 
 UButton* UERAICommandPanel::MakeTechButton(const FString& Label, bool bInvertedPrimary, const FLinearColor& FillTint,
@@ -403,17 +403,18 @@ UButton* UERAICommandPanel::MakeTechButton(const FString& Label, bool bInvertedP
 	Btn->SetStyle(Style);
 	Btn->SetCursor(EMouseCursor::Hand);
 
+	// 统一「白底墨字彩条」: 骨白底 + 墨黑描边 + 左侧点睛条 (调用方传入的暗色配色不再采用)
 	UBorder* Bg = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-	Bg->SetBrush(ERUI::RoundedBrush(0.0f, FillTint, bInvertedPrimary ? 0.0f : 1.0f, StrokeTint));
+	Bg->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.93f, 0.93f, 0.91f, 0.96f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.45f)));
 	Bg->SetBrushColor(FLinearColor::White);
-	Bg->SetPadding(bInvertedPrimary ? FMargin(14.0f, 7.0f) : FMargin(10.0f, 6.0f));
+	Bg->SetPadding(FMargin(16.0f, 8.0f, 14.0f, 8.0f));
 	Bg->SetHorizontalAlignment(HAlign_Center);
 	Bg->SetVerticalAlignment(VAlign_Center);
 	Btn->SetContent(Bg);
 	if (OutBg) { *OutBg = Bg; }
 
-	UTextBlock* LabelWidget = ERUI::MakeText(this, FText::FromString(Label), EERTypeScale::Micro, TextColor, true);
-	LabelWidget->SetFont(bInvertedPrimary ? ERUI::FontBold(11, 140) : ERUI::FontBold(9, 140));
+	UTextBlock* LabelWidget = ERUI::MakeText(this, FText::FromString(Label), EERTypeScale::Micro, ERUI::InkText(), false);
+	LabelWidget->SetFont(ERUI::FontBold(16, 60));
 	if (OutLabel) { *OutLabel = LabelWidget; }
 	Bg->SetContent(LabelWidget);
 	return Btn;
@@ -467,7 +468,7 @@ void UERAICommandPanel::OnPanelOpened()
 	RefreshUnitIndexBar();
 
 	OpenTrack.Trigger(0.46f);
-	CaptionCipher.Start(TEXT("PRTS // NEURAL TACTICAL LINK"), 0.36f, 0.04f);
+	CaptionCipher.Start(TEXT("战术神经链路"), 0.36f, 0.04f);
 
 	if (Service.IsValid() && !Service->HasApiKey() && !bSettingsExpanded)
 	{
@@ -529,11 +530,11 @@ void UERAICommandPanel::UpdateBusyUI(bool bBusy, const FString& StatusLabel)
 		ToggleBtn->SetUrgent(bBusy);
 		if (bBusy)
 		{
-			ToggleBtn->SetLabel(INVTEXT("AI · 推演中"));
+			ToggleBtn->SetLabel(INVTEXT("推演中"));
 		}
 		else
 		{
-			ToggleBtn->SetLabel(bReady ? INVTEXT("AI 链路 · 就绪") : INVTEXT("AI 链路 // PRTS"));
+			ToggleBtn->SetLabel(bReady ? INVTEXT("战术链路 · 就绪") : INVTEXT("战术链路"));
 		}
 	}
 }
@@ -557,7 +558,7 @@ void UERAICommandPanel::AppendLogLine(EERAICommandLogKind Kind, const FString& T
 		BodyCol = T->Bone;
 		break;
 	case EERAICommandLogKind::ToolCall:
-		Tag = TEXT("TOOL");
+		Tag = TEXT("工具");
 		TagBgCol = T->AllyMark;
 		TagTxtCol = T->PureInk;
 		BodyCol = T->Bone;
@@ -569,7 +570,7 @@ void UERAICommandPanel::AppendLogLine(EERAICommandLogKind Kind, const FString& T
 		BodyCol = T->BoneTertiary;
 		break;
 	case EERAICommandLogKind::Assistant:
-		Tag = TEXT("PRTS");
+		Tag = TEXT("战术链路");
 		TagBgCol = T->Accent;
 		TagTxtCol = T->PureInk;
 		BodyCol = T->Bone;

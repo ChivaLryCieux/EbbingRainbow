@@ -4,9 +4,14 @@
 
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/TextBlock.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Engine/Texture2D.h"
 #include "TextureResource.h"
+#include "UI/Primitives/ERTechPrimitives.h"
 
 namespace ERUI
 {
@@ -38,7 +43,9 @@ namespace ERUI
 			return nullptr;
 		}
 		Tex->Filter = TF_Bilinear;
+#if WITH_EDITORONLY_DATA
 		Tex->MipGenSettings = TMGS_NoMipmaps;
+#endif
 
 		FTexture2DMipMap& Mip = Tex->GetPlatformData()->Mips[0];
 		void* Raw = Mip.BulkData.Lock(LOCK_READ_WRITE);
@@ -166,5 +173,86 @@ namespace ERUI
 		TB->SetText(Text);
 		TB->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		return TB;
+	}
+
+	FLinearColor InkText(float Alpha)
+	{
+		return Fade(Theme()->PureInk, Alpha);
+	}
+
+	void StyleBoneFrame(UERTechFrame* Frame, float Hover01, bool bEnabled, bool bEmphasis,
+		const FLinearColor& Accent, bool bPrism)
+	{
+		if (!Frame) { return; }
+		const float H = FMath::Clamp(Hover01, 0.0f, 1.0f);
+		if (!bEnabled)
+		{
+			Frame->SetFrameColors(
+				FLinearColor(0.66f, 0.66f, 0.64f, 0.82f),
+				FLinearColor(0.02f, 0.02f, 0.03f, 0.22f),
+				FLinearColor(0.01f, 0.01f, 0.02f, 0.30f),
+				Fade(Accent, 0.45f));
+			Frame->bUsePrismAccent = false;
+			Frame->SetMotionState(1.0f, 0.0f, 1.0f);
+			return;
+		}
+		const FLinearColor Fill = FMath::Lerp(
+			FLinearColor(0.93f, 0.93f, 0.91f, 0.95f),
+			FLinearColor(1.00f, 1.00f, 0.98f, 1.00f), H);
+		const float BorderA = bEmphasis ? 0.92f : (0.35f + 0.45f * H);
+		const FLinearColor Border(0.02f, 0.02f, 0.03f, BorderA);
+		const FLinearColor Bracket(0.01f, 0.01f, 0.02f, bEmphasis ? 1.0f : 0.72f + 0.2f * H);
+		Frame->SetFrameColors(Fill, Border, Bracket, Accent);
+		Frame->bUsePrismAccent = bPrism;
+		Frame->SetMotionState(1.0f, H, 1.0f);
+	}
+
+	FBoneCard MakeBoneCard(UUserWidget* Owner, const FLinearColor& Accent, bool bPrism,
+		const FMargin& Padding, bool bDrawBrackets)
+	{
+		FBoneCard Card;
+		UWidgetTree* Tree = Owner->WidgetTree;
+
+		Card.Root = Tree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		Card.Root->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+		Card.Frame = Tree->ConstructWidget<UERTechFrame>(UERTechFrame::StaticClass());
+		Card.Frame->Chamfer = FVector4(0.0f, 12.0f, 0.0f, 12.0f);
+		Card.Frame->BorderThickness = 1.0f;
+		Card.Frame->bDrawCornerBrackets = bDrawBrackets;
+		Card.Frame->BracketLength = 8.0f;
+		Card.Frame->BracketThickness = 1.4f;
+		Card.Frame->AccentEdge = EERAccentEdge::Left;
+		Card.Frame->AccentThickness = 4.0f;
+		Card.Frame->AccentColor = Accent;
+		Card.Frame->bUsePrismAccent = bPrism;
+		Card.Frame->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		StyleBoneFrame(Card.Frame, 0.0f, true, false, Accent, bPrism);
+		{
+			UOverlaySlot* S = Card.Root->AddChildToOverlay(Card.Frame);
+			S->SetHorizontalAlignment(HAlign_Fill);
+			S->SetVerticalAlignment(VAlign_Fill);
+		}
+
+		Card.Content = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		Card.Content->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		{
+			UOverlaySlot* S = Card.Root->AddChildToOverlay(Card.Content);
+			S->SetHorizontalAlignment(HAlign_Fill);
+			S->SetVerticalAlignment(VAlign_Center);
+			S->SetPadding(FMargin(Padding.Left + 6.0f, Padding.Top, Padding.Right, Padding.Bottom));
+		}
+		return Card;
+	}
+
+	UWidget* MakeSectionBar(UUserWidget* Owner, const FText& Title, int32 FontSize,
+		const FLinearColor& Accent, bool bPrism)
+	{
+		FBoneCard Bar = MakeBoneCard(Owner, Accent, bPrism, FMargin(18.0f, 8.0f), false);
+		Bar.Frame->AccentThickness = 4.0f;
+		UTextBlock* TB = MakeText(Owner, Title, EERTypeScale::Title, InkText(), false);
+		TB->SetFont(FontBold(FontSize, 80));
+		Bar.Content->AddChildToVerticalBox(TB);
+		return Bar.Root;
 	}
 }

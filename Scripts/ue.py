@@ -1,10 +1,13 @@
 """Compatibility shim — CLI now lives in SteerAgents (python -m steeragents)."""
 import os
 import sys
+from mcp_call import _steer_src
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "..", "SteerAgents", "client"))
-from steeragents.__main__ import main
+_src = _steer_src()
+if _src:
+    sys.path.insert(0, _src)
+
+from steeragents.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(main())

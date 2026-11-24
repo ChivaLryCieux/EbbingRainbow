@@ -592,7 +592,10 @@ void ALegionUnit::FireRangedVolley(ALegionUnit* Target)
 
 	const float ElevMul = FLegionTerrainGrid::ComputeElevationMultiplier(GetActorLocation().Z, Target->GetActorLocation().Z);
 	const float SkillMul = (SkillActiveRemaining > 0.0f) ? 1.55f : 1.0f;
-	const float VolleyDamage = (float)AliveCount * DamagePerSoldierPerSecond * ArchetypeStats.VolleyInterval * ElevMul * SkillMul;
+	// 林地掩体: 目标站在树冠下时承受的远程火力缩水
+	const float CoverMul = (Target->TerrainGrid && Target->TerrainGrid->IsBuilt())
+		? Target->TerrainGrid->GetRangedCoverMultiplier(Target->GetActorLocation()) : 1.0f;
+	const float VolleyDamage = (float)AliveCount * DamagePerSoldierPerSecond * ArchetypeStats.VolleyInterval * ElevMul * SkillMul * CoverMul;
 
 	Target->ApplyDamage(VolleyDamage, this, true);
 	if (ArchetypeStats.KnockbackImpulse > 0.0f)

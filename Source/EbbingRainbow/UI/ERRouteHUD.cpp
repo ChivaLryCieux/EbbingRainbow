@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERRouteHUD.h"
 #include "Animation/WidgetAnimation.h"
@@ -244,7 +244,7 @@ void UERRouteHUD::BuildLayout()
 		UVerticalBox* HeaderCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("HeaderCol"));
 		HeaderRow->AddChildToHorizontalBox(HeaderCol);
 
-		SubtitleText = ERUI::MakeText(this, INVTEXT("EBBING RAINBOW // EXPEDITION GRAPH"), EERTypeScale::Micro, TextLo, true);
+		SubtitleText = ERUI::MakeText(this, INVTEXT("虹不我与  ·  远征航线图"), EERTypeScale::Micro, TextLo, true);
 		SubtitleText->SetFont(ERUI::FontRegular(9, 280));
 		HeaderCol->AddChildToVerticalBox(SubtitleText);
 
@@ -272,7 +272,7 @@ void UERRouteHUD::BuildLayout()
 		ProgressText->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.70f));
 		StatusCol->AddChildToVerticalBox(ProgressText)->SetHorizontalAlignment(HAlign_Right);
 
-		StatText = ERUI::MakeText(this, INVTEXT("LAYER // 战斗 0 · SEED 0"), EERTypeScale::Micro, TextMid, true);
+		StatText = ERUI::MakeText(this, INVTEXT("战斗 0 场 · 种子 0"), EERTypeScale::Micro, TextMid, true);
 		StatText->SetFont(ERUI::FontRegular(9, 200));
 		UVerticalBoxSlot* StSlot = StatusCol->AddChildToVerticalBox(StatText);
 		StSlot->SetHorizontalAlignment(HAlign_Right);
@@ -300,7 +300,7 @@ void UERRouteHUD::BuildLayout()
 	// 底部操作提示
 	if (!HintText)
 	{
-		HintText = ERUI::MakeText(this, INVTEXT("SELECT REACHABLE NODE  //  点击可选节点推进航线"), EERTypeScale::Micro, TextLo, true);
+		HintText = ERUI::MakeText(this, INVTEXT("点击可选节点推进航线"), EERTypeScale::Micro, TextLo, true);
 		HintText->SetFont(ERUI::FontRegular(9, 200));
 		UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(HintText);
 		S->SetAnchors(FAnchors(0.5f, 1.0f));
@@ -598,7 +598,7 @@ void UERRouteHUD::Refresh()
 
 	if (StatText)
 	{
-		StatText->SetText(FText::FromString(FString::Printf(TEXT("LAYER  //  战斗 %d 场 · SEED %d"),
+		StatText->SetText(FText::FromString(FString::Printf(TEXT("战斗 %d 场  ·  种子 %d"),
 			Run->GetBattlesFought(), Run->GetRunSeed())));
 	}
 	if (ProgressText)

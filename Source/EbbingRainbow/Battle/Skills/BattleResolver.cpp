@@ -345,6 +345,13 @@ void UBattleResolver::ResolveSkill(ABattleUnit* Caster, ABattleUnit* Target, con
 
 	// 3. 逐目标逐段: 首段立即结算, 后续按 HitInterval 延迟 (轻型连击手感)
 	const bool bIsArea = Skill->AoE.IsArea();
+	if (bIsArea && World)
+	{
+		if (UBattleEventHub* Hub = UBattleEventHub::Get(World))
+		{
+			Hub->OnSkillAreaTriggered.Broadcast(Caster, Skill, TargetLocation, Skill->AoE.Radius);
+		}
+	}
 	for (const FTargetEntry& Entry : Entries)
 	{
 		for (int32 HitIdx = 0; HitIdx < FMath::Max(1, Skill->HitCount); ++HitIdx)
@@ -432,6 +439,11 @@ void UBattleResolver::ResolveSkill(ABattleUnit* Caster, ABattleUnit* Target, con
 						ResolveSingleHit(CasterStrong, TargetStrong, SkillStrong, SkillLevel, Scale, false);
 					}
 				}), JumpDelay, false);
+
+			if (UBattleEventHub* Hub = UBattleEventHub::Get(World))
+			{
+				Hub->OnChainArcTriggered.Broadcast(Caster, From, Next, Skill, Jump, JumpDelay);
+			}
 
 			SpawnText(World, Next, TEXT("跳跃! (ARC)"), FColor(255, 205, 80), 30.0f);
 			From = Next;

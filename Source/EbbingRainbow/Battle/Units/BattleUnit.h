@@ -9,7 +9,7 @@
 #include "Battle/Skills/BattleSkillComponent.h"
 #include "BattleUnit.generated.h"
 
-class UTextRenderComponent;
+class UWidgetComponent;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UAnimSequence;
@@ -231,19 +231,17 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
-	/** 表现资产惰性加载 (骨骼网格/ABP/动画池), BeginPlay 调用一次 */
+	/** 表现资产按阵营加载 (我方=UE Manny，敌方=科幻四足炮台), BeginPlay/InitUnit 调用 */
 	void EnsurePresentationAssets();
 	bool bPresentationReady = false;
-
-	/** 头顶名牌朝向缓存: 镜头或自身未移动时跳过 SetWorldRotation */
-	FVector LastLabelCamLoc = FVector::ZeroVector;
-	FVector LastLabelSelfLoc = FVector::ZeroVector;
+	EBattleTeam PresentationTeam = EBattleTeam::Player;
 
 	UPROPERTY(VisibleAnywhere, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BodyMesh;
 
+	/** 头顶状态铭牌 (屏幕空间 UMG WidgetComponent, 支持复合中文字体) */
 	UPROPERTY(VisibleAnywhere, Category = "Components")
-	TObjectPtr<UTextRenderComponent> Label;
+	TObjectPtr<UWidgetComponent> LabelWidgetComp;
 
 	/** 脚底队伍光环底盘: 敌我识别 + 选中/悬停/当前回合高亮 */
 	UPROPERTY(VisibleAnywhere, Category = "Components")
@@ -318,6 +316,7 @@ private:
 	bool bSelected = false;
 	bool bHovered = false;
 	FTimerHandle MoveWatchdogTimer;
+	FTimerHandle AutoEndTurnTimer;
 
 	// 光环表现状态
 	float DiscFlashTimer = 0.0f;
@@ -325,6 +324,10 @@ private:
 	static constexpr float DiscFlashDuration = 0.22f;
 
 	void FinishMove();
+
+	/** AP 耗尽且动作已结算时, 延迟一拍自动结束当前回合 (仅我方单位; 敌方回合归 AIDirector 管理) */
+	void TryAutoEndTurn();
+
 	void UpdateVisualColor();
 	void UpdateDiscVisual(float DeltaSeconds);
 	void TriggerDiscFlash();

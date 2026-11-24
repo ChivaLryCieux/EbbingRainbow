@@ -103,7 +103,7 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   （`FBattleRandomStream`，禁止战斗代码用 `FMath::Rand`）、地形耦合查
   `UBattleTerrainQuery`（视线/掩体/高低差/侧翼）。新技能 = 数据/内置工厂
   （`UBattleSkillLibrary`）加条目，不写新类；学派×状态互动 = 反应表加行。
-- 战斗/WFC 纯 C++，UI 是 Slate（`S` 前缀类）；`AGENTS.md` 不存在的规矩
+- 战斗/WFC 纯 C++，UI 是 UMG `UER*` 控件（内嵌 Slate leaf 自绘，旧 `S*Overlay`/`SRouteNodeWidget` 已删）；`AGENTS.md` 不存在的规矩
   看相邻文件即可。新增 WFC 风格 = 新 `WFC3DArenaGenerator_*` + StyleTable
   记录，不动 Host/Solver。
 - **Source 目录布局**（2026-11 重组后）：`Core/`（ERLog 日志分类、

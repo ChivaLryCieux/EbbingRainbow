@@ -9,7 +9,7 @@ m = connect()
 OBJ = "editor_toolset.toolsets.object.ObjectTools"
 ASSET = "editor_toolset.toolsets.asset.AssetTools"
 APP = "EditorToolset.EditorAppToolset"
-BASE = "/Game/Battle/Maps/Lvl_Arena.Lvl_Arena:PersistentLevel."
+BASE = "/Game/Battle/Maps/Lvl_ConcreteArena.Lvl_ConcreteArena:PersistentLevel."
 SKY = BASE + "SkyLight_0.SkyLightComponent0"
 PPV = BASE + "PostProcessVolume_1"
 
@@ -47,5 +47,5 @@ print("save assets", call(m, ASSET, "save_assets", {"asset_paths": [
     "/Game/Environment/Sky/M_Sky_SoftSolid",
     "/Game/Environment/Sky/MI_Sky_SoftSolid",
     "/Game/Environment/Sky/T_SkyAmbient",
-    "/Game/Battle/Maps/Lvl_Arena",
+    "/Game/Battle/Maps/Lvl_ConcreteArena",
 ]})[:300])

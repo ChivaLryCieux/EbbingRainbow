@@ -9,6 +9,8 @@
 class UBorder;
 class UButton;
 class UCanvasPanel;
+class UERActionButton;
+class UERTechFrame;
 class UHorizontalBox;
 class UTextBlock;
 class UVerticalBox;
@@ -37,6 +39,8 @@ private:
 	void RefreshStatus();
 	void RefreshTimeControls();
 	void RefreshLegionBar();
+	void RefreshHints();
+	void RefreshPlateHover();
 	void ShowResult(bool bPlayerWon);
 
 	void BuildLegionBar(int32 Count);
@@ -62,23 +66,25 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> StatusEnemyText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> ParamsText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> HintText;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> CamHintText;
+	bool bHintMapMode = false;
 
-	UPROPERTY(Transient) TObjectPtr<UButton> SlowMoButton;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> SlowMoLabel;
-	UPROPERTY(Transient) TObjectPtr<UButton> PauseButton;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> PauseLabel;
-	UPROPERTY(Transient) TObjectPtr<UButton> SkillButton;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> SkillLabel;
+	UPROPERTY(Transient) TObjectPtr<UERActionButton> SlowMoButton;
+	UPROPERTY(Transient) TObjectPtr<UERActionButton> PauseButton;
+	UPROPERTY(Transient) TObjectPtr<UERActionButton> SkillButton;
 
 	UPROPERTY(Transient) TObjectPtr<UBorder> ResultBox;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> ResultText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> ResultSummaryText;
-	UPROPERTY(Transient) TObjectPtr<UButton> ReturnHallButton;
+	UPROPERTY(Transient) TObjectPtr<UERActionButton> ReturnHallButton;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> ResultSubText;
 
 	UPROPERTY(Transient) TObjectPtr<UCanvasPanel> RootPanel;
 	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> LegionBar;
-	UPROPERTY(Transient) TArray<TObjectPtr<UBorder>> LegionPlates;
+	UPROPERTY(Transient) TArray<TObjectPtr<UButton>> LegionPlateButtons;
+	UPROPERTY(Transient) TArray<TObjectPtr<UERTechFrame>> LegionPlateFrames;
+	TArray<bool> LegionPlateSelected;
+	TArray<bool> LegionPlateDead;
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> LegionNameTexts;
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> LegionCountTexts;
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> LegionStateTexts;

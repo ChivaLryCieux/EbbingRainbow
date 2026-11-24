@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERHeroPlate.h"
 #include "Blueprint/WidgetTree.h"
@@ -112,7 +112,7 @@ void UERHeroPlate::Build()
 		Sp->SetSize(FVector2D(16.0f, 1.0f));
 		NameRow->AddChildToHorizontalBox(Sp)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
-		UnitTagText = ERUI::MakeText(this, INVTEXT("ACTIVE // HP"), EERTypeScale::Micro, T->BoneTertiary, true);
+		UnitTagText = ERUI::MakeText(this, INVTEXT("行动中  ·  生命"), EERTypeScale::Micro, T->BoneTertiary, true);
 		UnitTagText->SetFont(ERUI::FontRegular(8, 220));
 		NameRow->AddChildToHorizontalBox(UnitTagText)->SetVerticalAlignment(VAlign_Center);
 
@@ -255,7 +255,7 @@ void UERHeroPlate::ApplyValues(const FString& DisplayName, bool bIsPlayer, float
 	}
 	if (UnitTagText)
 	{
-		UnitTagText->SetText(bIsPlayer ? INVTEXT("ACTIVE // ALLY") : INVTEXT("HOSTILE // TURN"));
+		UnitTagText->SetText(bIsPlayer ? INVTEXT("我方行动") : INVTEXT("敌方行动"));
 	}
 	if (NameText)
 	{

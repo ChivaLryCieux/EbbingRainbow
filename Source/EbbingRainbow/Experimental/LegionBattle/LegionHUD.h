@@ -30,11 +30,33 @@ public:
 	/** 计算当前视口像素坐标系下的小地图矩形 */
 	static void GetMinimapScreenRect(int32 ViewportSizeY, float& OutX, float& OutY, float& OutSize);
 
+	/** 等高线地图视角顶部「返回战场」按钮矩形 (视口像素) */
+	static FBox2D GetMapReturnButtonRect(int32 ViewportSizeX, int32 ViewportSizeY);
+
+	/** 等高线地图番号牌命中测试 (命中框在 DrawStrategicMap 中按真实文本尺寸生成) */
+	ALegionUnit* PickStrategicBadge(const FVector2D& ScreenPos) const;
+
+	/** 取某兵团番号牌的屏幕中心 (上一帧布局结果) */
+	bool GetStrategicBadgeCenter(const ALegionUnit* Unit, FVector2D& OutCenter) const;
+
 private:
 	void DrawMinimap(ALegionGameMode* GM, ALegionPlayerController* PC);
+	void DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* PC);
+	void DrawCrosshair(ALegionPlayerController* PC);
+	/** Canvas 版「白底墨字彩条」底板: 反白石膏 + 墨黑描边 + 左侧点睛/光谱条 */
+	void DrawBonePlate(float X, float Y, float W, float H, const FLinearColor& Accent,
+		bool bPrism, bool bEmphasis, bool bHover);
+	void DrawOrderOverlays(ALegionGameMode* GM, ALegionPlayerController* PC);
 	void DrawUnitBadge(ALegionUnit* Unit, bool bSelected);
 	void DrawProjectedLine(const FVector& A, const FVector& B, const FLinearColor& Color, float Thickness);
 	void DrawDropZoneWarning(const FVector& WorldPos, const FString& Label, float RemainingSec);
+
+	struct FStrategicBadgeRect
+	{
+		TWeakObjectPtr<ALegionUnit> Unit;
+		FBox2D Rect;
+	};
+	TArray<FStrategicBadgeRect> StrategicBadgeRects;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ULegionHUDWidget> Widget;

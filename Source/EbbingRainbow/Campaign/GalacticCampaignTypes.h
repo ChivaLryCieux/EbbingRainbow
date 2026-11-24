@@ -246,15 +246,24 @@ namespace ERGalacticMeta
 		}
 	}
 
+	/** 势力简称 (UI 排印铁律: 中英文不得并存, 代号一律中文) */
 	inline FString GetFactionCode(EFactionId Faction)
 	{
 		switch (Faction)
 		{
-		case EFactionId::Empire:   return TEXT("TERRA EMPIRE");
-		case EFactionId::Rebels:   return TEXT("FREE REBELS");
-		case EFactionId::Dominion: return TEXT("RIM DOMINION");
-		default: return TEXT("UNKNOWN");
+		case EFactionId::Empire:   return TEXT("帝国");
+		case EFactionId::Rebels:   return TEXT("叛军");
+		case EFactionId::Dominion: return TEXT("自治领");
+		default: return TEXT("未知");
 		}
+	}
+
+	/** 一..十 的中文序数 (呼号用), 超过 10 回退阿拉伯数字 */
+	inline FString GetChineseOrdinal(int32 N)
+	{
+		static const TCHAR* Digits[] = { TEXT("零"), TEXT("一"), TEXT("二"), TEXT("三"), TEXT("四"),
+			TEXT("五"), TEXT("六"), TEXT("七"), TEXT("八"), TEXT("九"), TEXT("十") };
+		return (N >= 0 && N <= 10) ? FString(Digits[N]) : FString::FromInt(N);
 	}
 
 	inline FLinearColor GetFactionColor(EFactionId Faction)
@@ -280,15 +289,16 @@ namespace ERGalacticMeta
 		}
 	}
 
+	/** 兵种简称 (中文, 用于番号牌/呼号等空间紧凑处) */
 	inline FString GetClassCode(ELegionClass C)
 	{
 		switch (C)
 		{
-		case ELegionClass::Shieldbearer: return TEXT("SHD");
-		case ELegionClass::Pikeman:      return TEXT("PIK");
-		case ELegionClass::Vanguard:     return TEXT("VGD");
-		case ELegionClass::Marksman:     return TEXT("MRK");
-		default: return TEXT("LGN");
+		case ELegionClass::Shieldbearer: return TEXT("重盾");
+		case ELegionClass::Pikeman:      return TEXT("长戟");
+		case ELegionClass::Vanguard:     return TEXT("刃兵");
+		case ELegionClass::Marksman:     return TEXT("射手");
+		default: return TEXT("兵团");
 		}
 	}
 

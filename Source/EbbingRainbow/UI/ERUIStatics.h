@@ -7,9 +7,12 @@
 #include "Fonts/SlateFontInfo.h"
 #include "UI/ERUITheme.h"
 
+class UERTechFrame;
+class UOverlay;
 class UTexture2D;
 class UTextBlock;
 class UUserWidget;
+class UVerticalBox;
 class UWidget;
 
 /**
@@ -65,4 +68,33 @@ namespace ERUI
 	/** 建一个已调好字体/颜色的文本块 (默认 SelfHitTestInvisible) */
 	UTextBlock* MakeText(UUserWidget* Owner, const FText& Text, EERTypeScale Scale,
 		FLinearColor Color, bool bLatin = false);
+
+	// =====================================================================
+	// 「白底墨字彩条」统一样式 (源自大厅「银河委托」主按钮, 全部按钮与栏目共用):
+	//   反白石膏底 + 极墨黑粗体字 + 左侧 3~4px 窄光谱/点睛彩条 + 45° 切角 + 四角对准刻度。
+	// 排印铁律: 同一控件内禁止中英文并存, 按钮与栏目只写中文, 中文字号加大。
+	// =====================================================================
+
+	/** 骨白底板上的墨字颜色 (Alpha 1 = 主文字, 0.62 = 次级, 0.42 = 微标) */
+	FLinearColor InkText(float Alpha = 1.0f);
+
+	/** 给 UERTechFrame 套用白底墨字彩条配色。
+	 *  Hover01: 悬停强度; bEnabled=false 时整体褪为灰白; bEmphasis=true 时强化描边 (选中/紧急);
+	 *  bPrism=true 用《虹不我与》三段光谱条, 否则用 Accent 单色条。 */
+	void StyleBoneFrame(UERTechFrame* Frame, float Hover01, bool bEnabled, bool bEmphasis,
+		const FLinearColor& Accent, bool bPrism);
+
+	/** 骨白栏目卡: 底板 + 内容纵向容器。Content 里的文字请用 InkText 配色。 */
+	struct FBoneCard
+	{
+		UOverlay* Root = nullptr;
+		UERTechFrame* Frame = nullptr;
+		UVerticalBox* Content = nullptr;
+	};
+	FBoneCard MakeBoneCard(UUserWidget* Owner, const FLinearColor& Accent, bool bPrism,
+		const FMargin& Padding = FMargin(20.0f, 14.0f), bool bDrawBrackets = true);
+
+	/** 栏目标题条 (章节抬头): 骨白底 + 墨字 + 左侧点睛条, 只含中文 */
+	UWidget* MakeSectionBar(UUserWidget* Owner, const FText& Title, int32 FontSize = 20,
+		const FLinearColor& Accent = FLinearColor(0.96f, 0.56f, 0.04f, 1.0f), bool bPrism = true);
 }
