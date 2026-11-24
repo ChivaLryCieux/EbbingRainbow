@@ -65,20 +65,25 @@ void UERGalaCommandPanel::ClosePanel()
 
 void UERGalaCommandPanel::SetActiveTab(int32 TabIndex)
 {
-	ActiveTab = FMath::Clamp(TabIndex, 0, 1);
+	ActiveTab = FMath::Clamp(TabIndex, 0, 3);
+	static const FText Titles[] = {
+		INVTEXT("虹膜基金会  ·  银河委托与战局终端"),
+		INVTEXT("虹膜基金会  ·  虹膜兵团整备终端"),
+		INVTEXT("虹膜基金会  ·  银河局势终端"),
+		INVTEXT("虹膜基金会  ·  终端设置"),
+	};
 	if (PanelTitleText)
 	{
-		PanelTitleText->SetText(ActiveTab == 0
-			? INVTEXT("虹膜基金会  ·  银河委托与战局终端")
-			: INVTEXT("虹膜基金会  ·  虹膜兵团整备终端"));
+		PanelTitleText->SetText(Titles[ActiveTab]);
 	}
-	if (ContractsPage)
+
+	UWidget* Pages[] = { ContractsPage, RosterPage, SituationPage, SettingsPage };
+	for (int32 i = 0; i < 4; ++i)
 	{
-		ContractsPage->SetVisibility(ActiveTab == 0 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-	}
-	if (RosterPage)
-	{
-		RosterPage->SetVisibility(ActiveTab == 1 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		if (Pages[i])
+		{
+			Pages[i]->SetVisibility(i == ActiveTab ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		}
 	}
 }
 
@@ -178,7 +183,9 @@ void UERGalaCommandPanel::BuildLayout()
 	Div->LineColor = T->BoneGhost;
 	MainCol->AddChildToVerticalBox(Div)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
-	// 内容区容器 (Overlay 切换 Tab0 / Tab1)
+	// =========================================================================
+	// 内容区: Overlay 页签 (由大厅左部四按钮入口直达, 面板内不设导航)
+	// =========================================================================
 	UOverlay* ContentOv = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("ContentOverlay"));
 	{
 		UVerticalBoxSlot* S = MainCol->AddChildToVerticalBox(ContentOv);
@@ -186,10 +193,10 @@ void UERGalaCommandPanel::BuildLayout()
 	}
 
 	// =========================================================================
-	// TAB 0: 银河委托与战局态势
+	// TAB 0: 银河委托 (仅合同卡片, 从左至右三张排布)
 	// =========================================================================
 	{
-		UHorizontalBox* Page0 = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("ContractsPage"));
+		UVerticalBox* Page0 = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ContractsPage"));
 		ContractsPage = Page0;
 		{
 			UOverlaySlot* S = ContentOv->AddChildToOverlay(Page0);
@@ -197,12 +204,44 @@ void UERGalaCommandPanel::BuildLayout()
 			S->SetVerticalAlignment(VAlign_Fill);
 		}
 
-		// 左侧: 三大阵营控制度 + 星区控制表 + 上局战报
+		UHorizontalBox* ContractHeader = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		{
+			UHorizontalBoxSlot* S = ContractHeader->AddChildToHorizontalBox(ERUI::MakeSectionBar(this, INVTEXT("待接取军事委托"), 22));
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetVerticalAlignment(VAlign_Center);
+			S->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
+		}
+		UERActionButton* RefreshBtn = MakeBoneButton(INVTEXT("刷新加密频道"), 21, false, [this]() { OnRefreshContractsClicked(); });
+		ContractHeader->AddChildToHorizontalBox(RefreshBtn)->SetVerticalAlignment(VAlign_Center);
+		Page0->AddChildToVerticalBox(ContractHeader)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+
+		ContractListBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		{
+			UVerticalBoxSlot* S = Page0->AddChildToVerticalBox(ContractListBox);
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetVerticalAlignment(VAlign_Fill);
+		}
+	}
+
+	// =========================================================================
+	// TAB 2: 银河局势 (三方势力态势 + 重点星区归属 + 上一战况)
+	// =========================================================================
+	{
+		UHorizontalBox* Page2 = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("SituationPage"));
+		SituationPage = Page2;
+		Page2->SetVisibility(ESlateVisibility::Collapsed);
+		{
+			UOverlaySlot* S = ContentOv->AddChildToOverlay(Page2);
+			S->SetHorizontalAlignment(HAlign_Fill);
+			S->SetVerticalAlignment(VAlign_Fill);
+		}
+
+		// 左列: 三大阵营控制度
 		UScrollBox* LeftScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
 		UVerticalBox* LeftCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		LeftScroll->AddChild(LeftCol);
 		{
-			UHorizontalBoxSlot* S = Page0->AddChildToHorizontalBox(LeftScroll);
+			UHorizontalBoxSlot* S = Page2->AddChildToHorizontalBox(LeftScroll);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			S->SetPadding(FMargin(0.0f, 0.0f, 24.0f, 0.0f));
 		}
@@ -213,11 +252,20 @@ void UERGalaCommandPanel::BuildLayout()
 		FactionListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		LeftCol->AddChildToVerticalBox(FactionListBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
-		LeftCol->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("重点星区归属"), 22))
+		// 右列: 星区控制表 + 上局战报
+		UScrollBox* RightScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+		UVerticalBox* RightCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		RightScroll->AddChild(RightCol);
+		{
+			UHorizontalBoxSlot* S = Page2->AddChildToHorizontalBox(RightScroll);
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		}
+
+		RightCol->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("重点星区归属"), 22))
 			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
 		SectorListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		LeftCol->AddChildToVerticalBox(SectorListBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
+		RightCol->AddChildToVerticalBox(SectorListBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
 		// 上一战况 (骨白栏目卡, 默认折叠)
 		LastOutcomeBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
@@ -231,45 +279,33 @@ void UERGalaCommandPanel::BuildLayout()
 			LastOutcomeText->SetAutoWrapText(true);
 			Card.Content->AddChildToVerticalBox(LastOutcomeText);
 		}
-		LeftCol->AddChildToVerticalBox(LastOutcomeBox);
+		RightCol->AddChildToVerticalBox(LastOutcomeBox);
+	}
 
-		// 右侧: 阵营军事委托列表
-		UVerticalBox* RightCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	// =========================================================================
+	// TAB 3: 设置 (占位)
+	// =========================================================================
+	{
+		UVerticalBox* Page3 = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SettingsPage"));
+		SettingsPage = Page3;
+		Page3->SetVisibility(ESlateVisibility::Collapsed);
 		{
-			UHorizontalBoxSlot* S = Page0->AddChildToHorizontalBox(RightCol);
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		}
-		if (UHorizontalBoxSlot* LS = Cast<UHorizontalBoxSlot>(LeftScroll->Slot))
-		{
-			FSlateChildSize SZ(ESlateSizeRule::Fill);
-			SZ.Value = 0.40f;
-			LS->SetSize(SZ);
-		}
-		if (UHorizontalBoxSlot* RS = Cast<UHorizontalBoxSlot>(RightCol->Slot))
-		{
-			FSlateChildSize SZ(ESlateSizeRule::Fill);
-			SZ.Value = 0.60f;
-			RS->SetSize(SZ);
+			UOverlaySlot* S = ContentOv->AddChildToOverlay(Page3);
+			S->SetHorizontalAlignment(HAlign_Fill);
+			S->SetVerticalAlignment(VAlign_Fill);
 		}
 
-		UHorizontalBox* ContractHeader = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		{
-			UHorizontalBoxSlot* S = ContractHeader->AddChildToHorizontalBox(ERUI::MakeSectionBar(this, INVTEXT("待接取军事委托"), 22));
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
-		}
-		UERActionButton* RefreshBtn = MakeBoneButton(INVTEXT("刷新加密频道"), 21, false, [this]() { OnRefreshContractsClicked(); });
-		ContractHeader->AddChildToHorizontalBox(RefreshBtn)->SetVerticalAlignment(VAlign_Center);
-		RightCol->AddChildToVerticalBox(ContractHeader)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		Page3->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("终端设置"), 22))
+			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
-		UScrollBox* ContractScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
-		{
-			UVerticalBoxSlot* S = RightCol->AddChildToVerticalBox(ContractScroll);
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		}
-		ContractListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		ContractScroll->AddChild(ContractListBox);
+		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->BoneGhost, false, FMargin(22.0f, 16.0f));
+		UTextBlock* Placeholder = ERUI::MakeText(this,
+			INVTEXT("暂无可用设置项。画面、音频与指挥终端偏好将在后续周期开放。"),
+			EERTypeScale::Body, ERUI::InkText(0.62f), false);
+		Placeholder->SetFont(ERUI::FontRegular(16, 20));
+		Placeholder->SetAutoWrapText(true);
+		Card.Content->AddChildToVerticalBox(Placeholder);
+		Page3->AddChildToVerticalBox(Card.Root);
 	}
 
 	// =========================================================================
@@ -425,22 +461,28 @@ void UERGalaCommandPanel::RebuildContractList()
 	{
 		const FLinearColor EmpCol = ERGalacticMeta::GetFactionColor(C.Employer);
 		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, EmpCol, false, FMargin(22.0f, 16.0f));
+		if (UOverlaySlot* CS = Cast<UOverlaySlot>(Card.Content->Slot))
+		{
+			CS->SetVerticalAlignment(VAlign_Fill);
+		}
 		UVerticalBox* Inner = Card.Content;
 
 		// 标题行
 		UHorizontalBox* TopRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		UTextBlock* Title = ERUI::MakeText(this, FText::FromString(C.Title), EERTypeScale::Title, ERUI::InkText(), false);
-		Title->SetFont(ERUI::FontBold(26, 40));
+		Title->SetFont(ERUI::FontBold(24, 40));
+		Title->SetAutoWrapText(true);
 		{
 			UHorizontalBoxSlot* S = TopRow->AddChildToHorizontalBox(Title);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
 		}
 
 		FString Stars;
 		for (int32 s = 0; s < 5; ++s) { Stars += (s < C.DangerRating) ? TEXT("★") : TEXT("☆"); }
 		UTextBlock* DangerTxt = ERUI::MakeText(this, FText::FromString(FString::Printf(TEXT("威胁 %s"), *Stars)),
 			EERTypeScale::Caption, FLinearColor(0.58f, 0.31f, 0.0f, 1.0f), false);
-		DangerTxt->SetFont(ERUI::FontBold(18, 60));
+		DangerTxt->SetFont(ERUI::FontBold(14, 60));
 		TopRow->AddChildToHorizontalBox(DangerTxt);
 		Inner->AddChildToVerticalBox(TopRow);
 
@@ -454,6 +496,7 @@ void UERGalaCommandPanel::RebuildContractList()
 				*SecName)),
 			EERTypeScale::Micro, ERUI::InkText(0.82f), false);
 		Meta->SetFont(ERUI::FontBold(16, 40));
+		Meta->SetAutoWrapText(true);
 		Inner->AddChildToVerticalBox(Meta)->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 7.0f));
 
 		// 简报
@@ -487,9 +530,18 @@ void UERGalaCommandPanel::RebuildContractList()
 				}
 			});
 		BotRow->AddChildToHorizontalBox(DeployBtn)->SetVerticalAlignment(VAlign_Center);
-		Inner->AddChildToVerticalBox(BotRow);
+		{
+			UVerticalBoxSlot* S = Inner->AddChildToVerticalBox(BotRow);
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetVerticalAlignment(VAlign_Bottom);
+		}
 
-		ContractListBox->AddChildToVerticalBox(Card.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+		if (UHorizontalBoxSlot* S = ContractListBox->AddChildToHorizontalBox(Card.Root))
+		{
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetVerticalAlignment(VAlign_Fill);
+			S->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+		}
 	}
 }
 

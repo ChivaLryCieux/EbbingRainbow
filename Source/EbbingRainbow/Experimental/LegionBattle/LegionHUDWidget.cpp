@@ -12,7 +12,6 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Overlay.h"
-#include "Components/Spacer.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -80,44 +79,21 @@ void ULegionHUDWidget::Build()
 			FVector2D(T->ScreenMargin, 34.0f));
 	}
 
-	// ---- 右上: 编制/波次微标 + 时缓/暂停开关 ----
-	{
-		UVerticalBox* RightTopCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("RightTopCol"));
-
-		ParamsText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
-		ParamsText->SetFont(ERUI::FontBold(14, 80));
-		ParamsText->SetJustification(ETextJustify::Right);
-		RightTopCol->AddChildToVerticalBox(ParamsText);
-
-		UHorizontalBox* TimeRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TimeRow"));
-		SlowMoButton = UERActionButton::Make(this, INVTEXT("0.2倍时缓"), 20);
-		SlowMoButton->OnActionClicked.AddDynamic(this, &ULegionHUDWidget::OnSlowMoClicked);
-		TimeRow->AddChildToHorizontalBox(SlowMoButton);
-
-		USpacer* Gap = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
-		Gap->SetSize(FVector2D(10.0f, 1.0f));
-		TimeRow->AddChildToHorizontalBox(Gap);
-
-		PauseButton = UERActionButton::Make(this, INVTEXT("暂停"), 20);
-		PauseButton->OnActionClicked.AddDynamic(this, &ULegionHUDWidget::OnPauseClicked);
-		TimeRow->AddChildToHorizontalBox(PauseButton);
-
-		RightTopCol->AddChildToVerticalBox(TimeRow)->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 0.0f));
-		Anchor(RightTopCol, Root, FAnchors(1.0f, 0.0f), FVector2D(1.0f, 0.0f),
-			FVector2D(-T->ScreenMargin, 36.0f));
-	}
-
-	// ---- 左下: 双方编制存活行 ----
+	// ---- 左下: 双方编制存活 (白底墨字卡片, 同兵团牌风格) ----
 	{
 		UVerticalBox* StatusCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("StatusCol"));
 
-		StatusAllyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->AllyMark, false);
+		ERUI::FBoneCard AllyCard = ERUI::MakeBoneCard(this, T->AllyMark, false, FMargin(14.0f, 7.0f));
+		StatusAllyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
 		StatusAllyText->SetFont(ERUI::FontBold(18, 60));
-		StatusCol->AddChildToVerticalBox(StatusAllyText);
+		AllyCard.Content->AddChildToVerticalBox(StatusAllyText);
+		StatusCol->AddChildToVerticalBox(AllyCard.Root);
 
-		StatusEnemyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, T->EnemyMark, false);
+		ERUI::FBoneCard EnemyCard = ERUI::MakeBoneCard(this, T->EnemyMark, false, FMargin(14.0f, 7.0f));
+		StatusEnemyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
 		StatusEnemyText->SetFont(ERUI::FontBold(18, 60));
-		StatusCol->AddChildToVerticalBox(StatusEnemyText)->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 0.0f));
+		EnemyCard.Content->AddChildToVerticalBox(StatusEnemyText);
+		StatusCol->AddChildToVerticalBox(EnemyCard.Root)->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 0.0f));
 
 		Anchor(StatusCol, Root, FAnchors(0.0f, 1.0f), FVector2D(0.0f, 1.0f),
 			FVector2D(T->ScreenMargin, -84.0f));
@@ -137,35 +113,6 @@ void ULegionHUDWidget::Build()
 		LegionBar = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LegionBar"));
 		Anchor(LegionBar, Root, FAnchors(0.5f, 1.0f), FVector2D(0.5f, 1.0f),
 			FVector2D(0.0f, -72.0f));
-	}
-
-	// ---- 底部居中: 操作提示 (黑曜石半透底板保证白色等高线上可读性) ----
-	{
-		UBorder* HintBg = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("HintBg"));
-		HintBg->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.80f), 1.0f, T->BoneGhost));
-		HintBg->SetBrushColor(FLinearColor::White);
-		HintBg->SetPadding(FMargin(18.0f, 6.0f));
-
-		UVerticalBox* HintCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("HintCol"));
-		HintBg->SetContent(HintCol);
-
-		HintText = ERUI::MakeText(this,
-			INVTEXT("准星瞄兵团 左键 点选 (Ctrl 累选) · 右键 点地面机动 / 点敌团集火 · 按住右键转动视角定阵型朝向 · Z 主动协议 · X 停驻 · 1-8 快选 · G 全军突击 · F 跟随"),
-			EERTypeScale::Micro, T->BoneSecondary);
-		HintText->SetFont(ERUI::FontRegular(10, 110));
-		HintText->SetJustification(ETextJustify::Center);
-		HintCol->AddChildToVerticalBox(HintText);
-
-		CamHintText = ERUI::MakeText(this,
-			INVTEXT("WASD 移动 · 鼠标 视角 · Shift 疾跑 · 空格 跳跃 · M / 点小地图 展开等高线图 · 按住 ALT 呼出光标 · TAB 时缓 · E 暂停"),
-			EERTypeScale::Micro, T->BoneTertiary, true);
-		UTextBlock* CamHint = CamHintText;
-		CamHint->SetFont(ERUI::FontRegular(8, 160));
-		CamHint->SetJustification(ETextJustify::Center);
-		HintCol->AddChildToVerticalBox(CamHint)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
-
-		Anchor(HintBg, Root, FAnchors(0.5f, 1.0f), FVector2D(0.5f, 1.0f),
-			FVector2D(0.0f, -14.0f));
 	}
 
 	// ---- 中央结算面板 ----
@@ -219,7 +166,6 @@ void ULegionHUDWidget::NativeConstruct()
 		if (SubTitleText) { SubTitleText->SetText(FText::FromString(GM->GetBattleSubText())); }
 	}
 	RefreshStatus();
-	RefreshTimeControls();
 }
 
 void ULegionHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -232,9 +178,7 @@ void ULegionHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime
 	if (PollTimer > 0.0f) { return; }
 	PollTimer = 0.2f;
 	RefreshStatus();
-	RefreshTimeControls();
 	RefreshLegionBar();
-	RefreshHints();
 
 	UWorld* World = GetWorld();
 	ALegionGameMode* GM = World ? Cast<ALegionGameMode>(World->GetAuthGameMode()) : nullptr;
@@ -266,13 +210,7 @@ void ULegionHUDWidget::RefreshStatus()
 		StatusAllyText->SetText(FText::FromString(FString::Printf(
 			TEXT("我方  %d 团 · %d 兵"), AllyLegions, AllyAlive)));
 		StatusEnemyText->SetText(FText::FromString(FString::Printf(
-			TEXT("敌方  %d 团 · %d 兵  (另有 %d 个待降波次)"), EnemyLegions, EnemyAlive, Pending)));
-	}
-
-	if (ParamsText)
-	{
-		ParamsText->SetText(FText::FromString(FString::Printf(
-			TEXT("战斗用时 %.0f 秒  ·  待降波次 %d"), GM->GetBattleElapsed(), Pending)));
+			TEXT("敌方  %d 团 · %d 兵"), EnemyLegions, EnemyAlive)));
 	}
 }
 
@@ -449,90 +387,11 @@ void ULegionHUDWidget::RefreshPlateHover()
 	}
 }
 
-void ULegionHUDWidget::RefreshHints()
-{
-	const ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr);
-	if (!PC || !HintText || !CamHintText) { return; }
-	const bool bMap = PC->IsStrategicMapOpen();
-	if (bMap == bHintMapMode) { return; }
-	bHintMapMode = bMap;
-	if (bMap)
-	{
-		HintText->SetText(INVTEXT("左键点我方番号 选中 (Ctrl 累选) · 再点敌方番号 集火 · 点空地 / 右键 机动 · Z 协议 · X 停驻 · 1-8 快选"));
-		CamHintText->SetText(INVTEXT("滚轮 以鼠标为中心缩放 · 左键拖拽 / 中键拖拽 平移 · E 暂停 / 0.2 倍观战切换 · 顶部「返回战场」/ M / ESC 退出"));
-	}
-	else
-	{
-		HintText->SetText(INVTEXT("准星瞄兵团 左键 点选 (Ctrl 累选) · 右键 点地面机动 / 点敌团集火 · 按住右键转动视角定阵型朝向 · Z 主动协议 · X 停驻 · 1-8 快选 · G 全军突击 · F 跟随"));
-		CamHintText->SetText(INVTEXT("WASD 移动 · 鼠标 视角 · Shift 疾跑 · 空格 跳跃 · M / 点小地图 展开等高线图 · 按住 ALT 呼出光标 · TAB 时缓 · E 暂停"));
-	}
-}
-
 void ULegionHUDWidget::SelectPlate(int32 Index)
 {
 	if (ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr))
 	{
 		PC->SelectLegionByIndex(Index);
-	}
-}
-
-void ULegionHUDWidget::RefreshTimeControls()
-{
-	ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr);
-	if (!GM) { return; }
-	const UERUITheme* T = ERUI::Theme();
-	const ELegionTimeMode M = GM->GetTacticalTimeMode();
-
-	const ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr);
-	const bool bMap = PC && PC->IsStrategicMapOpen();
-	if (SlowMoButton)
-	{
-		SlowMoButton->SetLabel(M == ELegionTimeMode::SlowMo ? INVTEXT("0.2倍时缓中") : INVTEXT("0.2倍时缓"));
-		SlowMoButton->SetUrgent(M == ELegionTimeMode::SlowMo);
-		SlowMoButton->SetButtonEnabled(!bMap);
-	}
-	if (PauseButton)
-	{
-		if (bMap)
-		{
-			PauseButton->SetLabel(M == ELegionTimeMode::Paused ? INVTEXT("地图暂停中") : INVTEXT("0.2倍观战中"));
-			PauseButton->SetUrgent(false);
-			PauseButton->SetButtonEnabled(false);
-		}
-		else
-		{
-			PauseButton->SetLabel(M == ELegionTimeMode::Paused ? INVTEXT("继续") : INVTEXT("暂停"));
-			PauseButton->SetUrgent(M == ELegionTimeMode::Paused);
-			PauseButton->SetButtonEnabled(true);
-		}
-	}
-}
-
-void ULegionHUDWidget::OnSlowMoClicked()
-{
-	if (const ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr))
-	{
-		if (PC->IsStrategicMapOpen()) { return; }
-	}
-	if (ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
-	{
-		GM->SetTacticalTimeMode(GM->GetTacticalTimeMode() == ELegionTimeMode::SlowMo
-			? ELegionTimeMode::Normal : ELegionTimeMode::SlowMo);
-		RefreshTimeControls();
-	}
-}
-
-void ULegionHUDWidget::OnPauseClicked()
-{
-	if (const ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr))
-	{
-		if (PC->IsStrategicMapOpen()) { return; }
-	}
-	if (ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
-	{
-		GM->SetTacticalTimeMode(GM->GetTacticalTimeMode() == ELegionTimeMode::Paused
-			? ELegionTimeMode::Normal : ELegionTimeMode::Paused);
-		RefreshTimeControls();
 	}
 }
 
@@ -589,9 +448,5 @@ void ULegionHUDWidget::ShowResult(bool bPlayerWon)
 	if (ResultBox)
 	{
 		ResultBox->SetVisibility(ESlateVisibility::Visible);
-	}
-	if (HintText)
-	{
-		HintText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }

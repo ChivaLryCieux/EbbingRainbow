@@ -159,6 +159,9 @@ struct FLegionSoldier
 	/** 骨骼士兵组件 (仅骨骼士兵模式; 每兵一个 SMC, 单节点动画) */
 	TWeakObjectPtr<USkeletalMeshComponent> SkelComp;
 
+	/** 子弹命中代理胶囊 (仅骨骼士兵模式; 挂在 SkelComp 上, 只挡 WorldDynamic) */
+	TWeakObjectPtr<class UCapsuleComponent> HitProxy;
+
 	/** 朝向散布角 (deg), 确定性生成, 让队列不死板 */
 	float JitterYaw = 0.0f;
 

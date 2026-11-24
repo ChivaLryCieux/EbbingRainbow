@@ -4,15 +4,17 @@
 
 #include "Camera/PlayerCameraManager.h"
 #include "Core/ERLog.h"
-#include "Experimental/LegionBattle/LegionCommanderPawn.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
 #include "Experimental/LegionBattle/LegionHUD.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
 
 #include "CollisionQueryParams.h"
 #include "Containers/Ticker.h"
+#include "EnhancedInputSubsystems.h"
+#include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
+#include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
 
 namespace
@@ -31,6 +33,14 @@ ALegionPlayerController::ALegionPlayerController()
 	DefaultMouseCursor = EMouseCursor::Default;
 	// 等高线地图视角下战场暂停, 但平移/悬停仍需逐帧更新
 	bShouldPerformFullTickWhenPaused = true;
+
+	// FP 模板输入映射 (指挥官化身的移动/视角/开火由 Enhanced Input 驱动)
+	DefaultMappingContext = TSoftObjectPtr<UInputMappingContext>(
+		FSoftObjectPath(TEXT("/Game/Input/IMC_Default.IMC_Default")));
+	MouseLookMappingContext = TSoftObjectPtr<UInputMappingContext>(
+		FSoftObjectPath(TEXT("/Game/Input/IMC_MouseLook.IMC_MouseLook")));
+	WeaponsMappingContext = TSoftObjectPtr<UInputMappingContext>(
+		FSoftObjectPath(TEXT("/Game/Variant_Shooter/Input/IMC_Weapons.IMC_Weapons")));
 }
 
 void ALegionPlayerController::BeginPlay()
@@ -88,13 +98,30 @@ void ALegionPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::X, IE_Pressed, this, &ALegionPlayerController::OnKeyX).bExecuteWhenPaused = true;
 	InputComponent->BindKey(EKeys::G, IE_Pressed, this, &ALegionPlayerController::OnKeyG).bExecuteWhenPaused = true;
 	InputComponent->BindKey(EKeys::F, IE_Pressed, this, &ALegionPlayerController::OnKeyF).bExecuteWhenPaused = true;
-	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ALegionPlayerController::OnKeyTab).bExecuteWhenPaused = true;
-	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &ALegionPlayerController::OnKeyPause).bExecuteWhenPaused = true;
-	InputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ALegionPlayerController::OnJumpPressed);
-	InputComponent->BindKey(EKeys::SpaceBar, IE_Released, this, &ALegionPlayerController::OnJumpReleased);
 	InputComponent->BindKey(EKeys::M, IE_Pressed, this, &ALegionPlayerController::OnKeyMapToggle).bExecuteWhenPaused = true;
 	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &ALegionPlayerController::OnKeyRestart).bExecuteWhenPaused = true;
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ALegionPlayerController::OnEscape).bExecuteWhenPaused = true;
+
+	// FP 模板 Enhanced Input 映射 (移动/跳跃/视角/开火由指挥官化身自绑)
+	if (IsLocalPlayerController())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+		{
+			for (const TSoftObjectPtr<UInputMappingContext>& Ctx :
+				{ DefaultMappingContext, MouseLookMappingContext, WeaponsMappingContext })
+			{
+				if (UInputMappingContext* MC = Ctx.LoadSynchronous())
+				{
+					Subsystem->AddMappingContext(MC, 0);
+				}
+				else
+				{
+					UE_LOG(LogERLegion, Warning, TEXT("[Legion] InputMappingContext failed to load: %s"), *Ctx.ToString());
+				}
+			}
+		}
+	}
 }
 
 // ---------------- Tick ----------------
@@ -131,33 +158,6 @@ void ALegionPlayerController::PlayerTick(float DeltaTime)
 
 void ALegionPlayerController::TickGround(float DeltaTime)
 {
-	// 视角
-	if (!bShowMouseCursor)
-	{
-		float DX = 0.0f, DY = 0.0f;
-		GetInputMouseDelta(DX, DY);
-		FRotator R = GetControlRotation();
-		R.Yaw += DX * LookSensitivity;
-		R.Pitch = FMath::Clamp(FRotator::NormalizeAxis(R.Pitch + DY * LookSensitivity * (bInvertLookY ? -1.0f : 1.0f)), -80.0f, 80.0f);
-		SetControlRotation(R);
-	}
-
-	// 移动
-	if (APawn* P = GetPawn())
-	{
-		const FRotator YawRot(0.0f, GetControlRotation().Yaw, 0.0f);
-		const FVector Fwd = YawRot.Vector();
-		const FVector Right = FRotationMatrix(YawRot).GetUnitAxis(EAxis::Y);
-		const float F = (IsInputKeyDown(EKeys::W) ? 1.0f : 0.0f) - (IsInputKeyDown(EKeys::S) ? 1.0f : 0.0f);
-		const float S = (IsInputKeyDown(EKeys::D) ? 1.0f : 0.0f) - (IsInputKeyDown(EKeys::A) ? 1.0f : 0.0f);
-		if (F != 0.0f) { P->AddMovementInput(Fwd, F); }
-		if (S != 0.0f) { P->AddMovementInput(Right, S); }
-		if (ALegionCommanderPawn* Cmd = Cast<ALegionCommanderPawn>(P))
-		{
-			Cmd->SetSprinting(IsInputKeyDown(EKeys::LeftShift));
-		}
-	}
-
 	// 右键拖拽阵型朝向: 以准星 (或光标) 指向的地面点作为拖拽终点
 	if (bRightDragging)
 	{
@@ -449,20 +449,7 @@ void ALegionPlayerController::OnLeftPressed()
 		}
 	}
 
-	FHitResult Hit;
-	ALegionUnit* L = PickLegion(Hit);
-	if (!L) { return; }
-
-	const bool bMulti = IsInputKeyDown(EKeys::LeftControl) || IsInputKeyDown(EKeys::RightControl);
-	if (L->GetTeam() == ELegionTeam::Player && !L->IsWiped())
-	{
-		if (bMulti) { ToggleSelection(L); }
-		else        { SetSingleSelection(L); }
-	}
-	else if (L->GetTeam() == ELegionTeam::Enemy && SelectedLegions.Num() > 0)
-	{
-		OrderAttack(L);
-	}
+	// 战场视角的左键 = 纯开火 (IA_Shoot), 指挥全部由右键承担
 }
 
 void ALegionPlayerController::OnLeftReleased()
@@ -501,15 +488,29 @@ void ALegionPlayerController::OnRightPressed()
 	}
 
 	PruneInvalidSelections();
-	if (SelectedLegions.Num() == 0) { return; }
 
 	FHitResult Hit;
 	ALegionUnit* HitLegion = PickLegion(Hit);
-	if (HitLegion && HitLegion->GetTeam() == ELegionTeam::Enemy)
+	if (HitLegion && !HitLegion->IsWiped())
 	{
-		OrderAttack(HitLegion);
-		return;
+		if (HitLegion->GetTeam() == ELegionTeam::Player)
+		{
+			// 点我方兵团: 选中/取消选中 (Ctrl 为累选/减选)
+			const bool bMulti = IsInputKeyDown(EKeys::LeftControl) || IsInputKeyDown(EKeys::RightControl);
+			if (bMulti) { ToggleSelection(HitLegion); }
+			else if (SelectedLegions.Num() == 1 && SelectedLegions[0].Get() == HitLegion) { ClearSelection(); }
+			else { SetSingleSelection(HitLegion); }
+			return;
+		}
+		if (SelectedLegions.Num() > 0)
+		{
+			// 点敌方兵团/番号: 选中兵团集火
+			OrderAttack(HitLegion);
+			return;
+		}
 	}
+
+	if (SelectedLegions.Num() == 0) { return; }
 
 	FVector GroundPos;
 	if (TraceGroundAim(GroundPos))
@@ -517,16 +518,6 @@ void ALegionPlayerController::OnRightPressed()
 		bRightDragging = true;
 		RightDragStartWorld = GroundPos;
 		RightDragCurrentWorld = GroundPos;
-
-		// 按住右键转动视角定朝向时自动进入战术时缓
-		if (ALegionGameMode* GM = GetLegionGM(GetWorld()))
-		{
-			if (GM->GetTacticalTimeMode() == ELegionTimeMode::Normal)
-			{
-				GM->SetTacticalTimeMode(ELegionTimeMode::SlowMo);
-				bAutoSlowMoByDrag = true;
-			}
-		}
 	}
 }
 
@@ -534,18 +525,6 @@ void ALegionPlayerController::OnRightReleased()
 {
 	if (!bRightDragging) { return; }
 	bRightDragging = false;
-
-	if (bAutoSlowMoByDrag)
-	{
-		bAutoSlowMoByDrag = false;
-		if (ALegionGameMode* GM = GetLegionGM(GetWorld()))
-		{
-			if (GM->GetTacticalTimeMode() == ELegionTimeMode::SlowMo)
-			{
-				GM->SetTacticalTimeMode(ELegionTimeMode::Normal);
-			}
-		}
-	}
 
 	PruneInvalidSelections();
 	if (SelectedLegions.Num() == 0) { return; }
@@ -595,10 +574,8 @@ void ALegionPlayerController::SetStrategicMapOpen(bool bOpen)
 
 	if (bOpen)
 	{
-		PrevTimeMode = bAutoSlowMoByDrag ? ELegionTimeMode::Normal
-			: (GM ? GM->GetTacticalTimeMode() : ELegionTimeMode::Normal);
+		PrevTimeMode = GM ? GM->GetTacticalTimeMode() : ELegionTimeMode::Normal;
 		bRightDragging = false;
-		bAutoSlowMoByDrag = false;
 		bLeftDown = false;
 		bMapDragged = false;
 		bMidDown = false;
@@ -1009,43 +986,6 @@ void ALegionPlayerController::OnKeyF()
 		else if (!IsLegionFollowing(L)) { FollowLegions.Add(L); }
 	}
 	FollowTimer = 0.0f;
-}
-
-void ALegionPlayerController::OnKeyTab()
-{
-	if (bMapOpen) { return; }
-	if (ALegionGameMode* GM = GetLegionGM(GetWorld()))
-	{
-		const ELegionTimeMode Cur = GM->GetTacticalTimeMode();
-		GM->SetTacticalTimeMode(Cur == ELegionTimeMode::SlowMo ? ELegionTimeMode::Normal : ELegionTimeMode::SlowMo);
-	}
-}
-
-void ALegionPlayerController::OnJumpPressed()
-{
-	if (bMapOpen) { return; }
-	if (ACharacter* C = Cast<ACharacter>(GetPawn())) { C->Jump(); }
-}
-
-void ALegionPlayerController::OnJumpReleased()
-{
-	if (ACharacter* C = Cast<ACharacter>(GetPawn())) { C->StopJumping(); }
-}
-
-void ALegionPlayerController::OnKeyPause()
-{
-	if (ALegionGameMode* GM = GetLegionGM(GetWorld()))
-	{
-		// 地图视角: 暂停 <-> 0.2x 时缓, 让你下令后能看着兵团行动
-		if (bMapOpen)
-		{
-			GM->SetTacticalTimeMode(GM->GetTacticalTimeMode() == ELegionTimeMode::Paused
-				? ELegionTimeMode::SlowMo : ELegionTimeMode::Paused);
-			return;
-		}
-		const ELegionTimeMode Cur = GM->GetTacticalTimeMode();
-		GM->SetTacticalTimeMode(Cur == ELegionTimeMode::Paused ? ELegionTimeMode::Normal : ELegionTimeMode::Paused);
-	}
 }
 
 void ALegionPlayerController::OnEscape()

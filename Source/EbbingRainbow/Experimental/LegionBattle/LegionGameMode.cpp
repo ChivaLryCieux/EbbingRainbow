@@ -5,7 +5,7 @@
 #include "Campaign/GalacticCampaignSubsystem.h"
 #include "Core/ERAssetCatalog.h"
 #include "Core/ERLog.h"
-#include "Experimental/LegionBattle/LegionCommanderPawn.h"
+#include "Experimental/LegionBattle/FPS/LegionCommanderCharacter.h"
 #include "Experimental/LegionBattle/LegionForest.h"
 #include "Experimental/LegionBattle/LegionHUD.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
@@ -29,7 +29,11 @@
 
 ALegionGameMode::ALegionGameMode()
 {
-	DefaultPawnClass = ALegionCommanderPawn::StaticClass();
+	// 指挥官化身 = FP 模板射击栈蓝图 (缺失时退回 C++ 类, 无武器/无手臂的降级模式)
+	static ConstructorHelpers::FClassFinder<APawn> CommanderBP(
+		TEXT("/Game/Variant_Shooter/Blueprints/BP_ShooterCharacter.BP_ShooterCharacter_C"));
+	if (CommanderBP.Succeeded()) { DefaultPawnClass = CommanderBP.Class; }
+	else { DefaultPawnClass = ALegionCommanderCharacter::StaticClass(); }
 	PlayerControllerClass = ALegionPlayerController::StaticClass();
 	HUDClass = ALegionHUD::StaticClass();
 	LegionClass = ALegionUnit::StaticClass();

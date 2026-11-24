@@ -9,6 +9,7 @@
 #include "Experimental/LegionBattle/LegionTerrainGrid.h"
 
 #include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -50,13 +51,18 @@ ALegionUnit::ALegionUnit()
 
 	SoldierHISM = CreateDefaultSubobject<UHierarchicalInstancedStaticMeshComponent>(TEXT("SoldierHISM"));
 	SoldierHISM->SetupAttachment(PickBox);
-	SoldierHISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	// 只挡 WorldDynamic (指挥官手枪弹): 命中具体士兵实例而非隐形判定盒
+	SoldierHISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	SoldierHISM->SetCollisionResponseToAllChannels(ECR_Ignore);
+	SoldierHISM->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
 	SoldierHISM->SetCanEverAffectNavigation(false);
 	SoldierHISM->SetMobility(EComponentMobility::Movable);
 
 	ExtraHISM = CreateDefaultSubobject<UHierarchicalInstancedStaticMeshComponent>(TEXT("ExtraHISM"));
 	ExtraHISM->SetupAttachment(PickBox);
-	ExtraHISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ExtraHISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	ExtraHISM->SetCollisionResponseToAllChannels(ECR_Ignore);
+	ExtraHISM->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
 	ExtraHISM->SetCanEverAffectNavigation(false);
 	ExtraHISM->SetMobility(EComponentMobility::Movable);
 
@@ -194,6 +200,10 @@ void ALegionUnit::RebuildFormation()
 		{
 			C->DestroyComponent();
 		}
+		if (UCapsuleComponent* P = S.HitProxy.Get())
+		{
+			P->DestroyComponent();
+		}
 	}
 	Soldiers.Reset();
 
@@ -280,7 +290,7 @@ void ALegionUnit::RebuildFormation()
 
 		if (bSkeletalSoldiers && SkeletalBodyMesh)
 		{
-			S.SkelComp = SpawnSkeletalSoldier(S);
+			SpawnSkeletalSoldier(S);
 		}
 		else
 		{
@@ -936,6 +946,10 @@ void ALegionUnit::Tick(float DeltaSeconds)
 			if (bSkeletalSoldiers && C && !S.bRagdolled && S.DieT * Dur >= 0.5f)
 			{
 				S.bRagdolled = true;
+				if (UCapsuleComponent* P = S.HitProxy.Get())
+				{
+					P->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				}
 				EnableSoldierRagdoll(C, i);
 			}
 			if (S.DieT >= 1.0f && C)
@@ -1071,7 +1085,7 @@ bool ALegionUnit::TraceGroundZ(const FVector& XY, float& OutZ) const
 	return false;
 }
 
-USkeletalMeshComponent* ALegionUnit::SpawnSkeletalSoldier(const FLegionSoldier& S)
+void ALegionUnit::SpawnSkeletalSoldier(FLegionSoldier& S)
 {
 	USkeletalMeshComponent* C = NewObject<USkeletalMeshComponent>(this, NAME_None, RF_Transient);
 	C->SetupAttachment(PickBox);
@@ -1111,7 +1125,21 @@ USkeletalMeshComponent* ALegionUnit::SpawnSkeletalSoldier(const FLegionSoldier& 
 	C->SetPosition(S.Phase * 0.61f, false);
 	C->Play(true);
 	C->RegisterComponent();
-	return C;
+
+	// 子弹命中代理: 胶囊跟随骨骼组件, 只挡 WorldDynamic (手枪弹);
+	// 命中可视士兵才结算, 不再依赖 PickBox 隐形大盒
+	UCapsuleComponent* Proxy = NewObject<UCapsuleComponent>(this, NAME_None, RF_Transient);
+	Proxy->SetupAttachment(C);
+	Proxy->SetCapsuleSize(36.0f, 92.0f);
+	Proxy->SetRelativeLocation(FVector(0.0f, 0.0f, 92.0f));
+	Proxy->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	Proxy->SetCollisionResponseToAllChannels(ECR_Ignore);
+	Proxy->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+	Proxy->SetCanEverAffectNavigation(false);
+	Proxy->RegisterComponent();
+
+	S.SkelComp = C;
+	S.HitProxy = Proxy;
 }
 
 void ALegionUnit::ApplyAnimStateToSoldiers()

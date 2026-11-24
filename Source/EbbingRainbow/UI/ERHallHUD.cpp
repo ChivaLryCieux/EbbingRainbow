@@ -67,10 +67,10 @@ void UERHallHUD::NativeConstruct()
 	if (!bBaseCached)
 	{
 		bBaseCached = true;
-		if (DockBox)
+		if (NavBox)
 		{
-			BaseDockTranslation = DockBox->GetRenderTransform().Translation;
-			BaseDockOpacity = DockBox->GetRenderOpacity();
+			BaseDockTranslation = NavBox->GetRenderTransform().Translation;
+			BaseDockOpacity = NavBox->GetRenderOpacity();
 		}
 		if (MastheadContainer)
 		{
@@ -90,6 +90,18 @@ void UERHallHUD::NativeConstruct()
 		RoutesButton->SetButtonTexts(INVTEXT("银河委托"), FText::GetEmpty());
 		RoutesButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
 		RoutesButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleRoutesClicked);
+	}
+	if (SituationButton)
+	{
+		SituationButton->SetButtonTexts(INVTEXT("银河局势"), FText::GetEmpty());
+		SituationButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
+		SituationButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSituationClicked);
+	}
+	if (SettingsButton)
+	{
+		SettingsButton->SetButtonTexts(INVTEXT("设置"), FText::GetEmpty());
+		SettingsButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
+		SettingsButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSettingsClicked);
 	}
 	if (ZenHintText && !ZenHintMessage.IsEmpty())
 	{
@@ -118,6 +130,8 @@ void UERHallHUD::NativeConstruct()
 		MastheadMetaCipher.FinishImmediately();
 		if (PersonnelButton) { PersonnelButton->TriggerEntrancePulse(0.26f); }
 		if (RoutesButton)    { RoutesButton->TriggerEntrancePulse(0.36f); }
+		if (SituationButton) { SituationButton->TriggerEntrancePulse(0.46f); }
+		if (SettingsButton)  { SettingsButton->TriggerEntrancePulse(0.56f); }
 		ApplyEntrancePose();
 	}
 	else
@@ -235,34 +249,41 @@ void UERHallHUD::BuildLayout()
 		MS->SetAutoSize(true);
 	}
 
-	// 3. 底部机能双模块 Dock: 黑曜石 [01 人员管理] + 反白 [02 航线管理]
-	if (!DockBox)
+	// 3. 左部标题下方纵向导航: [01 兵团整备] [02 银河委托] [03 银河局势] [04 设置]
+	//    (旧蓝图设计器里的底部双按钮 DockBox 仅作兼容绑定, 折叠隐藏)
+	if (DockBox)
 	{
-		DockBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("DockBox"));
-		DockBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-		UCanvasPanelSlot* DockSlot = DashCanvas->AddChildToCanvas(DockBox);
-		DockSlot->SetAnchors(FAnchors(0.5f, 1.0f));
-		DockSlot->SetAlignment(FVector2D(0.5f, 1.0f));
-		DockSlot->SetPosition(FVector2D(0.0f, -52.0f));
+		DockBox->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (!NavBox)
+	{
+		NavBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("NavBox"));
+		NavBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		UCanvasPanelSlot* DockSlot = DashCanvas->AddChildToCanvas(NavBox);
+		DockSlot->SetAnchors(FAnchors(0.0f, 1.0f));
+		DockSlot->SetAlignment(FVector2D(0.0f, 1.0f));
+		DockSlot->SetPosition(FVector2D(46.0f, -56.0f));
 		DockSlot->SetAutoSize(true);
 
-		PersonnelButton = WidgetTree->ConstructWidget<UERHallButton>(UERHallButton::StaticClass(), TEXT("PersonnelButton"));
-		PersonnelButton->IndexCode = INVTEXT("01");
-		PersonnelButton->Label = INVTEXT("兵团整备");
-		PersonnelButton->AccentColor = T->Accent;
-		PersonnelButton->bPrimary = true;
-		DockBox->AddChildToHorizontalBox(PersonnelButton);
+		auto MakeNavButton = [&](const TCHAR* Name, const FText& Code) -> UERHallButton*
+		{
+			UERHallButton* B = WidgetTree->ConstructWidget<UERHallButton>(UERHallButton::StaticClass(), Name);
+			B->IndexCode = Code;
+			B->AccentColor = T->Accent;
+			B->bPrimary = true;
+			return B;
+		};
 
-		USpacer* Gap = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass(), TEXT("DockSpacer"));
-		Gap->SetSize(FVector2D(20.0f, 1.0f));
-		DockBox->AddChildToHorizontalBox(Gap);
+		PersonnelButton = MakeNavButton(TEXT("NavPersonnelButton"), INVTEXT("01"));
+		RoutesButton    = MakeNavButton(TEXT("NavRoutesButton"), INVTEXT("02"));
+		SituationButton = MakeNavButton(TEXT("NavSituationButton"), INVTEXT("03"));
+		SettingsButton  = MakeNavButton(TEXT("NavSettingsButton"), INVTEXT("04"));
 
-		RoutesButton = WidgetTree->ConstructWidget<UERHallButton>(UERHallButton::StaticClass(), TEXT("RoutesButton"));
-		RoutesButton->IndexCode = INVTEXT("02");
-		RoutesButton->Label = INVTEXT("银河委托");
-		RoutesButton->AccentColor = T->Accent;
-		RoutesButton->bPrimary = true;
-		DockBox->AddChildToHorizontalBox(RoutesButton);
+		UERHallButton* NavButtons[] = { PersonnelButton, RoutesButton, SituationButton, SettingsButton };
+		for (UERHallButton* Btn : NavButtons)
+		{
+			NavBox->AddChildToVerticalBox(Btn)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+		}
 	}
 
 	// 4. 观景模式提示条 (锐利直角黑曜石条)
@@ -310,10 +331,10 @@ void UERHallHUD::ApplyEntrancePose()
 	{
 		MastheadDivider->SetRevealAlpha(DivE);
 	}
-	if (DockBox)
+	if (NavBox)
 	{
-		DockBox->SetRenderOpacity(BaseDockOpacity * DockE);
-		DockBox->SetRenderTranslation(BaseDockTranslation + FVector2D(0.0f, (1.0f - DockE) * EntranceOffsetY));
+		NavBox->SetRenderOpacity(BaseDockOpacity * DockE);
+		NavBox->SetRenderTranslation(BaseDockTranslation + FVector2D(0.0f, (1.0f - DockE) * EntranceOffsetY));
 	}
 }
 
@@ -372,9 +393,9 @@ void UERHallHUD::ApplyZenState(bool bInZen)
 	{
 		DashboardContainer->SetVisibility(bInZen ? ESlateVisibility::Hidden : ESlateVisibility::SelfHitTestInvisible);
 	}
-	else if (DockBox)
+	else if (NavBox)
 	{
-		DockBox->SetVisibility(bInZen ? ESlateVisibility::Hidden : ESlateVisibility::SelfHitTestInvisible);
+		NavBox->SetVisibility(bInZen ? ESlateVisibility::Hidden : ESlateVisibility::SelfHitTestInvisible);
 	}
 	if (ZenHintBorder)
 	{
@@ -461,4 +482,30 @@ void UERHallHUD::HandleRoutesClicked()
 		}
 	}
 	LaunchRouteMap();
+}
+
+void UERHallHUD::HandleSituationClicked()
+{
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Galaxy Situation clicked -> Galactic Panel (Tab 2)."));
+
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		if (AHallHUD* HallHUD = Cast<AHallHUD>(PC->GetHUD()))
+		{
+			HallHUD->OpenGalacticPanel(2);
+		}
+	}
+}
+
+void UERHallHUD::HandleSettingsClicked()
+{
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Settings clicked -> Galactic Panel (Tab 3)."));
+
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		if (AHallHUD* HallHUD = Cast<AHallHUD>(PC->GetHUD()))
+		{
+			HallHUD->OpenGalacticPanel(3);
+		}
+	}
 }

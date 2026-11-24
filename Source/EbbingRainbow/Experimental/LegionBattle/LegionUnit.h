@@ -193,7 +193,7 @@ private:
 	void FireRangedVolley(ALegionUnit* Target);
 	void ApplyPeerSeparation(float DeltaSeconds);
 
-	USkeletalMeshComponent* SpawnSkeletalSoldier(const FLegionSoldier& S);
+	void SpawnSkeletalSoldier(FLegionSoldier& S);
 	void ApplyAnimStateToSoldiers();
 	UAnimationAsset* PickAnimForState(ELegionState InState, int32 SoldierIndex) const;
 	void EnableSoldierRagdoll(USkeletalMeshComponent* C, int32 SoldierIndex);

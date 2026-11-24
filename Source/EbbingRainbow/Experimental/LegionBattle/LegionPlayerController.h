@@ -9,6 +9,7 @@
 #include "LegionPlayerController.generated.h"
 
 class ALegionUnit;
+class UInputMappingContext;
 
 /**
  * 等高线地图视角的视图状态: 屏幕坐标 = 视口中心 + (UV - CenterUV) * Side。
@@ -131,6 +132,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Input")
 	float MapZoomStep = 1.2f;
 
+	/** Enhanced Input 映射: 移动/跳跃/手柄视角 (FP 模板 IMC_Default) */
+	UPROPERTY(EditAnywhere, Category = "Legion|Input")
+	TSoftObjectPtr<UInputMappingContext> DefaultMappingContext;
+
+	/** Enhanced Input 映射: 鼠标视角 (FP 模板 IMC_MouseLook) */
+	UPROPERTY(EditAnywhere, Category = "Legion|Input")
+	TSoftObjectPtr<UInputMappingContext> MouseLookMappingContext;
+
+	/** Enhanced Input 映射: 武器 (Variant_Shooter IMC_Weapons, LMB 开火) */
+	UPROPERTY(EditAnywhere, Category = "Legion|Input")
+	TSoftObjectPtr<UInputMappingContext> WeaponsMappingContext;
+
 protected:
 	void OnLeftPressed();
 	void OnLeftReleased();
@@ -154,10 +167,6 @@ protected:
 	void OnKeyX();
 	void OnKeyG();
 	void OnKeyF();
-	void OnKeyTab();
-	void OnKeyPause();
-	void OnJumpPressed();
-	void OnJumpReleased();
 	void OnKeyRestart();
 	void OnEscape();
 	void OnKeyMapToggle() { SetStrategicMapOpen(!bMapOpen); }
@@ -205,7 +214,6 @@ private:
 	FVector2D MapLastMouse = FVector2D::ZeroVector;
 
 	bool bRightDragging = false;
-	bool bAutoSlowMoByDrag = false;
 	FVector RightDragStartWorld = FVector::ZeroVector;
 	FVector RightDragCurrentWorld = FVector::ZeroVector;
 

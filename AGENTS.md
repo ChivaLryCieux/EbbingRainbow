@@ -112,7 +112,11 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   Units、Skills、Terrain、AI=UBattleAIDirector、Player、Arena、UI、FX=飘字池）、
   `Run/`（航线图+RunSubsystem）、`Hall/`、`WFC/`（Host/Solver/StyleTable/
   Shared=ERArenaAtmosphere/Voxel/Nature）、`Rendering/`、`Legacy/`（Atrium+语法、
-  Styles=旧 5 风格生成器、Motorcycle、ThirdPerson 模板、DayNight）。
+  Styles=旧 5 风格生成器、Motorcycle、ThirdPerson 模板、DayNight）、
+  `Experimental/LegionBattle/`（军团战场主线；`FPS/`=UE FP 模板移植的
+  第一人称射击栈：LegionCommanderCharacter 合并 FPCharacter+ShooterCharacter，
+  武器/子弹/拾取物保留模板类名，BP 资产经 DefaultEngine.ini 的
+  TP_FirstPerson→EbbingRainbow 重定向挂载）。
   include 一律模块相对路径（`"Battle/Core/BattleManager.h"`），
   Build.cs 只挂模块根。旧实现的平铺文件名不再可用，引用前先看新位置。
 - 战斗世界状态查 `UBattleContext`（单位注册表+Rng+Manager），**禁止再用
@@ -121,7 +125,7 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   单位胶囊对该通道 Ignore、地形默认 Block，不要手写忽略列表。
 - 调试自动化（AutoShot/AutoWin）在 `UBattleDebugSubsystem`，
   别往 GameMode 塞；调试命令/CVar 加 `#if !UE_BUILD_SHIPPING` 或 `ECVF_Cheat`。
-- `Content/WFCKit/Materials` 的 `.uasset` 可能是**只读**，保存会静默失败；
+- `.uasset` 可能是**只读**（WFCKit/Materials、Content/Input 等均踩过），保存会静默失败；
   脚本先清只读位（参考 `wfc_apply_futuristic_materials.py`）。
 - `WFCKitTileTable.h` 由 `Scripts/gen_tile_table.py` 生成，勿手改。
 - 瓦片 SM 材质槽固定指向 `MI_WFC_*`；换皮只改 MI，别动生成器/碰撞。

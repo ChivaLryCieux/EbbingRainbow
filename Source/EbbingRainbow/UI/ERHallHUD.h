@@ -16,13 +16,14 @@ class UERTechDivider;
 class UERTechFrame;
 class UHorizontalBox;
 class UTextBlock;
+class UVerticalBox;
 class UWidgetAnimation;
 
 /**
  * 空间站大厅主界面 UMG 控件 (WBP_HallHUD):
  *  - 全屏静谧四角光学标尺 (UERCornerReticle), 92%+ 空间留给日光建筑圣殿
  *  - 左上《控制:共振》式巨型粗体标题碑: 「虹不我与」48pt 粗体 + 窄光谱虹彩条 + 极小 Linux Biolinum 遥测副标
- *  - 底部双机能切角主控模块: [01 人员管理] (黑曜石) + [02 航线管理] (反白石膏+虹彩点睛)
+ *  - 左部标题下方纵向四机能切角主控按钮: [01 兵团整备] [02 银河委托] [03 银河局势] [04 设置]
  *  - 错峰建筑展开 + 英文副标译码 + Esc/空白切观景模式
  */
 UCLASS(BlueprintType, Blueprintable)
@@ -85,6 +86,8 @@ protected:
 
 	UFUNCTION() void HandlePersonnelClicked();
 	UFUNCTION() void HandleRoutesClicked();
+	UFUNCTION() void HandleSituationClicked();
+	UFUNCTION() void HandleSettingsClicked();
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCanvasPanel> RootCanvas;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> DashboardContainer;
@@ -97,8 +100,11 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERTechDivider> MastheadDivider;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> MastheadMetaText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UHorizontalBox> DockBox;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UVerticalBox> NavBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> PersonnelButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> RoutesButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> SituationButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> SettingsButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> ZenHintBorder;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ZenHintText;
 

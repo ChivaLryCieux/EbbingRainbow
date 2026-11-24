@@ -346,8 +346,6 @@ void ALegionHUD::DrawMinimap(ALegionGameMode* GM, ALegionPlayerController* PC)
 		}
 	}
 
-	DrawText(TEXT("按 M 或按住 Alt 点击展开"), FLinearColor(0.92f, 0.92f, 0.90f, 0.78f),
-		MX + 6.0f, MY + MS - 16.0f, nullptr, 0.78f, false);
 }
 
 FBox2D ALegionHUD::GetMapReturnButtonRect(int32 ViewportSizeX, int32 ViewportSizeY)
@@ -690,7 +688,7 @@ void ALegionHUD::DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* 
 
 		const bool bPaused = GM->GetTacticalTimeMode() == ELegionTimeMode::Paused;
 		const FString ZoomTxt = FString::Printf(TEXT("缩放 %.1f 倍  ·  %s"), View.Zoom,
-			bPaused ? TEXT("战场已暂停 · 命令在返回战场后执行 · E 键切换 0.2 倍观战") : TEXT("0.2 倍时缓中 · 兵团正在执行命令 · E 键暂停"));
+			bPaused ? TEXT("战场已暂停 · 命令在返回战场后执行") : TEXT("兵团正在执行命令"));
 		float ZW = 0.0f, ZH = 0.0f;
 		Canvas->TextSize(Font, ZoomTxt, ZW, ZH, 1.05f, 1.05f);
 		DrawText(ZoomTxt, T->BoneSecondary, (float)SX * 0.5f - ZW * 0.5f, BR.Max.Y + 6.0f, Font, 1.05f, false);

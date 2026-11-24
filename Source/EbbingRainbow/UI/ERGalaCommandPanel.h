@@ -21,8 +21,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnGalaPanelClosed);
 /**
  * 虹膜基金会银河军事指挥终端 (大厅内全屏终端面板):
  *  - 展示基金会口号「我们面向全银河提供军事指挥服务」;
- *  - 页签 0: 三大阵营战局控制度、星区态势与委托合同接取/出击部署;
- *  - 页签 1: 常备虹膜链接兵团编制查看、补员、AI 同步升级与新兵团招募。
+ *  - 页签由大厅左部四按钮入口直达 (面板内不设导航);
+ *  - 页签 0: 委托合同接取/出击部署 (三卡片从左至右排布);
+ *  - 页签 1: 常备虹膜链接兵团编制查看、补员、AI 同步升级与新兵团招募;
+ *  - 页签 2: 三大阵营战局控制度、星区态势与上一战况;
+ *  - 页签 3: 终端设置 (占位)。
  */
 UCLASS()
 class EBBINGRAINBOW_API UERGalaCommandPanel : public UUserWidget
@@ -66,12 +69,14 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CycleText;
 	UPROPERTY(Transient) TObjectPtr<UWidget> ContractsPage;
 	UPROPERTY(Transient) TObjectPtr<UWidget> RosterPage;
+	UPROPERTY(Transient) TObjectPtr<UWidget> SituationPage;
+	UPROPERTY(Transient) TObjectPtr<UWidget> SettingsPage;
 
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> FactionListBox;
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> SectorListBox;
 	UPROPERTY(Transient) TObjectPtr<UBorder> LastOutcomeBox;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> LastOutcomeText;
-	UPROPERTY(Transient) TObjectPtr<UVerticalBox> ContractListBox;
+	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> ContractListBox;
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> RosterListBox;
 	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> RecruitBarBox;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> RosterSummaryText;
