@@ -58,9 +58,6 @@ public:
 	/** 停驻当前位置, 清除目标 */
 	void CommandHalt();
 
-	/** 触发兵团主动 AI 协议技能 */
-	bool TriggerActiveSkill();
-
 	// ---------------- 选中/悬停视觉 ----------------
 
 	void SetSelected(bool bInSelected);
@@ -98,17 +95,21 @@ public:
 	FVector GetFormationHalfExtent() const { return FormationHalfExtent; }
 	float GetFacingYaw() const { return FacingYaw; }
 	FVector GetFacingVector() const { return FRotator(0.0f, FacingYaw, 0.0f).Vector().GetSafeNormal2D(); }
-
-	bool IsSkillReady() const { return !bWiped && SkillCooldownRemaining <= 0.0f; }
-	bool IsSkillActive() const { return SkillActiveRemaining > 0.0f; }
-	float GetSkillCooldownRemaining() const { return SkillCooldownRemaining; }
-	float GetSkillCooldownTotal() const { return EffectiveSkillCooldown; }
+	/** 敌军直插天空番号/部队 Logo 的世界空间锚点 */
+	FVector GetSkyBannerWorldLocation() const { return GetActorLocation() + FVector(0.0f, 0.0f, EnemySkyBannerHeight); }
 
 	/** 计算实际有效射程 (含高地对远程的延展) */
 	float GetEffectiveEngageRange(const ALegionUnit* Target = nullptr) const;
 
 	/** 结算伤害 (含正面格挡/侧背破防/长戟反制) */
 	int32 ApplyDamage(float DamageAmount, ALegionUnit* InInstigator = nullptr, bool bRangedHit = false);
+
+	/** 指挥官子弹精准命中单个士兵: 伤害仅结算到被命中的个体, 血量归零时只死该个体 */
+	int32 ApplySoldierProjectileHit(const UPrimitiveComponent* HitComp, int32 HitItem,
+		const FVector& HitLocation, const FVector& HitDirection, float DamageAmount);
+
+	/** 自检: 验证命中指定个体胶囊时只击杀该个体且立即关闭其碰撞 */
+	bool RunExactHitSelfTest();
 
 	/** 施加击退冲量 */
 	void ApplyKnockback(const FVector& WorldImpulse);
@@ -159,6 +160,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Visual")
 	float EngageLungeAmplitude = 55.0f;
 
+	/** 敌军直插天空番号与部队 Logo 相对兵团地面的悬空高度 (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Visual", meta = (ClampMin = "1200.0", ClampMax = "15000.0"))
+	float EnemySkyBannerHeight = 6000.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Terrain", meta = (ClampMin = "0.05", ClampMax = "2.0"))
 	float GroundConformInterval = 0.15f;
 
@@ -198,6 +203,8 @@ private:
 	UAnimationAsset* PickAnimForState(ELegionState InState, int32 SoldierIndex) const;
 	void EnableSoldierRagdoll(USkeletalMeshComponent* C, int32 SoldierIndex);
 	int32 PickCasualtyIndex(const FVector& FromPos) const;
+	int32 FindSoldierIndexByHit(const UPrimitiveComponent* HitComp, int32 HitItem, const FVector& HitLocation) const;
+	void CheckAndHandleWiped();
 
 	// ---------------- 组件 ----------------
 	UPROPERTY(VisibleAnywhere, Category = "Components")
@@ -252,10 +259,6 @@ private:
 	TWeakObjectPtr<ALegionUnit> AttackTarget;
 	float RepathTimer = 0.0f;
 	float VolleyTimer = 0.0f;
-
-	float SkillCooldownRemaining = 0.0f;
-	float SkillActiveRemaining = 0.0f;
-	float EffectiveSkillCooldown = 12.0f;
 
 	FVector KnockbackVelocity = FVector::ZeroVector;
 

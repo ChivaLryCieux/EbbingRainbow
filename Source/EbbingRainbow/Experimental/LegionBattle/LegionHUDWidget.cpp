@@ -11,12 +11,16 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
 #include "Components/Overlay.h"
+#include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Core/ERLog.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
+#include "Experimental/AITacticalCommand/ERAICommandPanel.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
@@ -96,23 +100,14 @@ void ULegionHUDWidget::Build()
 		StatusCol->AddChildToVerticalBox(EnemyCard.Root)->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 0.0f));
 
 		Anchor(StatusCol, Root, FAnchors(0.0f, 1.0f), FVector2D(0.0f, 1.0f),
-			FVector2D(T->ScreenMargin, -84.0f));
+			FVector2D(T->ScreenMargin, -44.0f));
 	}
 
-	// ---- 右下: 选中兵团主动协议按钮 ----
-	{
-		SkillButton = UERActionButton::Make(this, INVTEXT("激活协议"), 26, true);
-		SkillButton->SetMinSize(260.0f, 0.0f);
-		SkillButton->OnActionClicked.AddDynamic(this, &ULegionHUDWidget::OnSkillClicked);
-		Anchor(SkillButton, Root, FAnchors(1.0f, 1.0f), FVector2D(1.0f, 1.0f),
-			FVector2D(-T->ScreenMargin, -86.0f));
-	}
-
-	// ---- 底部居中: 兵团栏容器 ----
+	// ---- 底部居中: 部队卡片栏 (仅显示 部队名称 / Logo / 兵员数量 三要素) ----
 	{
 		LegionBar = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LegionBar"));
 		Anchor(LegionBar, Root, FAnchors(0.5f, 1.0f), FVector2D(0.5f, 1.0f),
-			FVector2D(0.0f, -72.0f));
+			FVector2D(0.0f, -44.0f));
 	}
 
 	// ---- 中央结算面板 ----
@@ -149,6 +144,9 @@ void ULegionHUDWidget::Build()
 
 		Anchor(ResultBox, Root, FAnchors(0.5f, 0.5f), FVector2D(0.5f, 0.5f), FVector2D::ZeroVector);
 	}
+
+	// ---- 地图视角左上角「接入 AI」自然语言指挥终端 (默认隐藏, 仅地图视角显示) ----
+	AICommandPanel = UERAICommandPanel::InstallOnLegionMapHUD(this, Root, T->ScreenMargin);
 }
 
 void ULegionHUDWidget::NativeConstruct()
@@ -168,9 +166,26 @@ void ULegionHUDWidget::NativeConstruct()
 	RefreshStatus();
 }
 
+void ULegionHUDWidget::SetStrategicMapMode(bool bMapOpen)
+{
+	if (LegionBar)
+	{
+		LegionBar->SetVisibility(bMapOpen ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	}
+	if (AICommandPanel)
+	{
+		AICommandPanel->SetHostVisible(bMapOpen);
+	}
+}
+
 void ULegionHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetOwningPlayer()))
+	{
+		SetStrategicMapMode(PC->IsStrategicMapOpen());
+	}
 
 	RefreshPlateHover();
 
@@ -208,9 +223,9 @@ void ULegionHUDWidget::RefreshStatus()
 		const int32 AllyLegions = GM->CountAliveLegions(ELegionTeam::Player);
 		const int32 EnemyLegions = GM->CountAliveLegions(ELegionTeam::Enemy);
 		StatusAllyText->SetText(FText::FromString(FString::Printf(
-			TEXT("我方  %d 团 · %d 兵"), AllyLegions, AllyAlive)));
+			TEXT("我方  %d 旅 · %d 兵"), AllyLegions, AllyAlive)));
 		StatusEnemyText->SetText(FText::FromString(FString::Printf(
-			TEXT("敌方  %d 团 · %d 兵"), EnemyLegions, EnemyAlive)));
+			TEXT("敌方  %d 旅 · %d 兵"), EnemyLegions, EnemyAlive)));
 	}
 }
 
@@ -240,39 +255,59 @@ void ULegionHUDWidget::BuildLegionBar(int32 Count)
 		default: Btn->OnClicked.AddDynamic(this, &ULegionHUDWidget::OnPlateClicked7); break;
 		}
 
-		// 白底墨字彩条栏目: 切角骨白底板 + 左侧点睛条, 内容全部墨字
-		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->AllyMark, false, FMargin(16.0f, 9.0f));
-		Btn->SetContent(Card.Root);
+		// 白底墨字彩条部队卡: 固定对称宽, 仅含 部队名称 + Logo + 兵员数量 三要素
+		USizeBox* CardSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		CardSize->SetMinDesiredWidth(132.0f);
+
+		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->AllyMark, false, FMargin(16.0f, 10.0f));
+		CardSize->AddChild(Card.Root);
+		Btn->SetContent(CardSize);
 		LegionPlateFrames.Add(Card.Frame);
 		LegionPlateSelected.Add(false);
 		LegionPlateDead.Add(false);
 		UVerticalBox* Col = Card.Content;
 
+		// 1. 部队名称 (如: 第一旅)
 		UTextBlock* Name = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
-		Name->SetFont(ERUI::FontBold(19, 60));
+		Name->SetFont(ERUI::FontBold(19, 80));
 		Name->SetJustification(ETextJustify::Center);
-		Col->AddChildToVerticalBox(Name);
+		if (UVerticalBoxSlot* S = Col->AddChildToVerticalBox(Name))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+		}
 
-		UTextBlock* CountText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, ERUI::InkText(0.7f), false);
-		CountText->SetFont(ERUI::FontBold(15, 40));
+		// 2. 部队占位 Logo (暗曜石方框 + 技能图标占位)
+		UBorder* LogoBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+		LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.012f, 0.013f, 0.018f, 0.94f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.5f)));
+		LogoBox->SetBrushColor(FLinearColor::White);
+		LogoBox->SetPadding(FMargin(3.0f));
+
+		UImage* LogoImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		FSlateBrush IconBrush;
+		IconBrush.ImageSize = FVector2D(52.0f, 52.0f);
+		IconBrush.DrawAs = ESlateBrushDrawType::Image;
+		LogoImg->SetBrush(IconBrush);
+		LogoBox->SetContent(LogoImg);
+		if (UVerticalBoxSlot* S = Col->AddChildToVerticalBox(LogoBox))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+			S->SetPadding(FMargin(0.0f, 7.0f, 0.0f, 7.0f));
+		}
+
+		// 3. 兵员数量
+		UTextBlock* CountText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
+		CountText->SetFont(ERUI::FontBold(18, 40));
 		CountText->SetJustification(ETextJustify::Center);
-		Col->AddChildToVerticalBox(CountText)->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 0.0f));
+		if (UVerticalBoxSlot* S = Col->AddChildToVerticalBox(CountText))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+		}
 
-		UTextBlock* StateText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, ERUI::InkText(0.5f), false);
-		StateText->SetFont(ERUI::FontBold(14, 60));
-		StateText->SetJustification(ETextJustify::Center);
-		Col->AddChildToVerticalBox(StateText)->SetPadding(FMargin(0.0f, 1.0f, 0.0f, 0.0f));
-
-		UTextBlock* SkillText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, ERUI::InkText(0.6f), false);
-		SkillText->SetFont(ERUI::FontBold(14, 40));
-		SkillText->SetJustification(ETextJustify::Center);
-		Col->AddChildToVerticalBox(SkillText)->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 0.0f));
-
-		LegionBar->AddChildToHorizontalBox(Btn)->SetPadding(FMargin(i > 0 ? 8.0f : 0.0f, 0.0f, 0.0f, 0.0f));
+		LegionBar->AddChildToHorizontalBox(Btn)->SetPadding(FMargin(i > 0 ? 12.0f : 0.0f, 0.0f, 0.0f, 0.0f));
 		LegionNameTexts.Add(Name);
+		LegionLogoImages.Add(LogoImg);
 		LegionCountTexts.Add(CountText);
-		LegionStateTexts.Add(StateText);
-		LegionSkillTexts.Add(SkillText);
+		CachedCardLogos.Add(nullptr);
 	}
 }
 
@@ -291,23 +326,15 @@ void ULegionHUDWidget::RefreshLegionBar()
 		LegionPlateSelected.Reset();
 		LegionPlateDead.Reset();
 		LegionNameTexts.Reset();
+		LegionLogoImages.Reset();
 		LegionCountTexts.Reset();
-		LegionStateTexts.Reset();
-		LegionSkillTexts.Reset();
+		CachedCardLogos.Reset();
 		BuildLegionBar(Num);
 	}
 	if (Num == 0) { return; }
 
 	ALegionPlayerController* PC = Cast<ALegionPlayerController>(World->GetFirstPlayerController());
-	const UERUITheme* T = ERUI::Theme();
-	static const TCHAR* StateNames[] = {
-		TEXT("驻守"), TEXT("机动"), TEXT("交战"), TEXT("覆灭")
-	};
-
-	// 骨白底上的状态墨色 (深于暗底版本以保证对比)
-	const FLinearColor InkDanger(0.62f, 0.04f, 0.02f, 1.0f);
 	const FLinearColor InkAmber(0.58f, 0.31f, 0.0f, 1.0f);
-	const FLinearColor InkBlue(0.02f, 0.30f, 0.62f, 1.0f);
 
 	for (int32 i = 0; i < LegionPlateFrames.Num(); ++i)
 	{
@@ -315,62 +342,35 @@ void ULegionHUDWidget::RefreshLegionBar()
 		if (!L) { continue; }
 		const bool bSel = PC && PC->IsLegionSelected(L);
 		const bool bDead = L->IsWiped();
-		const ELegionState St = L->GetLegionState();
 		LegionPlateSelected[i] = bSel;
 		LegionPlateDead[i] = bDead;
 
-		LegionNameTexts[i]->SetText(FText::FromString(FString::Printf(
-			TEXT("%d·%s"), i + 1, *ERGalacticMeta::GetClassName(L->GetArchetype()))));
+		const FString Name = L->GetCallsign().IsEmpty() ? ERGalacticMeta::GetBrigadeName(i + 1) : L->GetCallsign();
+		LegionNameTexts[i]->SetText(FText::FromString(Name));
 		LegionCountTexts[i]->SetText(FText::FromString(
-			FString::Printf(TEXT("%d / %d 兵"), L->GetAliveCount(), L->GetSoldierCount())));
-		LegionStateTexts[i]->SetText(FText::FromString(StateNames[(int32)St]));
+			FString::Printf(TEXT("%d / %d"), L->GetAliveCount(), L->GetSoldierCount())));
 
-		if (bDead)
+		if (LegionLogoImages.IsValidIndex(i) && LegionLogoImages[i])
 		{
-			LegionSkillTexts[i]->SetText(INVTEXT("信号断连"));
-			LegionSkillTexts[i]->SetColorAndOpacity(FSlateColor(ERUI::InkText(0.4f)));
-		}
-		else if (L->IsSkillActive())
-		{
-			LegionSkillTexts[i]->SetText(INVTEXT("协议超频中"));
-			LegionSkillTexts[i]->SetColorAndOpacity(FSlateColor(InkAmber));
-		}
-		else if (L->IsSkillReady())
-		{
-			LegionSkillTexts[i]->SetText(FText::FromString(
-				FString::Printf(TEXT("就绪 · %s"), *ERGalacticMeta::GetClassSkillName(L->GetArchetype()))));
-			LegionSkillTexts[i]->SetColorAndOpacity(FSlateColor(InkBlue));
-		}
-		else
-		{
-			LegionSkillTexts[i]->SetText(FText::FromString(
-				FString::Printf(TEXT("冷却 %.0f 秒"), L->GetSkillCooldownRemaining())));
-			LegionSkillTexts[i]->SetColorAndOpacity(FSlateColor(ERUI::InkText(0.45f)));
+			if (!CachedCardLogos.IsValidIndex(i) || !CachedCardLogos[i])
+			{
+				if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetClassLogoAssetPath(L->GetArchetype(), true)))
+				{
+					CachedCardLogos[i] = Tex;
+					FSlateBrush Brush;
+					Brush.SetResourceObject(Tex);
+					Brush.ImageSize = FVector2D(52.0f, 52.0f);
+					Brush.DrawAs = ESlateBrushDrawType::Image;
+					LegionLogoImages[i]->SetBrush(Brush);
+				}
+			}
+			LegionLogoImages[i]->SetColorAndOpacity(bDead ? FLinearColor(0.35f, 0.35f, 0.38f, 0.65f) : FLinearColor::White);
 		}
 
-		LegionNameTexts[i]->SetColorAndOpacity(FSlateColor(ERUI::InkText(bDead ? 0.4f : 1.0f)));
-		LegionCountTexts[i]->SetColorAndOpacity(FSlateColor(ERUI::InkText(bDead ? 0.35f : 0.7f)));
-		const FLinearColor StCol = bDead ? ERUI::InkText(0.4f)
-			: (St == ELegionState::Engaged ? InkDanger
-			: (St == ELegionState::Moving ? InkAmber : ERUI::InkText(0.5f)));
-		LegionStateTexts[i]->SetColorAndOpacity(FSlateColor(StCol));
-	}
-
-	if (SkillButton && PC)
-	{
-		ALegionUnit* Prim = PC->GetSelectedLegion();
-		if (Prim && !Prim->IsWiped())
-		{
-			SkillButton->SetButtonEnabled(Prim->IsSkillReady());
-			SkillButton->SetLabel(FText::FromString(Prim->IsSkillReady()
-				? FString::Printf(TEXT("激活 · %s"), *ERGalacticMeta::GetClassSkillName(Prim->GetArchetype()))
-				: FString::Printf(TEXT("冷却中 %.0f 秒"), Prim->GetSkillCooldownRemaining())));
-		}
-		else
-		{
-			SkillButton->SetButtonEnabled(false);
-			SkillButton->SetLabel(INVTEXT("选中兵团后启用协议"));
-		}
+		LegionNameTexts[i]->SetColorAndOpacity(FSlateColor(ERUI::InkText(bDead ? 0.38f : 1.0f)));
+		const bool bDamaged = !bDead && L->GetAliveCount() < L->GetSoldierCount();
+		LegionCountTexts[i]->SetColorAndOpacity(FSlateColor(
+			bDead ? ERUI::InkText(0.35f) : (bDamaged ? InkAmber : ERUI::InkText(0.88f))));
 	}
 }
 
@@ -392,14 +392,6 @@ void ULegionHUDWidget::SelectPlate(int32 Index)
 	if (ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr))
 	{
 		PC->SelectLegionByIndex(Index);
-	}
-}
-
-void ULegionHUDWidget::OnSkillClicked()
-{
-	if (ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr))
-	{
-		PC->TriggerSelectedSkills();
 	}
 }
 

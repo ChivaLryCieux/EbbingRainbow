@@ -314,15 +314,43 @@ namespace ERGalacticMeta
 		}
 	}
 
-	inline FString GetClassSkillName(ELegionClass C)
+	/** 部队番号命名: 第一旅 / 第二旅 / 第三旅 ... */
+	inline FString GetBrigadeName(int32 Ordinal)
 	{
+		return FString::Printf(TEXT("第%s旅"), *GetChineseOrdinal(FMath::Max(1, Ordinal)));
+	}
+
+	/** 敌军部队番号: 委托战带阵营简称(如 帝国第一旅), 演武模式为 敌第一旅 */
+	inline FString GetEnemyBrigadeName(int32 Ordinal, bool bHasFaction = false, EFactionId Faction = EFactionId::Rebels)
+	{
+		if (bHasFaction)
+		{
+			return FString::Printf(TEXT("%s%s"), *GetFactionCode(Faction), *GetBrigadeName(Ordinal));
+		}
+		return FString::Printf(TEXT("敌%s"), *GetBrigadeName(Ordinal));
+	}
+
+	/** 部队占位 Logo 纹理路径 (暂用技能图标占位: 我方蓝色 / 敌方红色) */
+	inline const TCHAR* GetClassLogoAssetPath(ELegionClass C, bool bAlly)
+	{
+		if (bAlly)
+		{
+			switch (C)
+			{
+			case ELegionClass::Shieldbearer: return TEXT("/Game/UI/SkillIcons/T_Blue_Shield.T_Blue_Shield");
+			case ELegionClass::Pikeman:      return TEXT("/Game/UI/SkillIcons/T_Blue_Axe.T_Blue_Axe");
+			case ELegionClass::Vanguard:     return TEXT("/Game/UI/SkillIcons/T_Blue_Sword.T_Blue_Sword");
+			case ELegionClass::Marksman:     return TEXT("/Game/UI/SkillIcons/T_Blue_Bow.T_Blue_Bow");
+			default:                         return TEXT("/Game/UI/SkillIcons/T_Blue_Shield.T_Blue_Shield");
+			}
+		}
 		switch (C)
 		{
-		case ELegionClass::Shieldbearer: return TEXT("铁壁共振");
-		case ELegionClass::Pikeman:      return TEXT("拒马突刺");
-		case ELegionClass::Vanguard:     return TEXT("虹膜突进");
-		case ELegionClass::Marksman:     return TEXT("高轨齐射");
-		default: return TEXT("超频协议");
+		case ELegionClass::Shieldbearer: return TEXT("/Game/UI/SkillIcons/T_Red_Shield.T_Red_Shield");
+		case ELegionClass::Pikeman:      return TEXT("/Game/UI/SkillIcons/T_Red_Axe.T_Red_Axe");
+		case ELegionClass::Vanguard:     return TEXT("/Game/UI/SkillIcons/T_Red_Sword.T_Red_Sword");
+		case ELegionClass::Marksman:     return TEXT("/Game/UI/SkillIcons/T_Red_Bow.T_Red_Bow");
+		default:                         return TEXT("/Game/UI/SkillIcons/T_Red_Shield.T_Red_Shield");
 		}
 	}
 }

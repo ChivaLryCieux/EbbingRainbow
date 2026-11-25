@@ -5,9 +5,12 @@
 #include "Campaign/GalacticCampaignSubsystem.h"
 #include "Core/ERAssetCatalog.h"
 #include "Core/ERLog.h"
+#include "Experimental/AITacticalCommand/ERAICommandPanel.h"
+#include "Experimental/AITacticalCommand/UBattleAICommandService.h"
 #include "Experimental/LegionBattle/FPS/LegionCommanderCharacter.h"
 #include "Experimental/LegionBattle/LegionForest.h"
 #include "Experimental/LegionBattle/LegionHUD.h"
+#include "Experimental/LegionBattle/LegionHUDWidget.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
 
@@ -67,6 +70,8 @@ void ALegionGameMode::BeginPlay()
 	if (FParse::Value(FCommandLine::Get(), TEXT("-LegionLegions="), V))  { LegionsPerSide = FMath::Max(1, V); }
 	if (FParse::Value(FCommandLine::Get(), TEXT("-LegionSoldiers="), V)) { SoldiersPerLegion = FMath::Max(1, V); }
 	bAutoShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-LegionShot"));
+	bSkyShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-SkyShot"));
+	bMapShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-MapShot"));
 }
 
 void ALegionGameMode::LoadRuntimeAssets()
@@ -262,8 +267,7 @@ void ALegionGameMode::StartPlay()
 
 			if (W.DelaySeconds <= 0.01f)
 			{
-				const FString Label = FString::Printf(TEXT("敌军%s号 // %s"),
-					*ERGalacticMeta::GetChineseOrdinal(EnemyLegions.Num() + 1), *ERGalacticMeta::GetClassName(W.Archetype));
+				const FString Label = ERGalacticMeta::GetEnemyBrigadeName(EnemyLegions.Num() + 1, true, Contract.EnemyFaction);
 				if (ALegionUnit* L = SpawnLegion(ELegionTeam::Enemy, W.Archetype, W.SoldierCount,
 					DropPos, -90.0f, INDEX_NONE, Label, 1))
 				{
@@ -301,8 +305,7 @@ void ALegionGameMode::StartPlay()
 				? TerrainGrid.ClampToWalkable(FVector(X, DeployCenter.Y - LineDistance * 0.5f, DeployCenter.Z))
 				: FVector(X, DeployCenter.Y - LineDistance * 0.5f, DeployCenter.Z);
 			if (ALegionUnit* L = SpawnLegion(ELegionTeam::Player, C, SoldiersPerLegion,
-				PPos, 90.0f, i + 1,
-				FString::Printf(TEXT("虹膜%s号 // %s"), *ERGalacticMeta::GetChineseOrdinal(i + 1), *ERGalacticMeta::GetClassName(C)), 1))
+				PPos, 90.0f, i + 1, ERGalacticMeta::GetBrigadeName(i + 1), 1))
 			{
 				PlayerLegions.Add(L);
 				InitialPlayerCounts.Add(i + 1, SoldiersPerLegion);
@@ -312,8 +315,7 @@ void ALegionGameMode::StartPlay()
 				? TerrainGrid.ClampToWalkable(FVector(X, DeployCenter.Y + LineDistance * 0.5f, DeployCenter.Z))
 				: FVector(X, DeployCenter.Y + LineDistance * 0.5f, DeployCenter.Z);
 			if (ALegionUnit* L = SpawnLegion(ELegionTeam::Enemy, C, SoldiersPerLegion,
-				EPos, -90.0f, INDEX_NONE,
-				FString::Printf(TEXT("敌军%s号 // %s"), *ERGalacticMeta::GetChineseOrdinal(i + 1), *ERGalacticMeta::GetClassName(C)), 1))
+				EPos, -90.0f, INDEX_NONE, ERGalacticMeta::GetEnemyBrigadeName(i + 1), 1))
 			{
 				EnemyLegions.Add(L);
 				InitialEnemySoldiersTotal += SoldiersPerLegion;
@@ -482,8 +484,11 @@ FVector ALegionGameMode::MinimapUVToWorld(const FVector2D& UV) const
 
 void ALegionGameMode::SpawnWaveLegion(const FPendingEnemyWave& Wave)
 {
-	const FString Label = FString::Printf(TEXT("增援%s号 // %s"),
-		*ERGalacticMeta::GetChineseOrdinal(EnemyLegions.Num() + 1), *ERGalacticMeta::GetClassName(Wave.Spec.Archetype));
+	UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this);
+	const bool bHasContract = Campaign && Campaign->HasActiveContract();
+	const FString Label = bHasContract
+		? ERGalacticMeta::GetEnemyBrigadeName(EnemyLegions.Num() + 1, true, Campaign->GetActiveContract().EnemyFaction)
+		: ERGalacticMeta::GetEnemyBrigadeName(EnemyLegions.Num() + 1);
 	if (ALegionUnit* L = SpawnLegion(ELegionTeam::Enemy, Wave.Spec.Archetype, Wave.Spec.SoldierCount,
 		Wave.DropLocation, -90.0f, INDEX_NONE, Label, 1))
 	{
@@ -700,6 +705,101 @@ void ALegionGameMode::AllOutAssault(ELegionTeam Team)
 
 void ALegionGameMode::HandleAutoShot()
 {
+	if (bMapShotRequested)
+	{
+		AutoShotTimer += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+		UWorld* World = GetWorld();
+		ALegionPlayerController* LPC = World ? Cast<ALegionPlayerController>(World->GetFirstPlayerController()) : nullptr;
+		if (!LPC) { return; }
+
+		if (AutoShotStage == 0 && AutoShotTimer > 1.0f)
+		{
+			// 切开等高线地图视角 (含 1.0x 全景密集集群 + ERMapSelfTest 2.4x 细节命令双截图)
+			LPC->SelectLegionByIndex(0);
+			LPC->SetStrategicMapOpen(true);
+			TWeakObjectPtr<ALegionPlayerController> WeakPC(LPC);
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakPC](float)
+			{
+				if (ALegionPlayerController* P = WeakPC.Get())
+				{
+					// 先缩放到 1.0x 截整张等高线全景 (测试密集集群防碰撞)
+					int32 SX = 0, SY = 0;
+					P->GetViewportSize(SX, SY);
+					for (int32 i = 0; i < 12; ++i) { P->ZoomMapAt(-1, FVector2D(SX * 0.5, SY * 0.5)); }
+				}
+				return false;
+			}), 0.3f);
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+			{
+				FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionMap1x"), true, true);
+				return false;
+			}), 0.8f);
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakPC](float)
+			{
+				if (ALegionPlayerController* P = WeakPC.Get())
+				{
+					// 展开左上角「接入 AI」面板并运行大兵团 AI 工具链自检 (模拟"全部部队优先合力进攻对方第一旅")
+					if (ALegionHUD* HUD = Cast<ALegionHUD>(P->GetHUD()))
+					{
+						if (ULegionHUDWidget* W = HUD->GetHUDWidget())
+						{
+							if (UERAICommandPanel* AI = W->GetAICommandPanel())
+							{
+								AI->SetPanelOpen(true);
+							}
+						}
+					}
+					if (UBattleAICommandService* Svc = UBattleAICommandService::Get(P->GetWorld()))
+					{
+						Svc->RunLegionToolSelfTest();
+					}
+				}
+				return false;
+			}), 1.4f);
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+			{
+				FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionMapAI"), true, true);
+				return false;
+			}), 2.1f);
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakPC](float)
+			{
+				if (ALegionPlayerController* P = WeakPC.Get()) { P->SetStrategicMapOpen(false); }
+				return false;
+			}), 2.8f);
+			AutoShotStage = 1;
+		}
+		return;
+	}
+
+	if (bSkyShotRequested)
+	{
+		AutoShotTimer += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+		UWorld* World = GetWorld();
+		ALegionPlayerController* LPC = World ? Cast<ALegionPlayerController>(World->GetFirstPlayerController()) : nullptr;
+		if (!LPC) { return; }
+
+		if (AutoShotStage == 0 && AutoShotTimer > 1.0f)
+		{
+			// 1. 水平第一人称视角: 敌军头顶无番号, 只见直插天空的立柱与高空 Logo
+			LPC->SelectLegionByIndex(0);
+			FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionSkyHorizon"), true, true);
+			AutoShotStage = 1;
+		}
+		else if (AutoShotStage == 1 && AutoShotTimer > 2.2f)
+		{
+			// 2. 运行防误触 + 抬头瞄准天空 Logo 右键集火自检
+			LPC->ERSkyBannerSelfTest();
+			AutoShotStage = 2;
+		}
+		else if (AutoShotStage == 2 && AutoShotTimer > 3.2f)
+		{
+			// 3. 此时镜头已抬头锁定天空 Logo 并下达集火, 截取抬头视角的锁定效果
+			FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionSkyLookUp"), true, true);
+			AutoShotStage = 3;
+		}
+		return;
+	}
+
 	if (!bAutoShotRequested) { return; }
 	AutoShotTimer += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
 

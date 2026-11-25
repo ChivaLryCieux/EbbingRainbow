@@ -10,6 +10,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/ProgressBar.h"
@@ -20,6 +21,7 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Core/ERLog.h"
+#include "Engine/Texture2D.h"
 #include "UI/ERActionButton.h"
 #include "UI/ERUIStatics.h"
 #include "UI/ERUITheme.h"
@@ -601,6 +603,31 @@ void UERGalaCommandPanel::RebuildRosterList()
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		Card.Content->AddChildToVerticalBox(Row);
 
+		// 部队占位 Logo
+		{
+			UBorder* LogoBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+			LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.012f, 0.013f, 0.018f, 0.94f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.5f)));
+			LogoBox->SetBrushColor(FLinearColor::White);
+			LogoBox->SetPadding(FMargin(3.0f));
+
+			UImage* LogoImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+			FSlateBrush IconBrush;
+			IconBrush.ImageSize = FVector2D(46.0f, 46.0f);
+			IconBrush.DrawAs = ESlateBrushDrawType::Image;
+			if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetClassLogoAssetPath(L.Archetype, true)))
+			{
+				IconBrush.SetResourceObject(Tex);
+			}
+			LogoImg->SetBrush(IconBrush);
+			LogoBox->SetContent(LogoImg);
+
+			if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(LogoBox))
+			{
+				S->SetVerticalAlignment(VAlign_Center);
+				S->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+			}
+		}
+
 		UVerticalBox* InfoCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		InfoCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		{
@@ -611,15 +638,14 @@ void UERGalaCommandPanel::RebuildRosterList()
 
 		UTextBlock* NameTxt = ERUI::MakeText(this,
 			FText::FromString(FString::Printf(TEXT("%s   ·   %s   ·   虹膜同步 %d 级"),
-				*L.Callsign, *ERGalacticMeta::GetClassCode(L.Archetype), L.SyncLevel)),
+				*L.Callsign, *ERGalacticMeta::GetClassName(L.Archetype), L.SyncLevel)),
 			EERTypeScale::Title, ERUI::InkText(), false);
 		NameTxt->SetFont(ERUI::FontBold(23, 40));
 		InfoCol->AddChildToVerticalBox(NameTxt);
 
 		UTextBlock* RoleTxt = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("定位: %s   |   主动协议: %s   |   战历: %d 场"),
+			FText::FromString(FString::Printf(TEXT("定位: %s   |   战历: %d 场"),
 				*ERGalacticMeta::GetClassRoleDesc(L.Archetype),
-				*ERGalacticMeta::GetClassSkillName(L.Archetype),
 				L.BattlesSurvived)),
 			EERTypeScale::Micro, ERUI::InkText(0.66f), false);
 		RoleTxt->SetFont(ERUI::FontBold(15, 20));

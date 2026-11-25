@@ -12,6 +12,9 @@
 
 class ABattlePlayerController;
 class ABattleUnit;
+class ALegionGameMode;
+class ALegionPlayerController;
+class ALegionUnit;
 class UBattleManager;
 
 UENUM(BlueprintType)
@@ -101,7 +104,13 @@ public:
 	FString GetStatusLabel() const { return CurrentStatusLabel; }
 	int32 GetContextTurnCount() const { return ContextTurnCount; }
 
-	/** 返回易读的单位序号索引摘要 (供 HUD 与玩家核对 P1/E1 编号) */
+	/** 当前是否处于大兵团作战模式 (Lvl_Legion) */
+	bool IsLegionMode() const;
+
+	/** 离线自检大兵团 AI 工具链 (无需真实 API Key, 模拟大模型返回 tool_calls 验证全部部队集火敌第一旅等命令) */
+	bool RunLegionToolSelfTest();
+
+	/** 返回易读的单位序号索引摘要 (供 HUD 与玩家核对编号/旅番号) */
 	FString GetUnitIndexSummary() const;
 
 	/** 获取内置系统提示词 */
@@ -123,9 +132,19 @@ private:
 
 	UBattleManager* GetBattleManager() const;
 	ABattlePlayerController* GetBattlePC() const;
+	ALegionGameMode* GetLegionGameMode() const;
+	ALegionPlayerController* GetLegionPC() const;
 
 	ABattleUnit* ResolveUnitRef(const FString& RefStr) const;
 	FString GetUnitCode(const ABattleUnit* TargetUnit) const;
+
+	// ---- 大兵团作战模式辅助 ----
+	FString GetLegionUnitIndexSummary() const;
+	FString BuildLegionSystemPrompt() const;
+	TSharedPtr<FJsonObject> BuildLegionSnapshotJson() const;
+	ALegionUnit* ResolveLegionUnitRef(const FString& RefStr, bool bPreferEnemy) const;
+	void ResolveAllyLegions(const TSharedPtr<FJsonObject>& Args, TArray<ALegionUnit*>& OutAllies) const;
+	FString GetLegionCode(const ALegionUnit* Unit) const;
 
 	void SetBusyState(bool bInBusy, const FString& StatusText);
 	void EmitLog(EERAICommandLogKind Kind, const FString& Text, bool bBroadcastToBattleHUD = false);
@@ -140,6 +159,17 @@ private:
 	void ExecuteNextToolCall();
 	void FinishToolCallAndContinue(const FString& ToolResultJson);
 	void FlushAnthropicToolResultsIfReady();
+
+	/** 大兵团作战同步工具实现 (暂停态下直接生效, 地图上实时刷新命令线) */
+	bool DispatchLegionToolCall(const FString& ToolName, const TSharedPtr<FJsonObject>& Args, FString& OutResultJson);
+	TArray<TSharedPtr<FJsonValue>> BuildLegionToolsJson(bool bAnthropic) const;
+	FString Tool_LegionOrderAttack(const TSharedPtr<FJsonObject>& Args);
+	FString Tool_LegionOrderAllAssault();
+	FString Tool_LegionOrderMove(const TSharedPtr<FJsonObject>& Args);
+	FString Tool_LegionOrderMoveRelative(const TSharedPtr<FJsonObject>& Args);
+	FString Tool_LegionOrderHalt(const TSharedPtr<FJsonObject>& Args);
+	FString Tool_LegionOrderFollowCommander(const TSharedPtr<FJsonObject>& Args);
+	FString Tool_LegionSelectAllies(const TSharedPtr<FJsonObject>& Args);
 
 	/** 同步工具实现 */
 	FString Tool_GetBattleState();

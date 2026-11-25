@@ -4,6 +4,7 @@
 
 #include "Camera/PlayerCameraManager.h"
 #include "Core/ERLog.h"
+#include "Experimental/AITacticalCommand/ERAICommandPanel.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
 #include "Experimental/LegionBattle/LegionHUD.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
@@ -51,6 +52,10 @@ void ALegionPlayerController::BeginPlay()
 		PlayerCameraManager->ViewPitchMin = -82.0f;
 		PlayerCameraManager->ViewPitchMax = 82.0f;
 	}
+	if (ALegionHUD* HUD = Cast<ALegionHUD>(MyHUD))
+	{
+		HUD->NotifyStrategicMapOpen(bMapOpen);
+	}
 	ApplyInputMode();
 }
 
@@ -94,7 +99,6 @@ void ALegionPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &ALegionPlayerController::OnKey7).bExecuteWhenPaused = true;
 	InputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &ALegionPlayerController::OnKey8).bExecuteWhenPaused = true;
 
-	InputComponent->BindKey(EKeys::Z, IE_Pressed, this, &ALegionPlayerController::OnKeyZ).bExecuteWhenPaused = true;
 	InputComponent->BindKey(EKeys::X, IE_Pressed, this, &ALegionPlayerController::OnKeyX).bExecuteWhenPaused = true;
 	InputComponent->BindKey(EKeys::G, IE_Pressed, this, &ALegionPlayerController::OnKeyG).bExecuteWhenPaused = true;
 	InputComponent->BindKey(EKeys::F, IE_Pressed, this, &ALegionPlayerController::OnKeyF).bExecuteWhenPaused = true;
@@ -188,6 +192,15 @@ void ALegionPlayerController::TickMap()
 	float MX = 0.0f, MY = 0.0f;
 	if (!GetMousePosition(MX, MY)) { return; }
 	const FVector2D M(MX, MY);
+
+	if (UERAICommandPanel::IsAnyPanelHoveredOrFocused())
+	{
+		bLeftDown = false;
+		bMapDragged = false;
+		bMidDown = false;
+		CurrentMouseCursor = EMouseCursor::Default;
+		return;
+	}
 
 	if (bLeftDown && !bMapDragged && FVector2D::Distance(M, LeftDragStartScreen) > 8.0f)
 	{
@@ -345,41 +358,107 @@ void ALegionPlayerController::SelectLegionByIndex(int32 Index)
 	OnKeySelect(Index);
 }
 
-void ALegionPlayerController::TriggerSelectedSkills()
+void ALegionPlayerController::SetSelectedLegions(const TArray<ALegionUnit*>& Legions)
 {
-	PruneInvalidSelections();
-	for (const TWeakObjectPtr<ALegionUnit>& Ptr : SelectedLegions)
+	ClearSelection();
+	for (ALegionUnit* L : Legions)
 	{
-		if (ALegionUnit* L = Ptr.Get())
+		if (L && !L->IsWiped() && L->GetTeam() == ELegionTeam::Player && !IsLegionSelected(L))
 		{
-			L->TriggerActiveSkill();
+			L->SetSelected(true);
+			SelectedLegions.Add(L);
 		}
 	}
+}
+
+void ALegionPlayerController::SetLegionsFollowing(const TArray<ALegionUnit*>& Legions, bool bFollow)
+{
+	for (ALegionUnit* L : Legions)
+	{
+		if (!L || L->IsWiped() || L->GetTeam() != ELegionTeam::Player) { continue; }
+		if (bFollow)
+		{
+			if (!IsLegionFollowing(L)) { FollowLegions.Add(L); }
+		}
+		else
+		{
+			StopFollow(L);
+		}
+	}
+	if (bFollow) { FollowTimer = 0.0f; }
+}
+
+void ALegionPlayerController::ComputeSlotsForLegions(const TArray<ALegionUnit*>& Legions, const FVector& Center,
+	const FVector& FacingDir, TArray<FVector>& OutSlots) const
+{
+	ComputeSlotsFor(Legions, Center, FacingDir, OutSlots);
 }
 
 // ---------------- 拾取 ----------------
 
 ALegionUnit* ALegionPlayerController::PickLegion(FHitResult& OutHit) const
 {
+	// 1. 优先命中天空中的敌军部队 Logo (抬头瞄天才能锁定敌军集火, 彻底避免地面移动误触)
+	if (const ALegionHUD* HUD = Cast<ALegionHUD>(MyHUD))
+	{
+		FVector2D AimScreen = FVector2D::ZeroVector;
+		bool bHasAimScreen = false;
+		if (bShowMouseCursor)
+		{
+			float MX = 0.0f, MY = 0.0f;
+			if (GetMousePosition(MX, MY))
+			{
+				AimScreen = FVector2D(MX, MY);
+				bHasAimScreen = true;
+			}
+		}
+		else
+		{
+			int32 SX = 0, SY = 0;
+			GetViewportSize(SX, SY);
+			if (SX > 0 && SY > 0)
+			{
+				AimScreen = FVector2D(SX * 0.5, SY * 0.5);
+				bHasAimScreen = true;
+			}
+		}
+
+		if (bHasAimScreen)
+		{
+			if (ALegionUnit* SkyEnemy = HUD->PickEnemySkyBanner(AimScreen))
+			{
+				return SkyEnemy;
+			}
+		}
+	}
+
+	// 2. 地面射线只拾取我方兵团 (敌军地面 PickBox 已忽略 Visibility, 这里再做一次防误触兜底)
+	ALegionUnit* GroundUnit = nullptr;
 	if (bShowMouseCursor)
 	{
 		if (GetHitResultUnderCursor(ECC_Visibility, false, OutHit))
 		{
-			return Cast<ALegionUnit>(OutHit.GetActor());
+			GroundUnit = Cast<ALegionUnit>(OutHit.GetActor());
 		}
-		return nullptr;
+	}
+	else
+	{
+		FVector Loc;
+		FRotator Rot;
+		GetPlayerViewPoint(Loc, Rot);
+		FCollisionQueryParams Q(SCENE_QUERY_STAT(LegionCrosshairPick), false);
+		Q.AddIgnoredActor(GetPawn());
+		if (GetWorld() && GetWorld()->LineTraceSingleByChannel(OutHit, Loc, Loc + Rot.Vector() * 80000.0f, ECC_Visibility, Q))
+		{
+			GroundUnit = Cast<ALegionUnit>(OutHit.GetActor());
+		}
 	}
 
-	FVector Loc;
-	FRotator Rot;
-	GetPlayerViewPoint(Loc, Rot);
-	FCollisionQueryParams Q(SCENE_QUERY_STAT(LegionCrosshairPick), false);
-	Q.AddIgnoredActor(GetPawn());
-	if (GetWorld() && GetWorld()->LineTraceSingleByChannel(OutHit, Loc, Loc + Rot.Vector() * 80000.0f, ECC_Visibility, Q))
+	if (GroundUnit && GroundUnit->GetTeam() == ELegionTeam::Enemy)
 	{
-		return Cast<ALegionUnit>(OutHit.GetActor());
+		return nullptr;
 	}
-	return nullptr;
+	return GroundUnit;
 }
 
 bool ALegionPlayerController::TraceGroundAim(FVector& OutWorld) const
@@ -424,6 +503,7 @@ void ALegionPlayerController::OnLeftPressed()
 
 	if (bMapOpen)
 	{
+		if (UERAICommandPanel::IsAnyPanelHoveredOrFocused()) { return; }
 		if (!bHasMouse) { return; }
 		bLeftDown = true;
 		bMapDragged = false;
@@ -472,7 +552,7 @@ void ALegionPlayerController::OnLeftReleased()
 
 void ALegionPlayerController::OnMidPressed()
 {
-	if (!bMapOpen) { return; }
+	if (!bMapOpen || UERAICommandPanel::IsAnyPanelHoveredOrFocused()) { return; }
 	bMidDown = true;
 	float MX = 0.0f, MY = 0.0f;
 	if (GetMousePosition(MX, MY)) { MapLastMouse = FVector2D(MX, MY); }
@@ -482,6 +562,7 @@ void ALegionPlayerController::OnRightPressed()
 {
 	if (bMapOpen)
 	{
+		if (UERAICommandPanel::IsAnyPanelHoveredOrFocused()) { return; }
 		float MX = 0.0f, MY = 0.0f;
 		if (GetMousePosition(MX, MY)) { HandleMapClick(FVector2D(MX, MY), true); }
 		return;
@@ -594,12 +675,16 @@ void ALegionPlayerController::SetStrategicMapOpen(bool bOpen)
 		bMidDown = false;
 		if (GM && !GM->IsBattleOver()) { GM->SetTacticalTimeMode(PrevTimeMode); }
 	}
+	if (ALegionHUD* HUD = Cast<ALegionHUD>(MyHUD))
+	{
+		HUD->NotifyStrategicMapOpen(bMapOpen);
+	}
 	ApplyInputMode();
 }
 
 void ALegionPlayerController::OnMapWheel(int32 Dir)
 {
-	if (!bMapOpen) { return; }
+	if (!bMapOpen || UERAICommandPanel::IsAnyPanelHoveredOrFocused()) { return; }
 	float MX = 0.0f, MY = 0.0f;
 	if (GetMousePosition(MX, MY)) { ZoomMapAt(Dir, FVector2D(MX, MY)); }
 }
@@ -680,6 +765,79 @@ void ALegionPlayerController::HandleMapClick(const FVector2D& ScreenPos, bool bR
 void ALegionPlayerController::ERMapSelfTest()
 {
 	RunMapSelfTest(true);
+}
+
+void ALegionPlayerController::ERSkyBannerSelfTest()
+{
+	ALegionGameMode* GM = GetLegionGM(GetWorld());
+	if (!GM || !GetPawn()) { return; }
+	if (bMapOpen) { SetStrategicMapOpen(false); }
+
+	ALegionUnit* P0 = nullptr;
+	ALegionUnit* E0 = nullptr;
+	for (ALegionUnit* L : GM->GetPlayerLegions()) { if (L && !L->IsWiped()) { P0 = L; break; } }
+	for (ALegionUnit* L : GM->GetEnemyLegions())  { if (L && !L->IsWiped()) { E0 = L; break; } }
+	if (!P0 || !E0)
+	{
+		UE_LOG(LogERLegion, Warning, TEXT("[SkyBannerSelfTest] FAIL: missing player or enemy legion"));
+		return;
+	}
+
+	SetSingleSelection(P0);
+	FVector CamLoc;
+	FRotator CamRot;
+	GetPlayerViewPoint(CamLoc, CamRot);
+
+	// 1. 瞄准敌军地面身体: PickLegion 必须返回 nullptr (不会误触)
+	const FRotator GroundAimRot = (E0->GetActorLocation() + FVector(0.0f, 0.0f, 120.0f) - CamLoc).Rotation();
+	SetControlRotation(GroundAimRot);
+
+	TWeakObjectPtr<ALegionPlayerController> WeakPC(this);
+	TWeakObjectPtr<ALegionUnit> WeakP0(P0);
+	TWeakObjectPtr<ALegionUnit> WeakE0(E0);
+
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakPC, WeakP0, WeakE0](float)
+	{
+		ALegionPlayerController* PC = WeakPC.Get();
+		ALegionUnit* P = WeakP0.Get();
+		ALegionUnit* E = WeakE0.Get();
+		if (!PC || !P || !E) { return false; }
+
+		FHitResult Hit;
+		ALegionUnit* GroundPick = PC->PickLegion(Hit);
+		const bool bGroundSafe = (GroundPick != E);
+		UE_LOG(LogERLegion, Log, TEXT("[SkyBannerSelfTest] %s: ground aim does not mis-pick enemy (picked=%s)"),
+			bGroundSafe ? TEXT("PASS") : TEXT("FAIL"), *GetNameSafe(GroundPick));
+
+		// 2. 抬头瞄准敌军天空 Logo: 等待下一帧 HUD 绘制后校验命中并模拟右键集火
+		FVector Loc;
+		FRotator Rot;
+		PC->GetPlayerViewPoint(Loc, Rot);
+		PC->SetControlRotation((E->GetSkyBannerWorldLocation() - Loc).Rotation());
+
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakPC, WeakP0, WeakE0](float)
+		{
+			ALegionPlayerController* PC2 = WeakPC.Get();
+			ALegionUnit* P2 = WeakP0.Get();
+			ALegionUnit* E2 = WeakE0.Get();
+			if (!PC2 || !P2 || !E2) { return false; }
+
+			FHitResult SkyHit;
+			ALegionUnit* SkyPick = PC2->PickLegion(SkyHit);
+			const bool bSkyPicked = (SkyPick == E2);
+			UE_LOG(LogERLegion, Log, TEXT("[SkyBannerSelfTest] %s: look-up sky banner picks enemy (picked=%s)"),
+				bSkyPicked ? TEXT("PASS") : TEXT("FAIL"), *GetNameSafe(SkyPick));
+
+			PC2->OnRightPressed();
+			PC2->OnRightReleased();
+			const bool bOrdered = (P2->GetAttackTarget() == E2);
+			UE_LOG(LogERLegion, Log, TEXT("[SkyBannerSelfTest] %s: right-click on sky banner orders attack"),
+				bOrdered ? TEXT("PASS") : TEXT("FAIL"));
+			E2->RunExactHitSelfTest();
+			return false;
+		}), 0.15f);
+		return false;
+	}), 0.15f);
 }
 
 void ALegionPlayerController::RunMapSelfTest(bool bCloseAtEnd)
@@ -914,6 +1072,7 @@ void ALegionPlayerController::OrderAttack(ALegionUnit* Target)
 
 void ALegionPlayerController::OnKeySelect(int32 Index)
 {
+	if (UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	ALegionGameMode* GM = GetLegionGM(GetWorld());
 	if (!GM) { return; }
 	const TArray<TObjectPtr<ALegionUnit>>& Ls = GM->GetPlayerLegions();
@@ -936,6 +1095,7 @@ void ALegionPlayerController::OnKeySelect(int32 Index)
 
 void ALegionPlayerController::OnKeyX()
 {
+	if (UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	PruneInvalidSelections();
 	for (const TWeakObjectPtr<ALegionUnit>& Ptr : SelectedLegions)
 	{
@@ -949,6 +1109,7 @@ void ALegionPlayerController::OnKeyX()
 
 void ALegionPlayerController::OnKeyG()
 {
+	if (UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	if (ALegionGameMode* GM = GetLegionGM(GetWorld()))
 	{
 		FollowLegions.Reset();
@@ -958,6 +1119,7 @@ void ALegionPlayerController::OnKeyG()
 
 void ALegionPlayerController::OnKeyF()
 {
+	if (UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	ALegionGameMode* GM = GetLegionGM(GetWorld());
 	if (!GM) { return; }
 	PruneInvalidSelections();
@@ -990,6 +1152,7 @@ void ALegionPlayerController::OnKeyF()
 
 void ALegionPlayerController::OnEscape()
 {
+	if (UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	if (bMapOpen)
 	{
 		SetStrategicMapOpen(false);
@@ -998,8 +1161,15 @@ void ALegionPlayerController::OnEscape()
 	ClearSelection();
 }
 
+void ALegionPlayerController::OnKeyMapToggle()
+{
+	if (UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	SetStrategicMapOpen(!bMapOpen);
+}
+
 void ALegionPlayerController::OnKeyRestart()
 {
+	if (UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	if (UWorld* World = GetWorld())
 	{
 		UGameplayStatics::SetGamePaused(this, false);

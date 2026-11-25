@@ -22,6 +22,7 @@
 void ALegionHUD::BeginPlay()
 {
 	Super::BeginPlay();
+	LoadPlaceholderLogos();
 	if (APlayerController* PC = GetOwningPlayerController())
 	{
 		Widget = CreateWidget<ULegionHUDWidget>(PC, ULegionHUDWidget::StaticClass());
@@ -30,6 +31,36 @@ void ALegionHUD::BeginPlay()
 			Widget->AddToViewport(0);
 		}
 	}
+}
+
+void ALegionHUD::LoadPlaceholderLogos()
+{
+	AllyClassLogos.Reset();
+	EnemyClassLogos.Reset();
+	static const ELegionClass Classes[4] = {
+		ELegionClass::Shieldbearer, ELegionClass::Pikeman, ELegionClass::Vanguard, ELegionClass::Marksman
+	};
+	for (ELegionClass Cls : Classes)
+	{
+		if (UTexture2D* AllyTex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetClassLogoAssetPath(Cls, true)))
+		{
+			AllyClassLogos.Add(Cls, AllyTex);
+		}
+		if (UTexture2D* EnemyTex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetClassLogoAssetPath(Cls, false)))
+		{
+			EnemyClassLogos.Add(Cls, EnemyTex);
+		}
+	}
+}
+
+UTexture2D* ALegionHUD::GetClassLogoTexture(ELegionClass Archetype, bool bAlly) const
+{
+	const TMap<ELegionClass, TObjectPtr<UTexture2D>>& Map = bAlly ? AllyClassLogos : EnemyClassLogos;
+	if (const TObjectPtr<UTexture2D>* Found = Map.Find(Archetype))
+	{
+		return Found->Get();
+	}
+	return nullptr;
 }
 
 void ALegionHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -55,9 +86,12 @@ void ALegionHUD::DrawHUD()
 	// 等高线地图视角: 全屏地图接管整个画面
 	if (PC->IsStrategicMapOpen())
 	{
+		EnemySkyBannerEntries.Reset();
 		DrawStrategicMap(GM, PC);
 		return;
 	}
+
+	EnemySkyBannerEntries.Reset();
 
 	// 1. 远程齐射弹道 / 技能冲击线
 	for (const FLegionTracerBeam& B : GM->GetTracerBeams())
@@ -108,7 +142,7 @@ void ALegionHUD::DrawHUD()
 	// 3.5 我方兵团的命令反馈: 地面路线 / 终点环 / 朝向箭头 / 集火连线
 	DrawOrderOverlays(GM, PC);
 
-	// 4. 双方兵团屏幕投影战术旗标 (解决大地形拉远看不清单位的问题)
+	// 4. 我方兵团地面战术旗标 + 敌方兵团直插天空部队 Logo (按距离由远到近绘制, 近处优先叠层)
 	for (ALegionUnit* L : GM->GetPlayerLegions())
 	{
 		if (L && !L->IsWiped())
@@ -116,12 +150,38 @@ void ALegionHUD::DrawHUD()
 			DrawUnitBadge(L, PC->IsLegionSelected(L));
 		}
 	}
+
+	// 收集当前我方已下达集火的敌方目标集合 (用于在天空 Logo 上亮起集火锁定标记)
+	TSet<const ALegionUnit*> FocusedEnemies;
+	const bool bHasSelected = PC->GetSelectedLegions().Num() > 0;
+	for (ALegionUnit* Ally : GM->GetPlayerLegions())
+	{
+		if (!Ally || Ally->IsWiped()) { continue; }
+		if (bHasSelected && !PC->IsLegionSelected(Ally)) { continue; }
+		if (const ALegionUnit* Tgt = Ally->GetAttackTarget())
+		{
+			if (!Tgt->IsWiped()) { FocusedEnemies.Add(Tgt); }
+		}
+	}
+
+	FVector CamLoc = FVector::ZeroVector;
+	FRotator CamRot = FRotator::ZeroRotator;
+	PC->GetPlayerViewPoint(CamLoc, CamRot);
+
+	TArray<ALegionUnit*> SortedEnemies;
 	for (ALegionUnit* L : GM->GetEnemyLegions())
 	{
-		if (L && !L->IsWiped())
-		{
-			DrawUnitBadge(L, false);
-		}
+		if (L && !L->IsWiped()) { SortedEnemies.Add(L); }
+	}
+	SortedEnemies.Sort([&CamLoc](const ALegionUnit& A, const ALegionUnit& B)
+	{
+		return FVector::DistSquared(A.GetSkyBannerWorldLocation(), CamLoc)
+			> FVector::DistSquared(B.GetSkyBannerWorldLocation(), CamLoc);
+	});
+	for (ALegionUnit* L : SortedEnemies)
+	{
+		DrawUnitBadge(L, false);
+		DrawEnemySkyBanner(L, PC, PC->GetAimedLegion() == L, FocusedEnemies.Contains(L));
 	}
 
 	// 5. 左键框选矩形
@@ -245,8 +305,44 @@ void ALegionHUD::DrawCrosshair(ALegionPlayerController* PC)
 
 	if (Aim && !Aim->IsWiped())
 	{
-		const FString Label = FString::Printf(TEXT("%s  %d/%d"), *Aim->GetCallsign(), Aim->GetAliveCount(), Aim->GetSoldierCount());
-		DrawText(Label, Col, CX - 70.0f, CY + 28.0f, nullptr, 0.9f, false);
+		const bool bEnemy = Aim->GetTeam() == ELegionTeam::Enemy;
+		UFont* Font = GEngine ? GEngine->GetSmallFont() : nullptr;
+
+		if (bEnemy)
+		{
+			// 瞄准天空 Logo 时把提示放在铭牌下方并配暗曜石底衬, 不与 Logo / 番号文字重叠
+			float BannerBotY = CY + 62.0f;
+			if (GetEnemySkyBannerBottomY(Aim, BannerBotY))
+			{
+				BannerBotY = FMath::Max(BannerBotY + 12.0f, CY + 54.0f);
+			}
+
+			const bool bHasSel = PC->GetSelectedLegions().Num() > 0;
+			const FString Hint = bHasSel
+				? FString::Printf(TEXT("右键 · 集火  %s"), *Aim->GetCallsign())
+				: FString::Printf(TEXT("%s  ·  先选中我方部队"), *Aim->GetCallsign());
+			float HW = 0.0f, HH = 0.0f;
+			Canvas->TextSize(Font, Hint, HW, HH, 1.0f, 1.0f);
+
+			const float PadX = 10.0f;
+			const float PadY = 4.0f;
+			const float PillW = HW + PadX * 2.0f + 4.0f;
+			const float PillH = HH + PadY * 2.0f;
+			const float PillX = CX - PillW * 0.5f;
+			const float PillY = BannerBotY;
+			const FLinearColor BarCol = bHasSel ? FLinearColor(1.0f, 0.28f, 0.16f, 1.0f) : T->BoneSecondary;
+
+			DrawRect(FLinearColor(0.012f, 0.014f, 0.020f, 0.88f), PillX, PillY, PillW, PillH);
+			DrawRect(BarCol, PillX, PillY, 4.0f, PillH);
+			DrawText(Hint, bHasSel ? T->Bone : T->BoneSecondary, PillX + 4.0f + PadX, PillY + PadY, Font, 1.0f, false);
+		}
+		else
+		{
+			const FString Label = FString::Printf(TEXT("%s  %d/%d"), *Aim->GetCallsign(), Aim->GetAliveCount(), Aim->GetSoldierCount());
+			float TW = 0.0f, TH = 0.0f;
+			Canvas->TextSize(Font, Label, TW, TH, 1.0f, 1.0f);
+			DrawText(Label, Col, CX - TW * 0.5f, CY + 26.0f, Font, 1.0f, false);
+		}
 	}
 }
 
@@ -348,13 +444,22 @@ void ALegionHUD::DrawMinimap(ALegionGameMode* GM, ALegionPlayerController* PC)
 
 }
 
+void ALegionHUD::NotifyStrategicMapOpen(bool bMapOpen)
+{
+	if (Widget)
+	{
+		Widget->SetStrategicMapMode(bMapOpen);
+	}
+}
+
 FBox2D ALegionHUD::GetMapReturnButtonRect(int32 ViewportSizeX, int32 ViewportSizeY)
 {
 	const float Scale = FMath::Max(0.75f, (float)ViewportSizeY / 1080.0f);
-	const float W = 240.0f * Scale;
-	const float H = 44.0f * Scale;
-	const float X = (float)ViewportSizeX * 0.5f - W * 0.5f;
-	const float Y = 18.0f * Scale;
+	const float MarginX = 48.0f * Scale;
+	const float W = 224.0f * Scale;
+	const float H = 48.0f * Scale;
+	const float X = (float)ViewportSizeX - MarginX - W;
+	const float Y = 34.0f * Scale;
 	return FBox2D(FVector2D(X, Y), FVector2D(X + W, Y + H));
 }
 
@@ -378,6 +483,51 @@ bool ALegionHUD::GetStrategicBadgeCenter(const ALegionUnit* Unit, FVector2D& Out
 		if (B.Unit.Get() == Unit)
 		{
 			OutCenter = B.Rect.GetCenter();
+			return true;
+		}
+	}
+	return false;
+}
+
+ALegionUnit* ALegionHUD::PickEnemySkyBanner(const FVector2D& ScreenPos) const
+{
+	ALegionUnit* Best = nullptr;
+	double BestDistSq = MAX_dbl;
+	for (const FEnemySkyBannerEntry& E : EnemySkyBannerEntries)
+	{
+		ALegionUnit* U = E.Unit.Get();
+		if (!U || U->IsWiped()) { continue; }
+		if (!E.HitRect.IsInside(ScreenPos)) { continue; }
+		const double D2 = FVector2D::DistSquared(ScreenPos, E.Center);
+		if (D2 < BestDistSq)
+		{
+			BestDistSq = D2;
+			Best = U;
+		}
+	}
+	return Best;
+}
+
+bool ALegionHUD::GetEnemySkyBannerScreenCenter(const ALegionUnit* Unit, FVector2D& OutCenter) const
+{
+	for (const FEnemySkyBannerEntry& E : EnemySkyBannerEntries)
+	{
+		if (E.Unit.Get() == Unit)
+		{
+			OutCenter = E.Center;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool ALegionHUD::GetEnemySkyBannerBottomY(const ALegionUnit* Unit, float& OutBottomY) const
+{
+	for (const FEnemySkyBannerEntry& E : EnemySkyBannerEntries)
+	{
+		if (E.Unit.Get() == Unit)
+		{
+			OutBottomY = (float)E.HitRect.Max.Y - 16.0f;
 			return true;
 		}
 	}
@@ -580,98 +730,321 @@ void ALegionHUD::DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* 
 					DrawArrowHead(Last, Tip, C, bSel ? 11.0f : 8.0f, Th + 0.6f);
 				}
 
-				FString Tag = ERGalacticMeta::GetClassCode(L->GetArchetype());
+				const FString& Tag = L->GetCallsign();
 				DrawText(Tag, C, Last.X + R + 4.0f, Last.Y - 18.0f, Font, 0.85f, false);
 			}
 		}
 	}
 
-	// 番号牌 (敌方先画, 我方后画上叠层; 选中金框; 重叠时错开并引回真实位置)
-	TArray<FBox2D> PlacedRects;
-	const FBox2D Viewport(FVector2D(4.0f, 72.0f), FVector2D((float)SX - 4.0f, (float)SY - 4.0f));
-	auto DrawBadge = [&](ALegionUnit* L)
+	// 番号牌: 大号 Logo + 两行紧凑卡片 + 聚类外扩/迭代排斥防碰撞 + 边缘精准引线
 	{
-		FVector2D Center;
-		if (!ToScreen(L->GetActorLocation(), Center) || !OnScreen(Center, 60.0f)) { return; }
-
-		const bool bAlly = (L->GetTeam() == ELegionTeam::Player);
-		const bool bSel = PC->IsLegionSelected(L);
-		const FLinearColor MarkCol = bSel ? T->Accent : (bAlly ? T->AllyMark : T->EnemyMark);
-
-		FString Call = L->GetCallsign();
-		int32 Sep = INDEX_NONE;
-		if (Call.FindChar(TEXT('/'), Sep)) { Call = Call.Left(Sep).TrimStartAndEnd(); }
-		if (Call.IsEmpty()) { Call = ERGalacticMeta::GetClassCode(L->GetArchetype()); }
-
-		FString Label = FString::Printf(TEXT("%s · %s · %d 兵"),
-			*ERGalacticMeta::GetClassCode(L->GetArchetype()), *Call, L->GetAliveCount());
-		if (bAlly && PC->IsLegionFollowing(L)) { Label += TEXT(" · 跟随中"); }
-
-		float TW = 0.0f, TH = 0.0f;
-		Canvas->TextSize(Font, Label, TW, TH, 1.3f, 1.3f);
-
-		const float BarW = 4.0f, PadX = 10.0f, PadY = 6.0f;
-		const FVector2D BSize(BarW + PadX * 2.0f + TW, PadY * 2.0f + TH);
-		const float StepX = BSize.X + 8.0f;
-		const float StepY = BSize.Y + 5.0f;
-
-		// 候选错开位 (原位 -> 上下 -> 更远 + 左右), 取第一个不与已放置牌碰撞的位置
-		const FVector2D Offsets[] = {
-			FVector2D(0.0f, 0.0f),
-			FVector2D(0.0f, -StepY), FVector2D(0.0f, StepY),
-			FVector2D(0.0f, -2.0f * StepY), FVector2D(0.0f, 2.0f * StepY),
-			FVector2D(-StepX, 0.0f), FVector2D(StepX, 0.0f),
-			FVector2D(-StepX, -StepY), FVector2D(StepX, -StepY),
-			FVector2D(-StepX, StepY), FVector2D(StepX, StepY),
+		struct FMapBadgeItem
+		{
+			ALegionUnit* Unit = nullptr;
+			bool bAlly = false;
+			bool bSel = false;
+			FLinearColor MarkCol = FLinearColor::White;
+			FString Name;
+			FString Sub;
+			FVector2D Anchor = FVector2D::ZeroVector;
+			FVector2D Pos = FVector2D::ZeroVector; // 卡片中心
+			FVector2D Size = FVector2D::ZeroVector;
+			float IconSz = 36.0f;
+			float NameH = 0.0f;
+			float SubH = 0.0f;
 		};
-		FBox2D Chosen(ForceInit);
-		for (const FVector2D& Off : Offsets)
+
+		TArray<FMapBadgeItem> Items;
+		auto CollectUnit = [&](ALegionUnit* L)
 		{
-			FVector2D BMin = Center + Off - BSize * 0.5f;
-			BMin.X = FMath::Clamp(BMin.X, Viewport.Min.X, FMath::Max(Viewport.Min.X, Viewport.Max.X - BSize.X));
-			BMin.Y = FMath::Clamp(BMin.Y, Viewport.Min.Y, FMath::Max(Viewport.Min.Y, Viewport.Max.Y - BSize.Y));
-			const FBox2D Cand(BMin, BMin + BSize);
-			bool bHit = false;
-			for (const FBox2D& R : PlacedRects)
+			if (!L || L->IsWiped()) { return; }
+			FVector2D Center;
+			if (!ToScreen(L->GetActorLocation(), Center) || !OnScreen(Center, 80.0f)) { return; }
+
+			FMapBadgeItem It;
+			It.Unit = L;
+			It.bAlly = (L->GetTeam() == ELegionTeam::Player);
+			It.bSel = PC->IsLegionSelected(L);
+			It.MarkCol = It.bSel ? T->Accent : (It.bAlly ? T->AllyMark : T->EnemyMark);
+			It.Name = L->GetCallsign();
+			if (It.Name.IsEmpty())
 			{
-				if (Cand.Intersect(R)) { bHit = true; break; }
+				It.Name = It.bAlly ? ERGalacticMeta::GetBrigadeName(1) : ERGalacticMeta::GetEnemyBrigadeName(1);
 			}
-			if (!bHit) { Chosen = Cand; break; }
-		}
-		if (!Chosen.bIsValid)
+			It.Sub = FString::Printf(TEXT("%d / %d 兵"), L->GetAliveCount(), L->GetSoldierCount());
+			if (It.bAlly && PC->IsLegionFollowing(L)) { It.Sub += TEXT(" · 跟随"); }
+
+			It.IconSz = It.bSel ? 42.0f : 38.0f;
+			float NameW = 0.0f, SubW = 0.0f;
+			Canvas->TextSize(Font, It.Name, NameW, It.NameH, 1.32f, 1.32f);
+			Canvas->TextSize(Font, It.Sub, SubW, It.SubH, 1.02f, 1.02f);
+
+			constexpr float BarW = 4.0f;
+			constexpr float PadX = 9.0f;
+			constexpr float PadY = 7.0f;
+			constexpr float IconGap = 9.0f;
+			const float TextColW = FMath::Max(NameW, SubW);
+			const float TextColH = It.NameH + It.SubH + 7.0f;
+			const float W = BarW + PadX + (It.IconSz + 4.0f) + IconGap + TextColW + PadX;
+			const float H = FMath::Max(It.IconSz + PadY * 2.0f + 4.0f, TextColH + PadY * 2.0f + 4.0f);
+
+			It.Anchor = Center;
+			It.Pos = Center;
+			It.Size = FVector2D(W, H);
+			Items.Add(MoveTemp(It));
+		};
+
+		for (ALegionUnit* E : GM->GetEnemyLegions()) { CollectUnit(E); }
+		for (ALegionUnit* P : GM->GetPlayerLegions())
 		{
-			const FVector2D BMin = Center - BSize * 0.5f;
-			Chosen = FBox2D(BMin, BMin + BSize);
+			if (P && !PC->IsLegionSelected(P)) { CollectUnit(P); }
 		}
-		PlacedRects.Add(Chosen);
-
-		const FVector2D BCenter = Chosen.GetCenter();
-		DrawRect(MarkCol, Center.X - 3.0f, Center.Y - 3.0f, 6.0f, 6.0f);
-		if ((BCenter - Center).Size() > 6.0f)
+		for (ALegionUnit* P : GM->GetPlayerLegions())
 		{
-			FLinearColor LeadCol = MarkCol;
-			LeadCol.A = 0.5f;
-			DrawLine(BCenter.X, BCenter.Y, Center.X, Center.Y, LeadCol, 1.0f);
+			if (P && PC->IsLegionSelected(P)) { CollectUnit(P); }
 		}
 
-		const FVector2D Sz = Chosen.GetSize();
-		DrawBonePlate(Chosen.Min.X, Chosen.Min.Y, Sz.X, Sz.Y, MarkCol, false, bSel, false);
-		DrawText(Label, ERUI::InkText(bAlly ? 1.0f : 0.78f),
-			Chosen.Min.X + BarW + PadX, Chosen.Min.Y + PadY - 1.0f, Font, 1.3f, false);
+		// 安全排布区 & 固定 UI 禁区 (避开左上标题、左下兵力卡、右上返回按钮与缩放读数)
+		const float Scale = FMath::Max(0.75f, (float)SY / 1080.0f);
+		const FBox2D SafeRect(FVector2D(16.0f, 16.0f), FVector2D((float)SX - 16.0f, (float)SY - 16.0f));
+		const FBox2D RetRect = GetMapReturnButtonRect(SX, SY);
+		const FBox2D Exclusions[] = {
+			FBox2D(FVector2D(RetRect.Min.X - 40.0f, RetRect.Min.Y - 12.0f), FVector2D(RetRect.Max.X + 16.0f, RetRect.Max.Y + 42.0f * Scale)),
+			FBox2D(FVector2D(0.0f, 0.0f), FVector2D(360.0f * Scale, 170.0f * Scale)),
+			FBox2D(FVector2D(0.0f, (float)SY - 150.0f * Scale), FVector2D(310.0f * Scale, (float)SY)),
+		};
 
-		StrategicBadgeRects.Add({ L, Chosen });
-	};
+		auto ClampPos = [&](FMapBadgeItem& It)
+		{
+			const FVector2D Half = It.Size * 0.5f;
+			It.Pos.X = FMath::Clamp(It.Pos.X, SafeRect.Min.X + Half.X, FMath::Max(SafeRect.Min.X + Half.X, SafeRect.Max.X - Half.X));
+			It.Pos.Y = FMath::Clamp(It.Pos.Y, SafeRect.Min.Y + Half.Y, FMath::Max(SafeRect.Min.Y + Half.Y, SafeRect.Max.Y - Half.Y));
+		};
 
-	for (ALegionUnit* E : GM->GetEnemyLegions())
-	{
-		if (E && !E->IsWiped()) { DrawBadge(E); }
+		// 1. 聚类径向初散: 扎堆兵团先沿相对质心向外轻推, 减少引线交叉
+		const int32 N = Items.Num();
+		for (int32 i = 0; i < N; ++i)
+		{
+			FVector2D ClusterSum = FVector2D::ZeroVector;
+			int32 ClusterCnt = 0;
+			for (int32 j = 0; j < N; ++j)
+			{
+				if (FVector2D::DistSquared(Items[i].Anchor, Items[j].Anchor) < 180.0 * 180.0)
+				{
+					ClusterSum += Items[j].Anchor;
+					++ClusterCnt;
+				}
+			}
+			if (ClusterCnt > 1)
+			{
+				const FVector2D Centroid = ClusterSum / (double)ClusterCnt;
+				FVector2D Out = Items[i].Anchor - Centroid;
+				if (Out.SizeSquared() < 4.0)
+				{
+					const float Ang = (float)i * 2.39996f;
+					Out = FVector2D(FMath::Cos(Ang), FMath::Sin(Ang));
+				}
+				else
+				{
+					Out.Normalize();
+				}
+				Items[i].Pos = Items[i].Anchor + Out * 22.0f;
+				ClampPos(Items[i]);
+			}
+		}
+
+		// 2. 迭代 AABB 排斥松弛 + 柔和回拉弹簧 (保证高密度集群自动优雅散开、零重叠)
+		constexpr float GapX = 12.0f;
+		constexpr float GapY = 10.0f;
+		constexpr int32 TotalIters = 28;
+		for (int32 Iter = 0; Iter < TotalIters; ++Iter)
+		{
+			for (int32 i = 0; i < N; ++i)
+			{
+				for (int32 j = i + 1; j < N; ++j)
+				{
+					const double SumW = (Items[i].Size.X + Items[j].Size.X) * 0.5 + GapX;
+					const double SumH = (Items[i].Size.Y + Items[j].Size.Y) * 0.5 + GapY;
+					const double DX = Items[j].Pos.X - Items[i].Pos.X;
+					const double DY = Items[j].Pos.Y - Items[i].Pos.Y;
+					const double PenX = SumW - FMath::Abs(DX);
+					const double PenY = SumH - FMath::Abs(DY);
+					if (PenX > 0.0 && PenY > 0.0)
+					{
+						// 优先沿穿透更浅的轴分开 (轻微偏好水平/垂直自然扇开)
+						if (PenX < PenY * 1.15)
+						{
+							double Sgn = (FMath::Abs(DX) > 0.5) ? (DX > 0.0 ? 1.0 : -1.0)
+								: ((Items[j].Anchor.X >= Items[i].Anchor.X) ? 1.0 : -1.0);
+							const double Push = PenX * 0.52;
+							Items[i].Pos.X -= Sgn * Push;
+							Items[j].Pos.X += Sgn * Push;
+						}
+						else
+						{
+							double Sgn = (FMath::Abs(DY) > 0.5) ? (DY > 0.0 ? 1.0 : -1.0)
+								: ((Items[j].Anchor.Y >= Items[i].Anchor.Y) ? 1.0 : -1.0);
+							const double Push = PenY * 0.52;
+							Items[i].Pos.Y -= Sgn * Push;
+							Items[j].Pos.Y += Sgn * Push;
+						}
+					}
+				}
+			}
+
+			// 避开固定 UI 禁区 + 前段柔和拉回锚点
+			const double Spring = (Iter < 18) ? 0.07 : 0.0;
+			for (int32 i = 0; i < N; ++i)
+			{
+				if (Spring > 0.0)
+				{
+					Items[i].Pos = FMath::Lerp(Items[i].Pos, Items[i].Anchor, Spring);
+				}
+				const FVector2D Half = Items[i].Size * 0.5f;
+				for (const FBox2D& Ex : Exclusions)
+				{
+					const FVector2D ExC = Ex.GetCenter();
+					const FVector2D ExH = Ex.GetExtent();
+					const double DX = Items[i].Pos.X - ExC.X;
+					const double DY = Items[i].Pos.Y - ExC.Y;
+					const double PenX = (Half.X + ExH.X + 8.0) - FMath::Abs(DX);
+					const double PenY = (Half.Y + ExH.Y + 8.0) - FMath::Abs(DY);
+					if (PenX > 0.0 && PenY > 0.0)
+					{
+						if (PenX < PenY) { Items[i].Pos.X += (DX >= 0.0 ? 1.0 : -1.0) * PenX; }
+						else             { Items[i].Pos.Y += (DY >= 0.0 ? 1.0 : -1.0) * PenY; }
+					}
+				}
+				ClampPos(Items[i]);
+			}
+		}
+
+		// 3. 零重叠硬兜底: 若极端密集仍有残余重叠, 按螺旋环寻找最近无碰撞空位
+		TArray<FBox2D> FinalRects;
+		FinalRects.Reserve(N);
+		for (int32 i = 0; i < N; ++i)
+		{
+			auto MakeRect = [&](const FVector2D& CenterPos) -> FBox2D
+			{
+				return FBox2D(CenterPos - Items[i].Size * 0.5f, CenterPos + Items[i].Size * 0.5f);
+			};
+			auto HasCollision = [&](const FBox2D& R) -> bool
+			{
+				const FBox2D PadR(R.Min - FVector2D(4.0, 4.0), R.Max + FVector2D(4.0, 4.0));
+				for (const FBox2D& Prev : FinalRects)
+				{
+					if (PadR.Intersect(Prev)) { return true; }
+				}
+				for (const FBox2D& Ex : Exclusions)
+				{
+					if (PadR.Intersect(Ex)) { return true; }
+				}
+				return false;
+			};
+
+			FBox2D Chosen = MakeRect(Items[i].Pos);
+			if (HasCollision(Chosen))
+			{
+				const FVector2D BaseDir = (Items[i].Pos - Items[i].Anchor).GetSafeNormal();
+				const float BaseAng = BaseDir.IsNearlyZero() ? 0.0f : FMath::Atan2((float)BaseDir.Y, (float)BaseDir.X);
+				bool bFound = false;
+				for (float Rad = 30.0f; Rad <= 390.0f && !bFound; Rad += 28.0f)
+				{
+					for (int32 a = 0; a < 24; ++a)
+					{
+						const float Ang = BaseAng + ((float)a / 24.0f) * 2.0f * PI;
+						FMapBadgeItem Probe = Items[i];
+						Probe.Pos = Items[i].Anchor + FVector2D(FMath::Cos(Ang) * Rad, FMath::Sin(Ang) * Rad);
+						ClampPos(Probe);
+						const FBox2D Cand = MakeRect(Probe.Pos);
+						if (!HasCollision(Cand))
+						{
+							Items[i].Pos = Probe.Pos;
+							Chosen = Cand;
+							bFound = true;
+							break;
+						}
+					}
+				}
+			}
+			FinalRects.Add(Chosen);
+		}
+
+		// 4. 分层绘制: 先画真实地图锚点 + 贴边引导线, 最后叠画所有大号 Logo 番号卡
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FMapBadgeItem& It = Items[i];
+			const FBox2D& Rect = FinalRects[i];
+
+			// 真实部队锚点 (黑边彩心方块; 选中加外框)
+			if (It.bSel)
+			{
+				DrawRect(It.MarkCol, It.Anchor.X - 6.0f, It.Anchor.Y - 6.0f, 12.0f, 12.0f);
+			}
+			DrawRect(FLinearColor::Black, It.Anchor.X - 4.5f, It.Anchor.Y - 4.5f, 9.0f, 9.0f);
+			DrawRect(It.MarkCol, It.Anchor.X - 3.5f, It.Anchor.Y - 3.5f, 7.0f, 7.0f);
+
+			// 引线从锚点连至卡片最近边缘点 (绝不穿过卡片内部)
+			if (!Rect.IsInside(It.Anchor))
+			{
+				const FVector2D EdgePt(
+					FMath::Clamp(It.Anchor.X, Rect.Min.X, Rect.Max.X),
+					FMath::Clamp(It.Anchor.Y, Rect.Min.Y, Rect.Max.Y));
+				if (FVector2D::DistSquared(EdgePt, It.Anchor) > 16.0)
+				{
+					FLinearColor LeadShadow(0.01f, 0.01f, 0.02f, 0.72f);
+					DrawLine(EdgePt.X, EdgePt.Y, It.Anchor.X, It.Anchor.Y, LeadShadow, 3.2f);
+					FLinearColor LeadCol = It.MarkCol;
+					LeadCol.A = It.bSel ? 0.95f : 0.78f;
+					DrawLine(EdgePt.X, EdgePt.Y, It.Anchor.X, It.Anchor.Y, LeadCol, It.bSel ? 1.8f : 1.3f);
+				}
+			}
+		}
+
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FMapBadgeItem& It = Items[i];
+			const FBox2D& Rect = FinalRects[i];
+			const FVector2D Sz = Rect.GetSize();
+
+			constexpr float BarW = 4.0f;
+			constexpr float PadX = 9.0f;
+			constexpr float IconGap = 9.0f;
+
+			DrawBonePlate(Rect.Min.X, Rect.Min.Y, Sz.X, Sz.Y, It.MarkCol, false, It.bSel, false);
+
+			// 大号部队 Logo (暗曜石内框 + 技能图标占位)
+			const float IX = Rect.Min.X + BarW + PadX + 2.0f;
+			const float IY = Rect.Min.Y + (Sz.Y - It.IconSz) * 0.5f;
+			DrawRect(FLinearColor(0.012f, 0.013f, 0.018f, 0.94f), IX - 2.0f, IY - 2.0f, It.IconSz + 4.0f, It.IconSz + 4.0f);
+			if (UTexture2D* LogoTex = GetClassLogoTexture(It.Unit->GetArchetype(), It.bAlly))
+			{
+				if (LogoTex->GetResource())
+				{
+					FCanvasTileItem Tile(FVector2D(IX, IY), LogoTex->GetResource(), FVector2D(It.IconSz, It.IconSz), FLinearColor::White);
+					Tile.BlendMode = SE_BLEND_Translucent;
+					Canvas->DrawItem(Tile);
+				}
+			}
+
+			// 右侧两行: 部队名称 + 兵员数量 + 贴底细血条
+			const float TextX = IX + It.IconSz + 2.0f + IconGap;
+			const float TextBlockH = It.NameH + It.SubH + 3.0f;
+			const float TextTopY = Rect.Min.Y + (Sz.Y - 5.0f - TextBlockH) * 0.5f;
+			DrawText(It.Name, ERUI::InkText(It.bAlly ? 1.0f : 0.88f), TextX, TextTopY, Font, 1.32f, false);
+			DrawText(It.Sub, ERUI::InkText(0.68f), TextX, TextTopY + It.NameH + 3.0f, Font, 1.02f, false);
+
+			const float HPRatio = FMath::Clamp(It.Unit->GetLegionHP() / FMath::Max(1.0f, It.Unit->GetLegionMaxHP()), 0.0f, 1.0f);
+			const float BarX = TextX;
+			const float BarWMax = FMath::Max(16.0f, Rect.Max.X - PadX - BarX);
+			DrawRect(FLinearColor(0.02f, 0.02f, 0.03f, 0.22f), BarX, Rect.Max.Y - 6.0f, BarWMax, 3.0f);
+			DrawRect(It.MarkCol, BarX, Rect.Max.Y - 6.0f, BarWMax * HPRatio, 3.0f);
+
+			StrategicBadgeRects.Add({ It.Unit, Rect });
+		}
 	}
-	for (ALegionUnit* P : GM->GetPlayerLegions())
-	{
-		if (P && !P->IsWiped()) { DrawBadge(P); }
-	}
 
-	// 顶部「返回战场」按钮 + 缩放读数
+	// 右上角「返回战场」按钮 + 缩放读数 (右对齐, 彻底让出地图顶部中央视野)
 	{
 		const FBox2D BR = GetMapReturnButtonRect(SX, SY);
 		float MX = 0.0f, MY = 0.0f;
@@ -691,7 +1064,7 @@ void ALegionHUD::DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* 
 			bPaused ? TEXT("战场已暂停 · 命令在返回战场后执行") : TEXT("兵团正在执行命令"));
 		float ZW = 0.0f, ZH = 0.0f;
 		Canvas->TextSize(Font, ZoomTxt, ZW, ZH, 1.05f, 1.05f);
-		DrawText(ZoomTxt, T->BoneSecondary, (float)SX * 0.5f - ZW * 0.5f, BR.Max.Y + 6.0f, Font, 1.05f, false);
+		DrawText(ZoomTxt, T->BoneSecondary, BR.Max.X - ZW, BR.Max.Y + 8.0f, Font, 1.05f, false);
 	}
 }
 
@@ -728,6 +1101,219 @@ void ALegionHUD::DrawProjectedLine(const FVector& A, const FVector& B, const FLi
 	const FVector PB = Canvas->Project(B, false);
 	if (PA.Z <= 0.0f || PB.Z <= 0.0f) { return; }
 	DrawLine(PA.X, PA.Y, PB.X, PB.Y, Color, Thickness);
+}
+
+void ALegionHUD::DrawClippedWorldLine(const FVector& A, const FVector& B, const FLinearColor& Color, float Thickness)
+{
+	APlayerController* PC = GetOwningPlayerController();
+	if (!PC || !Canvas) { return; }
+
+	FVector CamLoc;
+	FRotator CamRot;
+	PC->GetPlayerViewPoint(CamLoc, CamRot);
+	const FVector CamFwd = CamRot.Vector();
+
+	constexpr float NearDist = 30.0f;
+	const float DepthA = FVector::DotProduct(A - CamLoc, CamFwd);
+	const float DepthB = FVector::DotProduct(B - CamLoc, CamFwd);
+	if (DepthA < NearDist && DepthB < NearDist) { return; }
+
+	FVector CA = A;
+	FVector CB = B;
+	if (DepthA < NearDist)
+	{
+		const float Alpha = (NearDist - DepthA) / FMath::Max(KINDA_SMALL_NUMBER, DepthB - DepthA);
+		CA = FMath::Lerp(A, B, Alpha);
+	}
+	else if (DepthB < NearDist)
+	{
+		const float Alpha = (NearDist - DepthB) / FMath::Max(KINDA_SMALL_NUMBER, DepthA - DepthB);
+		CB = FMath::Lerp(B, A, Alpha);
+	}
+
+	const FVector PA = Canvas->Project(CA, false);
+	const FVector PB = Canvas->Project(CB, false);
+	if (PA.Z <= 0.0f || PB.Z <= 0.0f) { return; }
+	DrawLine(PA.X, PA.Y, PB.X, PB.Y, Color, Thickness);
+}
+
+void ALegionHUD::DrawEnemySkyBanner(ALegionUnit* Unit, ALegionPlayerController* PC, bool bHovered, bool bFocusedTarget)
+{
+	if (!Canvas || !Unit || !PC || Unit->IsWiped()) { return; }
+
+	const UERUITheme* T = ERUI::Theme();
+	UFont* Font = GEngine ? GEngine->GetSmallFont() : nullptr;
+
+	FVector CamLoc = FVector::ZeroVector;
+	FRotator CamRot = FRotator::ZeroRotator;
+	PC->GetPlayerViewPoint(CamLoc, CamRot);
+
+	const FVector BaseWorld = Unit->GetActorLocation() + FVector(0.0f, 0.0f, 45.0f);
+	const FVector SkyWorld = Unit->GetSkyBannerWorldLocation();
+	const FVector ZenithWorld = SkyWorld + FVector(0.0f, 0.0f, 2400.0f);
+
+	const FLinearColor AccentCol = bHovered
+		? FLinearColor(1.0f, 0.28f, 0.16f, 1.0f)
+		: (bFocusedTarget ? FLinearColor(0.98f, 0.22f, 0.14f, 1.0f) : T->EnemyMark);
+	const FLinearColor CoreCol = bHovered
+		? FLinearColor(1.0f, 0.88f, 0.78f, 1.0f)
+		: FLinearColor(0.98f, 0.42f, 0.34f, 1.0f);
+
+	// 1. 直插天空的连续通天立柱竖线 (整段近平面裁剪, 绝对平滑无分段断口)
+	{
+		const float Boost = bHovered ? 1.25f : (bFocusedTarget ? 1.12f : 1.0f);
+		const FVector MidWorld = FMath::Lerp(BaseWorld, SkyWorld, 0.52f);
+
+		// 柔和外光晕 (整段 + 上半段叠亮)
+		FLinearColor GlowLow = AccentCol;
+		GlowLow.A = FMath::Clamp(0.20f * Boost, 0.0f, 0.55f);
+		DrawClippedWorldLine(BaseWorld, SkyWorld, GlowLow, bHovered ? 7.0f : 4.6f);
+
+		FLinearColor GlowHigh = AccentCol;
+		GlowHigh.A = FMath::Clamp(0.18f * Boost, 0.0f, 0.50f);
+		DrawClippedWorldLine(MidWorld, SkyWorld, GlowHigh, bHovered ? 5.0f : 3.2f);
+
+		// 锐利主芯线 (整段连续, 零断缝)
+		FLinearColor CoreMain = CoreCol;
+		CoreMain.A = FMath::Clamp(0.82f * Boost, 0.0f, 1.0f);
+		DrawClippedWorldLine(BaseWorld, SkyWorld, CoreMain, bHovered ? 2.4f : 1.6f);
+
+		// Logo 上方继续向天穹延伸的细尖峰线 ("直插天空" 的庄严纵深感)
+		const FVector SpireMid = FMath::Lerp(SkyWorld, ZenithWorld, 0.45f);
+		FLinearColor SpireLow = CoreCol;
+		SpireLow.A = bHovered ? 0.65f : 0.40f;
+		DrawClippedWorldLine(SkyWorld, SpireMid, SpireLow, bHovered ? 1.6f : 1.15f);
+
+		FLinearColor SpireTip = CoreCol;
+		SpireTip.A = bHovered ? 0.25f : 0.14f;
+		DrawClippedWorldLine(SpireMid, ZenithWorld, SpireTip, 1.0f);
+	}
+
+	// 地面起点的极简菱形锚点 (无文字、不挡视线, 仅标明立柱源自哪支敌团)
+	{
+		const FVector PBase = Canvas->Project(BaseWorld, false);
+		if (PBase.Z > 0.0f && PBase.X >= -40.0f && PBase.X <= Canvas->SizeX + 40.0f
+			&& PBase.Y >= -40.0f && PBase.Y <= Canvas->SizeY + 40.0f)
+		{
+			const float R = bHovered ? 7.0f : 5.0f;
+			FLinearColor AnchorCol = AccentCol;
+			AnchorCol.A = bHovered ? 0.95f : 0.72f;
+			DrawLine(PBase.X, PBase.Y - R, PBase.X + R, PBase.Y, AnchorCol, 1.6f);
+			DrawLine(PBase.X + R, PBase.Y, PBase.X, PBase.Y + R, AnchorCol, 1.6f);
+			DrawLine(PBase.X, PBase.Y + R, PBase.X - R, PBase.Y, AnchorCol, 1.6f);
+			DrawLine(PBase.X - R, PBase.Y, PBase.X, PBase.Y - R, AnchorCol, 1.6f);
+		}
+	}
+
+	// 2. 天空高处的部队 Logo 与番号铭牌
+	const FVector Proj = Canvas->Project(SkyWorld, false);
+	if (Proj.Z <= 0.0f) { return; }
+	if (Proj.X < -140.0f || Proj.X > Canvas->SizeX + 140.0f || Proj.Y < -140.0f || Proj.Y > Canvas->SizeY + 140.0f)
+	{
+		return;
+	}
+
+	const float Dist = FVector::Dist(CamLoc, SkyWorld);
+	float IconSize = FMath::Clamp(680000.0f / FMath::Max(2500.0f, Dist), 52.0f, 84.0f);
+	if (bHovered) { IconSize *= 1.14f; }
+
+	const float Pad = 6.0f;
+	const float BarW = 4.0f;
+	const float StripH = 26.0f;
+	const float LogoAreaH = IconSize + Pad * 2.0f;
+	const FString Name = Unit->GetCallsign().IsEmpty() ? ERGalacticMeta::GetEnemyBrigadeName(1) : Unit->GetCallsign();
+	const FString Label = FString::Printf(TEXT("%s · %d/%d"), *Name, Unit->GetAliveCount(), Unit->GetSoldierCount());
+	float LabelW = 0.0f, LabelH = 0.0f;
+	Canvas->TextSize(Font, Label, LabelW, LabelH, 1.0f, 1.0f);
+
+	const float BoxW = FMath::Max(IconSize + Pad * 2.0f + BarW + 4.0f, LabelW + BarW + 18.0f);
+	const float TotalH = LogoAreaH + StripH;
+	const float X = Proj.X - BoxW * 0.5f;
+	const float Y = Proj.Y - LogoAreaH * 0.5f;
+
+	// 立柱下方几道精致的刻度短横线 (机能光学标尺感)
+	for (int32 k = 1; k <= 2; ++k)
+	{
+		const float TickY = Y + TotalH + k * 12.0f;
+		const float HalfTick = (k == 1 ? 8.0f : 5.0f);
+		FLinearColor TickCol = CoreCol;
+		TickCol.A = bHovered ? 0.85f : 0.45f;
+		DrawLine(Proj.X - HalfTick, TickY, Proj.X + HalfTick, TickY, TickCol, 1.2f);
+	}
+
+	// 白底墨字彩条外框 + 左侧红条
+	DrawBonePlate(X, Y, BoxW, TotalH, AccentCol, false, bHovered || bFocusedTarget, bHovered);
+
+	// Logo 区域暗曜石内框 (在亮蓝天空与白云背景下确保红色部队图标高对比锐利)
+	const float InnerX = X + BarW + (BoxW - BarW - IconSize) * 0.5f;
+	const float InnerY = Y + Pad;
+	DrawRect(FLinearColor(0.012f, 0.013f, 0.018f, 0.92f), InnerX - 2.0f, InnerY - 2.0f, IconSize + 4.0f, IconSize + 4.0f);
+
+	if (UTexture2D* LogoTex = GetClassLogoTexture(Unit->GetArchetype(), false))
+	{
+		if (LogoTex->GetResource())
+		{
+			FCanvasTileItem Tile(FVector2D(InnerX, InnerY), LogoTex->GetResource(),
+				FVector2D(IconSize, IconSize), FLinearColor::White);
+			Tile.BlendMode = SE_BLEND_Translucent;
+			Canvas->DrawItem(Tile);
+		}
+	}
+
+	// 底部番号与存活兵力 + 血条
+	const float TextX = X + BarW + (BoxW - BarW - LabelW) * 0.5f;
+	const float TextY = Y + LogoAreaH + 2.0f;
+	DrawText(Label, ERUI::InkText(), TextX, TextY, Font, 1.0f, false);
+
+	const float HPRatio = FMath::Clamp(Unit->GetLegionHP() / FMath::Max(1.0f, Unit->GetLegionMaxHP()), 0.0f, 1.0f);
+	DrawRect(FLinearColor(0.02f, 0.02f, 0.03f, 0.22f), X + BarW + 4.0f, Y + TotalH - 5.0f, BoxW - BarW - 8.0f, 3.0f);
+	DrawRect(AccentCol, X + BarW + 4.0f, Y + TotalH - 5.0f, (BoxW - BarW - 8.0f) * HPRatio, 3.0f);
+
+	// 瞄准悬停 / 集火锁定光学角括弧
+	if (bHovered || bFocusedTarget)
+	{
+		const float Outset = bHovered ? 7.0f : 4.0f;
+		const float Arm = bHovered ? 14.0f : 10.0f;
+		const float Th = bHovered ? 2.5f : 1.8f;
+		const FLinearColor LockCol = bHovered ? T->Accent : FLinearColor(1.0f, 0.22f, 0.14f, 0.96f);
+		const float L = X - Outset;
+		const float R = X + BoxW + Outset;
+		const float Top = Y - Outset;
+		const float Bot = Y + TotalH + Outset;
+
+		DrawLine(L, Top, L + Arm, Top, LockCol, Th);
+		DrawLine(L, Top, L, Top + Arm, LockCol, Th);
+		DrawLine(R, Top, R - Arm, Top, LockCol, Th);
+		DrawLine(R, Top, R, Top + Arm, LockCol, Th);
+		DrawLine(L, Bot, L + Arm, Bot, LockCol, Th);
+		DrawLine(L, Bot, L, Bot - Arm, LockCol, Th);
+		DrawLine(R, Bot, R - Arm, Bot, LockCol, Th);
+		DrawLine(R, Bot, R, Bot - Arm, LockCol, Th);
+	}
+
+	// 顶部集火状态标 (配暗曜石微底衬以在亮天白云下保持锐利)
+	if (bFocusedTarget)
+	{
+		const FString Tag = TEXT("集火目标");
+		float TagW = 0.0f, TagH = 0.0f;
+		Canvas->TextSize(Font, Tag, TagW, TagH, 0.95f, 0.95f);
+		const float PW = TagW + 16.0f;
+		const float PH = TagH + 6.0f;
+		const float PX = Proj.X - PW * 0.5f;
+		const float PY = Y - PH - (bHovered ? 12.0f : 8.0f);
+		DrawRect(FLinearColor(0.012f, 0.014f, 0.020f, 0.88f), PX, PY, PW, PH);
+		DrawRect(FLinearColor(1.0f, 0.24f, 0.14f, 1.0f), PX, PY, 3.0f, PH);
+		DrawText(Tag, T->Bone, PX + 9.0f, PY + 3.0f, Font, 0.95f, false);
+	}
+
+	// 记录可点击/可瞄准命中区域 (适度留边, 抬头右键锁定手感顺畅)
+	constexpr float HitPad = 16.0f;
+	FEnemySkyBannerEntry Entry;
+	Entry.Unit = Unit;
+	Entry.HitRect = FBox2D(FVector2D(X - HitPad, Y - HitPad), FVector2D(X + BoxW + HitPad, Y + TotalH + HitPad));
+	Entry.Center = FVector2D(Proj.X, Y + TotalH * 0.5f);
+	Entry.DistSq = Dist * Dist;
+	EnemySkyBannerEntries.Add(Entry);
 }
 
 void ALegionHUD::DrawDropZoneWarning(const FVector& WorldPos, const FString& Label, float RemainingSec)
@@ -783,6 +1369,9 @@ void ALegionHUD::DrawUnitBadge(ALegionUnit* Unit, bool bSelected)
 		DrawProjectedLine(WingR, Tip, ChevronCol, bSelected ? 2.4f : 1.5f);
 	}
 
+	// 敌军不再在头顶显示番号牌 (改由 DrawEnemySkyBanner 在天空高处直插显示部队 Logo)
+	if (!bAlly) { return; }
+
 	const FVector Proj = Canvas->Project(Unit->GetActorLocation() + FVector(0.0f, 0.0f, 340.0f), false);
 	if (Proj.Z <= 0.0f) { return; }
 	if (Proj.X < -80.0f || Proj.X > Canvas->SizeX + 80.0f || Proj.Y < -80.0f || Proj.Y > Canvas->SizeY + 80.0f)
@@ -790,28 +1379,41 @@ void ALegionHUD::DrawUnitBadge(ALegionUnit* Unit, bool bSelected)
 		return;
 	}
 
-	const float W = bSelected ? 104.0f : 94.0f;
-	const float H = 30.0f;
+	UFont* Font = GEngine ? GEngine->GetSmallFont() : nullptr;
+	const FString Name = Unit->GetCallsign().IsEmpty() ? ERGalacticMeta::GetBrigadeName(1) : Unit->GetCallsign();
+	const FString Label = FString::Printf(TEXT("%s · %d/%d"), *Name, Unit->GetAliveCount(), Unit->GetSoldierCount());
+	float TW = 0.0f, TH = 0.0f;
+	Canvas->TextSize(Font, Label, TW, TH, 1.0f, 1.0f);
+
+	const float BarW = 4.0f;
+	const float IconSz = bSelected ? 24.0f : 22.0f;
+	const float W = BarW + 8.0f + IconSz + 7.0f + TW + 10.0f;
+	const float H = bSelected ? 36.0f : 34.0f;
 	const float X = Proj.X - W * 0.5f;
 	const float Y = Proj.Y - H;
 
 	// 白底墨字彩条底板 + 左侧阵营色条 + 选中加粗描边
 	DrawBonePlate(X, Y, W, H, MarkCol, false, bSelected, false);
 
+	// 我方部队占位 Logo (蓝色技能图标 + 暗曜石底框)
+	const float IX = X + BarW + 6.0f;
+	const float IY = Y + (H - 5.0f - IconSz) * 0.5f;
+	DrawRect(FLinearColor(0.012f, 0.013f, 0.018f, 0.92f), IX - 1.0f, IY - 1.0f, IconSz + 2.0f, IconSz + 2.0f);
+	if (UTexture2D* LogoTex = GetClassLogoTexture(Unit->GetArchetype(), true))
+	{
+		if (LogoTex->GetResource())
+		{
+			FCanvasTileItem Tile(FVector2D(IX, IY), LogoTex->GetResource(), FVector2D(IconSz, IconSz), FLinearColor::White);
+			Tile.BlendMode = SE_BLEND_Translucent;
+			Canvas->DrawItem(Tile);
+		}
+	}
+
 	// 血条/兵力比例条 (贴底 3px, 墨色底 + 阵营色填充)
 	const float HPRatio = FMath::Clamp(Unit->GetLegionHP() / FMath::Max(1.0f, Unit->GetLegionMaxHP()), 0.0f, 1.0f);
-	DrawRect(FLinearColor(0.02f, 0.02f, 0.03f, 0.22f), X + 6.0f, Y + H - 5.0f, W - 8.0f, 3.0f);
-	DrawRect(MarkCol, X + 6.0f, Y + H - 5.0f, (W - 8.0f) * HPRatio, 3.0f);
+	DrawRect(FLinearColor(0.02f, 0.02f, 0.03f, 0.22f), X + BarW + 4.0f, Y + H - 5.0f, W - BarW - 8.0f, 3.0f);
+	DrawRect(MarkCol, X + BarW + 4.0f, Y + H - 5.0f, (W - BarW - 8.0f) * HPRatio, 3.0f);
 
-	// 兵种简称 + 存活人数
-	const FString Code = ERGalacticMeta::GetClassCode(Unit->GetArchetype());
-	const FString Label = FString::Printf(TEXT("%s  %d/%d"), *Code, Unit->GetAliveCount(), Unit->GetSoldierCount());
-	DrawText(Label, ERUI::InkText(), X + 10.0f, Y + 3.0f, nullptr, 1.0f, false);
-
-	// 若正在释放主动协议技, 在上方显示金色高亮标
-	if (Unit->IsSkillActive())
-	{
-		DrawText(ERGalacticMeta::GetClassSkillName(Unit->GetArchetype()),
-			T->Accent, X + 4.0f, Y - 16.0f, nullptr, 0.85f, false);
-	}
+	// 部队名称 + 存活人数
+	DrawText(Label, ERUI::InkText(), IX + IconSz + 7.0f, Y + (H - 5.0f - TH) * 0.5f, Font, 1.0f, false);
 }

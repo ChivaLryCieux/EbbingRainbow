@@ -9,6 +9,11 @@
 #include "Battle/Skills/BattleSkillData.h"
 #include "Battle/Terrain/BattleTerrainQuery.h"
 #include "Battle/Units/BattleUnit.h"
+#include "Campaign/GalacticCampaignTypes.h"
+#include "Experimental/LegionBattle/LegionGameMode.h"
+#include "Experimental/LegionBattle/LegionPlayerController.h"
+#include "Experimental/LegionBattle/LegionTerrainGrid.h"
+#include "Experimental/LegionBattle/LegionUnit.h"
 #include "Engine/World.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -29,6 +34,18 @@ namespace
 	{
 		TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
 		P->SetStringField(TEXT("type"), Type);
+		P->SetStringField(TEXT("description"), Desc);
+		return P;
+	}
+
+	TSharedPtr<FJsonObject> MakeStringArrayProp(const FString& Desc)
+	{
+		TSharedPtr<FJsonObject> Items = MakeShared<FJsonObject>();
+		Items->SetStringField(TEXT("type"), TEXT("string"));
+
+		TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+		P->SetStringField(TEXT("type"), TEXT("array"));
+		P->SetObjectField(TEXT("items"), Items);
 		P->SetStringField(TEXT("description"), Desc);
 		return P;
 	}
@@ -287,6 +304,23 @@ ABattlePlayerController* UBattleAICommandService::GetBattlePC() const
 	return W ? Cast<ABattlePlayerController>(W->GetFirstPlayerController()) : nullptr;
 }
 
+ALegionGameMode* UBattleAICommandService::GetLegionGameMode() const
+{
+	UWorld* W = GetWorld();
+	return W ? Cast<ALegionGameMode>(W->GetAuthGameMode()) : nullptr;
+}
+
+ALegionPlayerController* UBattleAICommandService::GetLegionPC() const
+{
+	UWorld* W = GetWorld();
+	return W ? Cast<ALegionPlayerController>(W->GetFirstPlayerController()) : nullptr;
+}
+
+bool UBattleAICommandService::IsLegionMode() const
+{
+	return GetLegionGameMode() != nullptr;
+}
+
 FString UBattleAICommandService::GetUnitCode(const ABattleUnit* TargetUnit) const
 {
 	const UBattleManager* Mgr = GetBattleManager();
@@ -378,6 +412,11 @@ ABattleUnit* UBattleAICommandService::ResolveUnitRef(const FString& RefStr) cons
 
 FString UBattleAICommandService::GetUnitIndexSummary() const
 {
+	if (IsLegionMode())
+	{
+		return GetLegionUnitIndexSummary();
+	}
+
 	const UBattleManager* Mgr = GetBattleManager();
 	if (!Mgr)
 	{
@@ -418,6 +457,11 @@ FString UBattleAICommandService::GetUnitIndexSummary() const
 
 FString UBattleAICommandService::BuildSystemPrompt() const
 {
+	if (IsLegionMode())
+	{
+		return BuildLegionSystemPrompt();
+	}
+
 	FString Prompt = TEXT(
 		"你要扮演科幻肉鸽战棋游戏《虹不我与 (Ebbing Rainbow)》中的战术 AI 指挥助手。\n"
 		"你的职责是接收玩家指挥官的自然语言指令，结合实时战场上下文，自主规划并连续调用引擎函数操控我方棋子完成战术目标。\n\n"
@@ -453,6 +497,11 @@ FString UBattleAICommandService::BuildSystemPrompt() const
 
 TSharedPtr<FJsonObject> UBattleAICommandService::BuildBattlefieldSnapshotJson() const
 {
+	if (IsLegionMode())
+	{
+		return BuildLegionSnapshotJson();
+	}
+
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
 #if ER_WITH_AI_COMMAND
 	UBattleManager* Mgr = GetBattleManager();
@@ -594,6 +643,11 @@ TSharedPtr<FJsonObject> UBattleAICommandService::BuildBattlefieldSnapshotJson() 
 
 TArray<TSharedPtr<FJsonValue>> UBattleAICommandService::BuildOpenAIToolsJson() const
 {
+	if (IsLegionMode())
+	{
+		return BuildLegionToolsJson(false);
+	}
+
 	TArray<TSharedPtr<FJsonValue>> Tools;
 
 	{
@@ -671,6 +725,11 @@ TArray<TSharedPtr<FJsonValue>> UBattleAICommandService::BuildOpenAIToolsJson() c
 
 TArray<TSharedPtr<FJsonValue>> UBattleAICommandService::BuildAnthropicToolsJson() const
 {
+	if (IsLegionMode())
+	{
+		return BuildLegionToolsJson(true);
+	}
+
 	TArray<TSharedPtr<FJsonValue>> Tools;
 
 	{
@@ -808,8 +867,7 @@ bool UBattleAICommandService::SendUserCommand(const FString& UserInstruction)
 		return false;
 	}
 
-	UBattleManager* Mgr = GetBattleManager();
-	if (!Mgr)
+	if (!GetBattleManager() && !GetLegionGameMode())
 	{
 		EmitLog(EERAICommandLogKind::Error, TEXT("战斗尚未就绪，无法获取战场上下文。"));
 		return false;
@@ -1250,6 +1308,21 @@ void UBattleAICommandService::ExecuteNextToolCall()
 	}
 
 	SetBusyState(true, FString::Printf(TEXT("执行 %s..."), *Call.Name));
+
+	if (IsLegionMode())
+	{
+		FString LegionResultJson;
+		if (DispatchLegionToolCall(Call.Name, Args, LegionResultJson))
+		{
+			FinishToolCallAndContinue(LegionResultJson);
+			return;
+		}
+		TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
+		Err->SetBoolField(TEXT("ok"), false);
+		Err->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown legion tool: %s"), *Call.Name));
+		FinishToolCallAndContinue(JsonObjectToString(Err));
+		return;
+	}
 
 	if (Call.Name == TEXT("get_battle_state"))
 	{
@@ -2298,6 +2371,931 @@ FString UBattleAICommandService::JsonObjectToString(const TSharedPtr<FJsonObject
 		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&OutStr);
 	FJsonSerializer::Serialize(Obj.ToSharedRef(), Writer);
 	return OutStr;
+}
+
+// =============================================================================
+// 大兵团作战 (Lvl_Legion) AI 战术指挥实现
+// =============================================================================
+
+namespace
+{
+	const TCHAR* LegionStateToString(ELegionState St)
+	{
+		switch (St)
+		{
+		case ELegionState::Holding: return TEXT("驻守");
+		case ELegionState::Moving:  return TEXT("机动");
+		case ELegionState::Engaged: return TEXT("交战");
+		case ELegionState::Wiped:   return TEXT("覆灭");
+		default:                    return TEXT("未知");
+		}
+	}
+
+	/** 从中文/数字编号提取 1-based 旅序号 (支持 "第一旅" / "敌第一旅" / "对方第1旅" / "E1" / "1") */
+	int32 TryParseOrdinal(const FString& Text)
+	{
+		static const TCHAR* CN[10] = { TEXT("一"), TEXT("二"), TEXT("三"), TEXT("四"), TEXT("五"),
+			TEXT("六"), TEXT("七"), TEXT("八"), TEXT("九"), TEXT("十") };
+		for (int32 i = 0; i < 10; ++i)
+		{
+			if (Text.Contains(CN[i])) { return i + 1; }
+		}
+		FString Digits;
+		for (TCHAR Ch : Text)
+		{
+			if (FChar::IsDigit(Ch)) { Digits.AppendChar(Ch); }
+			else if (!Digits.IsEmpty()) { break; }
+		}
+		if (!Digits.IsEmpty())
+		{
+			const int32 V = FCString::Atoi(*Digits);
+			return V > 0 ? V : INDEX_NONE;
+		}
+		return INDEX_NONE;
+	}
+
+	bool IsAllToken(const FString& Ref)
+	{
+		const FString U = Ref.TrimStartAndEnd().ToUpper();
+		return U == TEXT("ALL") || U == TEXT("*") || U.Contains(TEXT("全部"))
+			|| U.Contains(TEXT("全军")) || U.Contains(TEXT("全体")) || U.Contains(TEXT("所有"));
+	}
+}
+
+FString UBattleAICommandService::GetLegionCode(const ALegionUnit* Unit) const
+{
+	const ALegionGameMode* GM = GetLegionGameMode();
+	if (!GM || !Unit) { return TEXT("?"); }
+
+	const TArray<TObjectPtr<ALegionUnit>>& Players = GM->GetPlayerLegions();
+	for (int32 i = 0; i < Players.Num(); ++i)
+	{
+		if (Players[i].Get() == Unit) { return FString::Printf(TEXT("P%d"), i + 1); }
+	}
+	const TArray<TObjectPtr<ALegionUnit>>& Enemies = GM->GetEnemyLegions();
+	for (int32 i = 0; i < Enemies.Num(); ++i)
+	{
+		if (Enemies[i].Get() == Unit) { return FString::Printf(TEXT("E%d"), i + 1); }
+	}
+	return TEXT("?");
+}
+
+FString UBattleAICommandService::GetLegionUnitIndexSummary() const
+{
+	const ALegionGameMode* GM = GetLegionGameMode();
+	if (!GM) { return TEXT("战场未就绪"); }
+
+	FString AllyStr;
+	const TArray<TObjectPtr<ALegionUnit>>& Players = GM->GetPlayerLegions();
+	for (int32 i = 0; i < Players.Num(); ++i)
+	{
+		const ALegionUnit* L = Players[i].Get();
+		if (!L) { continue; }
+		if (!AllyStr.IsEmpty()) { AllyStr += TEXT("  "); }
+		AllyStr += FString::Printf(TEXT("P%d %s(%s %d/%d)"),
+			i + 1, *L->GetCallsign(), *ERGalacticMeta::GetClassCode(L->GetArchetype()),
+			L->GetAliveCount(), L->GetSoldierCount());
+	}
+
+	FString EnemyStr;
+	const TArray<TObjectPtr<ALegionUnit>>& Enemies = GM->GetEnemyLegions();
+	for (int32 i = 0; i < Enemies.Num(); ++i)
+	{
+		const ALegionUnit* L = Enemies[i].Get();
+		if (!L) { continue; }
+		if (!EnemyStr.IsEmpty()) { EnemyStr += TEXT("  "); }
+		EnemyStr += FString::Printf(TEXT("E%d %s(%s %d/%d)"),
+			i + 1, *L->GetCallsign(), *ERGalacticMeta::GetClassCode(L->GetArchetype()),
+			L->GetAliveCount(), L->GetSoldierCount());
+	}
+
+	return FString::Printf(TEXT("上下文: %d 轮\n我方: %s\n敌方: %s"),
+		ContextTurnCount,
+		AllyStr.IsEmpty() ? TEXT("无") : *AllyStr,
+		EnemyStr.IsEmpty() ? TEXT("无") : *EnemyStr);
+}
+
+FString UBattleAICommandService::BuildLegionSystemPrompt() const
+{
+	FString Prompt = TEXT(
+		"你要扮演科幻大兵团军事指挥游戏《虹不我与 (Ebbing Rainbow)》中的实时战术参谋 AI。\n"
+		"玩家正在等高线战略地图视角下向你下达自然语言军事命令（地图开启时战场处于暂停态，你调用工具下达的所有行军、集火、停驻、跟随命令都会立刻在地图上画出路线与箭头，玩家返回战场后部队立刻执行）。\n\n"
+		"【编制与兵种克制】\n"
+		"1. 我方部队编号 P1, P2, P3...，称谓为「第一旅、第二旅、第三旅、第四旅...」。\n"
+		"2. 敌方部队编号 E1, E2, E3...，称谓为「敌第一旅 / 帝国第一旅 / 叛军第一旅 / 自治领第一旅...」。\n"
+		"3. 四大兵种克制：\n"
+		"   - 重盾卫队(重盾)：正面高额格挡抗线，惧侧背突袭；\n"
+		"   - 长戟方阵(长戟)：驻守反制近战突击并击退，惧远程火力；\n"
+		"   - 突击刃兵(刃兵)：高机动近战破阵，适合绕后包抄切敌方射手或盾兵侧背；\n"
+		"   - 精确射手(射手)：远程齐射，占据高地可显著增加射程与伤害，林地可提供远程掩体，怕被贴身。\n\n"
+		"【坐标与方位】\n"
+		"地图画面上 +Y 为北方（敌方初始防线方向），-Y 为南方（我方初始防线方向），+X 为西（地图左侧），-X 为东（地图右侧），单位为厘米（100 cm = 1 米）。\n\n"
+		"【可用工具】\n"
+		"1. `order_attack(ally_ids, target_id)`：令指定我方部队集火进攻指定敌军。ally_ids 支持 [\"all\"] 表示全部存活我方部队，或传入 [\"P1\", \"第一旅\", \"重盾\"] 等；target_id 支持 \"E1\" / \"敌第一旅\" / \"对方第一旅\" / \"nearest\"。\n"
+		"2. `order_all_assault()`：令全部我方存活部队就近自由突击各自最近的敌人。\n"
+		"3. `order_move(ally_ids, x, y, facing_yaw_deg)`：令指定我方部队按阵型机动至世界坐标 (x, y)（自动贴合可通行地形），可选指定到达后的面向角度（度）。\n"
+		"4. `order_move_relative(ally_ids, anchor_id, direction, distance_m)`：相对某参考目标（我方/敌方旅或 \"commander\" 指挥官）向指定战术方向（front/back/left/right/north/south/east/west/retreat）机动指定米数，非常适合侧翼包抄、绕后、后撤或向指挥官集结。\n"
+		"5. `order_halt(ally_ids)`：令指定部队原地停驻待命。\n"
+		"6. `order_follow_commander(ally_ids, enable)`：令指定部队跟随/取消跟随指挥官。\n"
+		"7. `select_allies(ally_ids)`：在地图上高亮选中指定我方部队。\n"
+		"8. `get_legion_battle_state()`：重新获取最新战场状态快照。\n\n"
+		"【执行准则】\n"
+		"- 收到明确作战指令（如“全部部队优先合力进攻对方第一旅”、“第一旅抗线，第三旅绕后切敌第四旅”）时，**直接一次性调用所需工具**，不要向玩家反复确认。\n"
+		"- 可在同一轮连续调用多个工具完成分兵协同（例如同时下达前排集火、侧翼绕后机动、射手驻守高地）。\n"
+		"- 工具执行完毕后，用简短、干练的中文军事口吻汇报部署结果（点明哪几支部队被下达了什么命令），严禁编造未执行的命令。"
+	);
+
+	if (!Config.CustomPromptExtra.IsEmpty())
+	{
+		Prompt += TEXT("\n\n【附加战术约束】\n") + Config.CustomPromptExtra;
+	}
+	return Prompt;
+}
+
+TSharedPtr<FJsonObject> UBattleAICommandService::BuildLegionSnapshotJson() const
+{
+	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+	const ALegionGameMode* GM = GetLegionGameMode();
+	if (!GM)
+	{
+		Root->SetStringField(TEXT("error"), TEXT("LegionGameMode not ready"));
+		return Root;
+	}
+
+	const ALegionPlayerController* PC = GetLegionPC();
+	Root->SetStringField(TEXT("mode"), TEXT("legion_battle"));
+	Root->SetStringField(TEXT("battle_title"), GM->GetBattleTitleText());
+	Root->SetBoolField(TEXT("battle_over"), GM->IsBattleOver());
+	Root->SetBoolField(TEXT("paused"), GM->GetTacticalTimeMode() == ELegionTimeMode::Paused);
+	Root->SetNumberField(TEXT("elapsed_sec"), FMath::RoundToFloat(GM->GetBattleElapsed() * 10.0f) / 10.0f);
+
+	{
+		TSharedPtr<FJsonObject> Bounds = MakeShared<FJsonObject>();
+		const FVector C = GM->GetDeployCenter();
+		Bounds->SetNumberField(TEXT("center_x"), FMath::RoundToInt(C.X));
+		Bounds->SetNumberField(TEXT("center_y"), FMath::RoundToInt(C.Y));
+		Bounds->SetNumberField(TEXT("half_extent_cm"), FMath::RoundToInt(GM->GetBattlefieldHalfExtent()));
+		Root->SetObjectField(TEXT("map_bounds"), Bounds);
+	}
+
+	if (PC && PC->GetPawn())
+	{
+		const FVector P = PC->GetPawn()->GetActorLocation();
+		TSharedPtr<FJsonObject> Cmd = MakeShared<FJsonObject>();
+		Cmd->SetNumberField(TEXT("x"), FMath::RoundToInt(P.X));
+		Cmd->SetNumberField(TEXT("y"), FMath::RoundToInt(P.Y));
+		Cmd->SetNumberField(TEXT("z"), FMath::RoundToInt(P.Z));
+		Cmd->SetNumberField(TEXT("yaw_deg"), FMath::RoundToInt(PC->GetControlRotation().Yaw));
+		Root->SetObjectField(TEXT("commander"), Cmd);
+	}
+
+	const FLegionTerrainGrid& Grid = GM->GetTerrainGrid();
+	auto MakeLegionJson = [this, PC, &Grid](const ALegionUnit* L, const FString& Code)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("id"), Code);
+		Obj->SetStringField(TEXT("name"), L->GetCallsign());
+		Obj->SetStringField(TEXT("class"), ERGalacticMeta::GetClassName(L->GetArchetype()));
+		Obj->SetStringField(TEXT("class_code"), ERGalacticMeta::GetClassCode(L->GetArchetype()));
+		Obj->SetBoolField(TEXT("alive"), !L->IsWiped());
+		Obj->SetNumberField(TEXT("alive_soldiers"), L->GetAliveCount());
+		Obj->SetNumberField(TEXT("max_soldiers"), L->GetSoldierCount());
+		Obj->SetStringField(TEXT("state"), LegionStateToString(L->GetLegionState()));
+
+		const FVector Loc = L->GetActorLocation();
+		TSharedPtr<FJsonObject> Pos = MakeShared<FJsonObject>();
+		Pos->SetNumberField(TEXT("x"), FMath::RoundToInt(Loc.X));
+		Pos->SetNumberField(TEXT("y"), FMath::RoundToInt(Loc.Y));
+		Pos->SetNumberField(TEXT("z"), FMath::RoundToInt(Loc.Z));
+		Obj->SetObjectField(TEXT("pos"), Pos);
+		Obj->SetNumberField(TEXT("facing_yaw"), FMath::RoundToInt(L->GetFacingYaw()));
+
+		if (const ALegionUnit* Tgt = L->GetAttackTarget())
+		{
+			Obj->SetStringField(TEXT("attack_target"), FString::Printf(TEXT("%s (%s)"), *GetLegionCode(Tgt), *Tgt->GetCallsign()));
+		}
+		if (L->HasMoveOrder())
+		{
+			const FVector D = L->GetMoveDestination();
+			TSharedPtr<FJsonObject> Dest = MakeShared<FJsonObject>();
+			Dest->SetNumberField(TEXT("x"), FMath::RoundToInt(D.X));
+			Dest->SetNumberField(TEXT("y"), FMath::RoundToInt(D.Y));
+			Obj->SetObjectField(TEXT("move_dest"), Dest);
+		}
+		if (L->GetTeam() == ELegionTeam::Player && PC)
+		{
+			Obj->SetBoolField(TEXT("selected"), PC->IsLegionSelected(L));
+			Obj->SetBoolField(TEXT("following_commander"), PC->IsLegionFollowing(L));
+		}
+		if (Grid.IsBuilt())
+		{
+			Obj->SetBoolField(TEXT("in_forest_cover"), Grid.GetTreeCountWorld(Loc) > 0);
+		}
+		return Obj;
+	};
+
+	TArray<TSharedPtr<FJsonValue>> AlliesArr;
+	const TArray<TObjectPtr<ALegionUnit>>& Players = GM->GetPlayerLegions();
+	for (int32 i = 0; i < Players.Num(); ++i)
+	{
+		if (const ALegionUnit* L = Players[i].Get())
+		{
+			AlliesArr.Add(MakeShared<FJsonValueObject>(MakeLegionJson(L, FString::Printf(TEXT("P%d"), i + 1))));
+		}
+	}
+	Root->SetArrayField(TEXT("allies"), AlliesArr);
+
+	TArray<TSharedPtr<FJsonValue>> EnemiesArr;
+	const TArray<TObjectPtr<ALegionUnit>>& Enemies = GM->GetEnemyLegions();
+	for (int32 i = 0; i < Enemies.Num(); ++i)
+	{
+		if (const ALegionUnit* L = Enemies[i].Get())
+		{
+			EnemiesArr.Add(MakeShared<FJsonValueObject>(MakeLegionJson(L, FString::Printf(TEXT("E%d"), i + 1))));
+		}
+	}
+	Root->SetArrayField(TEXT("enemies"), EnemiesArr);
+
+	TArray<TSharedPtr<FJsonValue>> WavesArr;
+	for (const FPendingEnemyWave& PW : GM->GetPendingWaves())
+	{
+		if (PW.bSpawned) { continue; }
+		TSharedPtr<FJsonObject> WObj = MakeShared<FJsonObject>();
+		WObj->SetStringField(TEXT("class"), ERGalacticMeta::GetClassName(PW.Spec.Archetype));
+		WObj->SetNumberField(TEXT("soldiers"), PW.Spec.SoldierCount);
+		WObj->SetNumberField(TEXT("eta_sec"), FMath::RoundToInt(FMath::Max(0.0f, PW.Spec.DelaySeconds - GM->GetBattleElapsed())));
+		WavesArr.Add(MakeShared<FJsonValueObject>(WObj));
+	}
+	Root->SetArrayField(TEXT("pending_enemy_waves"), WavesArr);
+
+	return Root;
+}
+
+ALegionUnit* UBattleAICommandService::ResolveLegionUnitRef(const FString& RefStr, bool bPreferEnemy) const
+{
+	const ALegionGameMode* GM = GetLegionGameMode();
+	if (!GM) { return nullptr; }
+
+	FString Clean = RefStr;
+	Clean.TrimStartAndEndInline();
+	if (Clean.IsEmpty()) { return nullptr; }
+
+	const TArray<TObjectPtr<ALegionUnit>>& Players = GM->GetPlayerLegions();
+	const TArray<TObjectPtr<ALegionUnit>>& Enemies = GM->GetEnemyLegions();
+
+	// 1. 显式编号 P1 / E1
+	const FString Upper = Clean.ToUpper();
+	if (Upper.StartsWith(TEXT("P")) && Upper.Mid(1).IsNumeric())
+	{
+		const int32 Idx = FCString::Atoi(*Upper.Mid(1)) - 1;
+		return Players.IsValidIndex(Idx) ? Players[Idx].Get() : nullptr;
+	}
+	if (Upper.StartsWith(TEXT("E")) && Upper.Mid(1).IsNumeric())
+	{
+		const int32 Idx = FCString::Atoi(*Upper.Mid(1)) - 1;
+		return Enemies.IsValidIndex(Idx) ? Enemies[Idx].Get() : nullptr;
+	}
+
+	// 判断文本是否带有显式敌/我倾向
+	bool bSearchEnemy = bPreferEnemy;
+	if (Clean.Contains(TEXT("敌")) || Clean.Contains(TEXT("对方")) || Clean.Contains(TEXT("对面"))
+		|| Clean.Contains(TEXT("帝国")) || Clean.Contains(TEXT("叛军")) || Clean.Contains(TEXT("自治领")))
+	{
+		bSearchEnemy = true;
+	}
+	else if (Clean.Contains(TEXT("我方")) || Clean.Contains(TEXT("友军")) || Clean.Contains(TEXT("己方")))
+	{
+		bSearchEnemy = false;
+	}
+
+	const TArray<TObjectPtr<ALegionUnit>>& Primary = bSearchEnemy ? Enemies : Players;
+	const TArray<TObjectPtr<ALegionUnit>>& Secondary = bSearchEnemy ? Players : Enemies;
+
+	auto FindInList = [&Clean](const TArray<TObjectPtr<ALegionUnit>>& List) -> ALegionUnit*
+	{
+		// 精确匹配 Callsign
+		for (ALegionUnit* L : List)
+		{
+			if (L && L->GetCallsign().Equals(Clean, ESearchCase::IgnoreCase)) { return L; }
+		}
+		// 包含匹配 Callsign 或 Callsign 被包含 (如 "对方第一旅" 包含 "第一旅", "自治领第一旅" 含 "第一旅")
+		for (ALegionUnit* L : List)
+		{
+			if (L && !L->GetCallsign().IsEmpty()
+				&& (L->GetCallsign().Contains(Clean, ESearchCase::IgnoreCase) || Clean.Contains(L->GetCallsign(), ESearchCase::IgnoreCase)))
+			{
+				return L;
+			}
+		}
+		// 按旅序号匹配 (一/二/三/四 或 1/2/3/4)
+		const int32 Ord = TryParseOrdinal(Clean);
+		if (Ord != INDEX_NONE && List.IsValidIndex(Ord - 1))
+		{
+			return List[Ord - 1].Get();
+		}
+		// 按兵种名/简称匹配 (优先存活)
+		for (ALegionUnit* L : List)
+		{
+			if (!L || L->IsWiped()) { continue; }
+			const FString ClsName = ERGalacticMeta::GetClassName(L->GetArchetype());
+			const FString ClsCode = ERGalacticMeta::GetClassCode(L->GetArchetype());
+			if (Clean.Contains(ClsCode) || ClsName.Contains(Clean))
+			{
+				return L;
+			}
+		}
+		return nullptr;
+	};
+
+	if (ALegionUnit* Found = FindInList(Primary)) { return Found; }
+	return FindInList(Secondary);
+}
+
+void UBattleAICommandService::ResolveAllyLegions(const TSharedPtr<FJsonObject>& Args, TArray<ALegionUnit*>& OutAllies) const
+{
+	OutAllies.Reset();
+	const ALegionGameMode* GM = GetLegionGameMode();
+	if (!GM) { return; }
+
+	auto AddAllAlive = [&]()
+	{
+		for (ALegionUnit* L : GM->GetPlayerLegions())
+		{
+			if (L && !L->IsWiped()) { OutAllies.AddUnique(L); }
+		}
+	};
+
+	auto ResolveOneToken = [&](const FString& Tok)
+	{
+		if (IsAllToken(Tok))
+		{
+			AddAllAlive();
+			return;
+		}
+		// 若按兵种名 (如 "重盾"/"射手") 批量匹配全部同兵种存活部队
+		for (ALegionUnit* L : GM->GetPlayerLegions())
+		{
+			if (!L || L->IsWiped()) { continue; }
+			const FString ClsCode = ERGalacticMeta::GetClassCode(L->GetArchetype());
+			const FString ClsName = ERGalacticMeta::GetClassName(L->GetArchetype());
+			if (Tok.Equals(ClsCode) || Tok.Equals(ClsName))
+			{
+				OutAllies.AddUnique(L);
+			}
+		}
+		if (OutAllies.Num() == 0)
+		{
+			if (ALegionUnit* One = ResolveLegionUnitRef(Tok, false))
+			{
+				if (One->GetTeam() == ELegionTeam::Player && !One->IsWiped())
+				{
+					OutAllies.AddUnique(One);
+				}
+			}
+		}
+	};
+
+	if (!Args.IsValid())
+	{
+		AddAllAlive();
+		return;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+	if (Args->TryGetArrayField(TEXT("ally_ids"), Arr) && Arr && Arr->Num() > 0)
+	{
+		for (const TSharedPtr<FJsonValue>& V : *Arr)
+		{
+			FString S;
+			if (V.IsValid() && V->TryGetString(S))
+			{
+				if (IsAllToken(S))
+				{
+					AddAllAlive();
+					return;
+				}
+				if (ALegionUnit* One = ResolveLegionUnitRef(S, false))
+				{
+					if (One->GetTeam() == ELegionTeam::Player && !One->IsWiped())
+					{
+						OutAllies.AddUnique(One);
+					}
+				}
+				else
+				{
+					ResolveOneToken(S);
+				}
+			}
+		}
+		return;
+	}
+
+	FString Single;
+	if (Args->TryGetStringField(TEXT("ally_ids"), Single) || Args->TryGetStringField(TEXT("ally_id"), Single))
+	{
+		ResolveOneToken(Single);
+		return;
+	}
+
+	// 未传 ally_ids 时默认全部存活我方部队
+	AddAllAlive();
+}
+
+TArray<TSharedPtr<FJsonValue>> UBattleAICommandService::BuildLegionToolsJson(bool bAnthropic) const
+{
+	TArray<TSharedPtr<FJsonValue>> Tools;
+	auto AddTool = [&](const FString& Name, const FString& Desc,
+		const TMap<FString, TSharedPtr<FJsonObject>>& Props, const TArray<FString>& Req)
+	{
+		TSharedPtr<FJsonObject> Def = bAnthropic
+			? MakeAnthropicToolDef(Name, Desc, Props, Req)
+			: MakeOpenAIToolDef(Name, Desc, Props, Req);
+		Tools.Add(MakeShared<FJsonValueObject>(Def));
+	};
+
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要执行进攻的我方部队列表，例如 [\"all\"] 表示全部存活部队，或 [\"P1\", \"第二旅\"]")));
+		Props.Add(TEXT("target_id"), MakeJsonProp(TEXT("string"), TEXT("目标敌方部队编号或称谓，例如 \"E1\"、\"敌第一旅\"、\"对方第一旅\"、\"自治领第一旅\" 或 \"nearest\"")));
+		AddTool(TEXT("order_attack"),
+			TEXT("令指定我方部队（或全部部队）集火进攻指定敌方部队。命令会立即反映在战略地图上。"),
+			Props, { TEXT("ally_ids"), TEXT("target_id") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		AddTool(TEXT("order_all_assault"),
+			TEXT("令全部存活我方部队发起全军突击，各自进攻距离最近的敌方部队。"),
+			Props, {});
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要机动的我方部队列表，例如 [\"all\"] 或 [\"P3\", \"第四旅\"]")));
+		Props.Add(TEXT("x"), MakeJsonProp(TEXT("number"), TEXT("目标世界坐标 X (cm)")));
+		Props.Add(TEXT("y"), MakeJsonProp(TEXT("number"), TEXT("目标世界坐标 Y (cm)")));
+		Props.Add(TEXT("facing_yaw_deg"), MakeJsonProp(TEXT("number"), TEXT("可选：到达后的驻守朝向角度（度，90=朝北/+Y，-90=朝南/-Y）")));
+		AddTool(TEXT("order_move"),
+			TEXT("令指定我方部队按阵型机动至指定世界坐标 (x, y)，自动绕开陡崖与密林。"),
+			Props, { TEXT("ally_ids"), TEXT("x"), TEXT("y") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要机动的我方部队列表，例如 [\"P3\"] 或 [\"all\"]")));
+		Props.Add(TEXT("anchor_id"), MakeJsonProp(TEXT("string"), TEXT("参考目标：\"commander\"(指挥官) 或某部队编号/名称（如 \"E1\"、\"敌第一旅\"、\"P1\"）")));
+		Props.Add(TEXT("direction"), MakeJsonProp(TEXT("string"), TEXT("相对方位：front / back / left / right / north / south / east / west / retreat / near")));
+		Props.Add(TEXT("distance_m"), MakeJsonProp(TEXT("number"), TEXT("相对距离（米），例如绕后 25 米、后撤 30 米，默认 20")));
+		AddTool(TEXT("order_move_relative"),
+			TEXT("相对指定敌我部队或指挥官向某方向机动（用于侧翼包抄、绕后、后撤拉扯、向指挥官靠拢）。"),
+			Props, { TEXT("ally_ids"), TEXT("anchor_id"), TEXT("direction") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要原地停驻的我方部队列表，例如 [\"all\"] 或 [\"P4\"]")));
+		AddTool(TEXT("order_halt"),
+			TEXT("令指定我方部队停止当前机动/进攻，就地驻守。"),
+			Props, { TEXT("ally_ids") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要切换跟随状态的我方部队列表，例如 [\"all\"] 或 [\"P1\"]")));
+		Props.Add(TEXT("enable"), MakeJsonProp(TEXT("boolean"), TEXT("true=列队跟随指挥官，false=取消跟随")));
+		AddTool(TEXT("order_follow_commander"),
+			TEXT("令指定我方部队跟随或取消跟随第一人称指挥官。"),
+			Props, { TEXT("ally_ids"), TEXT("enable") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要在地图上高亮选中的我方部队列表")));
+		AddTool(TEXT("select_allies"),
+			TEXT("在战略地图上高亮选中指定我方部队。"),
+			Props, { TEXT("ally_ids") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		AddTool(TEXT("get_legion_battle_state"),
+			TEXT("重新获取当前大兵团战场的实时状态 JSON 快照。"),
+			Props, {});
+	}
+
+	return Tools;
+}
+
+bool UBattleAICommandService::DispatchLegionToolCall(const FString& ToolName, const TSharedPtr<FJsonObject>& Args, FString& OutResultJson)
+{
+	if (ToolName == TEXT("get_legion_battle_state") || ToolName == TEXT("get_battle_state"))
+	{
+		OutResultJson = JsonObjectToString(BuildLegionSnapshotJson());
+		return true;
+	}
+	if (ToolName == TEXT("order_attack"))
+	{
+		OutResultJson = Tool_LegionOrderAttack(Args);
+		return true;
+	}
+	if (ToolName == TEXT("order_all_assault"))
+	{
+		OutResultJson = Tool_LegionOrderAllAssault();
+		return true;
+	}
+	if (ToolName == TEXT("order_move"))
+	{
+		OutResultJson = Tool_LegionOrderMove(Args);
+		return true;
+	}
+	if (ToolName == TEXT("order_move_relative"))
+	{
+		OutResultJson = Tool_LegionOrderMoveRelative(Args);
+		return true;
+	}
+	if (ToolName == TEXT("order_halt"))
+	{
+		OutResultJson = Tool_LegionOrderHalt(Args);
+		return true;
+	}
+	if (ToolName == TEXT("order_follow_commander"))
+	{
+		OutResultJson = Tool_LegionOrderFollowCommander(Args);
+		return true;
+	}
+	if (ToolName == TEXT("select_allies"))
+	{
+		OutResultJson = Tool_LegionSelectAllies(Args);
+		return true;
+	}
+	return false;
+}
+
+FString UBattleAICommandService::Tool_LegionOrderAttack(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionGameMode* GM = GetLegionGameMode();
+	ALegionPlayerController* PC = GetLegionPC();
+	if (!GM)
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		Res->SetStringField(TEXT("error"), TEXT("LegionGameMode unavailable"));
+		return JsonObjectToString(Res);
+	}
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	if (Allies.Num() == 0)
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		Res->SetStringField(TEXT("error"), TEXT("没有找到符合条件的存活我方部队"));
+		return JsonObjectToString(Res);
+	}
+
+	FString TargetRef;
+	if (Args.IsValid()) { Args->TryGetStringField(TEXT("target_id"), TargetRef); }
+	TargetRef.TrimStartAndEndInline();
+
+	const bool bNearest = TargetRef.IsEmpty() || TargetRef.Equals(TEXT("nearest"), ESearchCase::IgnoreCase)
+		|| TargetRef.Contains(TEXT("最近"));
+
+	ALegionUnit* FixedTarget = bNearest ? nullptr : ResolveLegionUnitRef(TargetRef, true);
+	if (!bNearest && (!FixedTarget || FixedTarget->IsWiped() || FixedTarget->GetTeam() != ELegionTeam::Enemy))
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		Res->SetStringField(TEXT("error"), FString::Printf(TEXT("未找到存活敌方目标: %s"), *TargetRef));
+		return JsonObjectToString(Res);
+	}
+
+	if (PC)
+	{
+		PC->SetLegionsFollowing(Allies, false);
+		PC->SetSelectedLegions(Allies);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> OrderedNames;
+	for (ALegionUnit* Ally : Allies)
+	{
+		ALegionUnit* Tgt = FixedTarget;
+		if (!Tgt)
+		{
+			float BestD2 = MAX_FLT;
+			for (ALegionUnit* E : GM->GetEnemyLegions())
+			{
+				if (!E || E->IsWiped()) { continue; }
+				const float D2 = FVector::DistSquared2D(Ally->GetActorLocation(), E->GetActorLocation());
+				if (D2 < BestD2) { BestD2 = D2; Tgt = E; }
+			}
+		}
+		if (Tgt)
+		{
+			Ally->CommandAttack(Tgt);
+			OrderedNames.Add(MakeShared<FJsonValueString>(Ally->GetCallsign()));
+		}
+	}
+
+	Res->SetBoolField(TEXT("ok"), OrderedNames.Num() > 0);
+	Res->SetArrayField(TEXT("ordered_allies"), OrderedNames);
+	if (FixedTarget)
+	{
+		Res->SetStringField(TEXT("target"), FString::Printf(TEXT("%s (%s)"), *GetLegionCode(FixedTarget), *FixedTarget->GetCallsign()));
+	}
+	else
+	{
+		Res->SetStringField(TEXT("target"), TEXT("nearest_enemy"));
+	}
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionOrderAllAssault()
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionGameMode* GM = GetLegionGameMode();
+	ALegionPlayerController* PC = GetLegionPC();
+	if (!GM)
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		return JsonObjectToString(Res);
+	}
+
+	TArray<ALegionUnit*> Alive;
+	for (ALegionUnit* L : GM->GetPlayerLegions())
+	{
+		if (L && !L->IsWiped()) { Alive.Add(L); }
+	}
+	if (PC)
+	{
+		PC->SetLegionsFollowing(Alive, false);
+		PC->SetSelectedLegions(Alive);
+	}
+	GM->AllOutAssault(ELegionTeam::Player);
+
+	Res->SetBoolField(TEXT("ok"), true);
+	Res->SetNumberField(TEXT("assaulting_count"), Alive.Num());
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionOrderMove(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionGameMode* GM = GetLegionGameMode();
+	ALegionPlayerController* PC = GetLegionPC();
+	if (!GM || !Args.IsValid())
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		return JsonObjectToString(Res);
+	}
+
+	double X = 0.0, Y = 0.0;
+	if (!Args->TryGetNumberField(TEXT("x"), X) || !Args->TryGetNumberField(TEXT("y"), Y))
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		Res->SetStringField(TEXT("error"), TEXT("缺少目标坐标 x 或 y"));
+		return JsonObjectToString(Res);
+	}
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	if (Allies.Num() == 0)
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		Res->SetStringField(TEXT("error"), TEXT("未找到存活我方部队"));
+		return JsonObjectToString(Res);
+	}
+
+	const FVector DestCenter((float)X, (float)Y, GM->GetDeployCenter().Z);
+	double FacingDeg = 1000.0;
+	const bool bCustomFacing = Args->TryGetNumberField(TEXT("facing_yaw_deg"), FacingDeg);
+
+	FVector AvgPos = FVector::ZeroVector;
+	for (ALegionUnit* L : Allies) { AvgPos += L->GetActorLocation(); }
+	AvgPos /= (float)Allies.Num();
+
+	const FVector FacingDir = bCustomFacing
+		? FRotator(0.0f, (float)FacingDeg, 0.0f).Vector().GetSafeNormal2D()
+		: (DestCenter - AvgPos).GetSafeNormal2D();
+
+	TArray<FVector> Slots;
+	if (PC)
+	{
+		PC->SetLegionsFollowing(Allies, false);
+		PC->SetSelectedLegions(Allies);
+		PC->ComputeSlotsForLegions(Allies, DestCenter, FacingDir.IsNearlyZero() ? FVector::ForwardVector : FacingDir, Slots);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Names;
+	for (int32 i = 0; i < Allies.Num(); ++i)
+	{
+		const FVector Pt = Slots.IsValidIndex(i) ? Slots[i] : DestCenter;
+		Allies[i]->CommandMoveTo(Pt, bCustomFacing ? (float)FacingDeg : 1000.0f);
+		Names.Add(MakeShared<FJsonValueString>(Allies[i]->GetCallsign()));
+	}
+
+	Res->SetBoolField(TEXT("ok"), true);
+	Res->SetArrayField(TEXT("ordered_allies"), Names);
+	Res->SetNumberField(TEXT("dest_x"), FMath::RoundToInt(DestCenter.X));
+	Res->SetNumberField(TEXT("dest_y"), FMath::RoundToInt(DestCenter.Y));
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionOrderMoveRelative(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionGameMode* GM = GetLegionGameMode();
+	ALegionPlayerController* PC = GetLegionPC();
+	if (!GM || !Args.IsValid())
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		return JsonObjectToString(Res);
+	}
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	if (Allies.Num() == 0)
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		Res->SetStringField(TEXT("error"), TEXT("未找到存活我方部队"));
+		return JsonObjectToString(Res);
+	}
+
+	FString AnchorId, DirStr;
+	Args->TryGetStringField(TEXT("anchor_id"), AnchorId);
+	Args->TryGetStringField(TEXT("direction"), DirStr);
+	double DistM = 20.0;
+	Args->TryGetNumberField(TEXT("distance_m"), DistM);
+	const float DistCm = FMath::Clamp((float)DistM, 5.0f, 150.0f) * 100.0f;
+
+	FVector AnchorPos = GM->GetDeployCenter();
+	FVector AnchorFwd(0.0f, 1.0f, 0.0f);
+	if (AnchorId.Equals(TEXT("commander"), ESearchCase::IgnoreCase) || AnchorId.Contains(TEXT("指挥官")))
+	{
+		if (PC && PC->GetPawn())
+		{
+			AnchorPos = PC->GetPawn()->GetActorLocation();
+			AnchorFwd = FRotator(0.0f, PC->GetControlRotation().Yaw, 0.0f).Vector().GetSafeNormal2D();
+		}
+	}
+	else if (ALegionUnit* AnchorUnit = ResolveLegionUnitRef(AnchorId, true))
+	{
+		AnchorPos = AnchorUnit->GetActorLocation();
+		AnchorFwd = AnchorUnit->GetFacingVector();
+	}
+	else
+	{
+		// 默认以所选我方部队平均位置为锚
+		AnchorPos = FVector::ZeroVector;
+		for (ALegionUnit* L : Allies) { AnchorPos += L->GetActorLocation(); }
+		AnchorPos /= (float)Allies.Num();
+	}
+
+	const FVector AnchorRight(-AnchorFwd.Y, AnchorFwd.X, 0.0f);
+	const FString D = DirStr.TrimStartAndEnd().ToLower();
+	FVector OffsetDir = FVector::ZeroVector;
+	if (D == TEXT("front") || D.Contains(TEXT("前")))       { OffsetDir = AnchorFwd; }
+	else if (D == TEXT("back") || D.Contains(TEXT("后")))   { OffsetDir = -AnchorFwd; }
+	else if (D == TEXT("left") || D.Contains(TEXT("左")))   { OffsetDir = -AnchorRight; }
+	else if (D == TEXT("right") || D.Contains(TEXT("右")))  { OffsetDir = AnchorRight; }
+	else if (D == TEXT("north") || D.Contains(TEXT("北")))  { OffsetDir = FVector(0.0f, 1.0f, 0.0f); }
+	else if (D == TEXT("south") || D.Contains(TEXT("南")) || D == TEXT("retreat") || D.Contains(TEXT("撤")))
+	{
+		OffsetDir = FVector(0.0f, -1.0f, 0.0f);
+	}
+	else if (D == TEXT("west") || D.Contains(TEXT("西")))   { OffsetDir = FVector(1.0f, 0.0f, 0.0f); }
+	else if (D == TEXT("east") || D.Contains(TEXT("东")))   { OffsetDir = FVector(-1.0f, 0.0f, 0.0f); }
+	else                                                    { OffsetDir = -AnchorFwd; }
+
+	const FVector DestCenter = AnchorPos + OffsetDir.GetSafeNormal2D() * DistCm;
+	const FVector FaceAnchor = (AnchorPos - DestCenter).GetSafeNormal2D();
+	const float FacingYaw = FaceAnchor.IsNearlyZero() ? 90.0f : FaceAnchor.Rotation().Yaw;
+
+	TArray<FVector> Slots;
+	if (PC)
+	{
+		PC->SetLegionsFollowing(Allies, false);
+		PC->SetSelectedLegions(Allies);
+		PC->ComputeSlotsForLegions(Allies, DestCenter, FaceAnchor.IsNearlyZero() ? FVector::ForwardVector : FaceAnchor, Slots);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Names;
+	for (int32 i = 0; i < Allies.Num(); ++i)
+	{
+		const FVector Pt = Slots.IsValidIndex(i) ? Slots[i] : DestCenter;
+		Allies[i]->CommandMoveTo(Pt, FacingYaw);
+		Names.Add(MakeShared<FJsonValueString>(Allies[i]->GetCallsign()));
+	}
+
+	Res->SetBoolField(TEXT("ok"), true);
+	Res->SetArrayField(TEXT("ordered_allies"), Names);
+	Res->SetNumberField(TEXT("dest_x"), FMath::RoundToInt(DestCenter.X));
+	Res->SetNumberField(TEXT("dest_y"), FMath::RoundToInt(DestCenter.Y));
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionOrderHalt(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionPlayerController* PC = GetLegionPC();
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	if (PC) { PC->SetLegionsFollowing(Allies, false); }
+
+	TArray<TSharedPtr<FJsonValue>> Names;
+	for (ALegionUnit* L : Allies)
+	{
+		L->CommandHalt();
+		Names.Add(MakeShared<FJsonValueString>(L->GetCallsign()));
+	}
+	Res->SetBoolField(TEXT("ok"), Names.Num() > 0);
+	Res->SetArrayField(TEXT("halted_allies"), Names);
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionOrderFollowCommander(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionPlayerController* PC = GetLegionPC();
+	if (!PC)
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		return JsonObjectToString(Res);
+	}
+
+	bool bEnable = true;
+	if (Args.IsValid()) { Args->TryGetBoolField(TEXT("enable"), bEnable); }
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	PC->SetLegionsFollowing(Allies, bEnable);
+	PC->SetSelectedLegions(Allies);
+
+	TArray<TSharedPtr<FJsonValue>> Names;
+	for (ALegionUnit* L : Allies) { Names.Add(MakeShared<FJsonValueString>(L->GetCallsign())); }
+	Res->SetBoolField(TEXT("ok"), Names.Num() > 0);
+	Res->SetBoolField(TEXT("following"), bEnable);
+	Res->SetArrayField(TEXT("allies"), Names);
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionSelectAllies(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionPlayerController* PC = GetLegionPC();
+	if (!PC)
+	{
+		Res->SetBoolField(TEXT("ok"), false);
+		return JsonObjectToString(Res);
+	}
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	PC->SetSelectedLegions(Allies);
+
+	TArray<TSharedPtr<FJsonValue>> Names;
+	for (ALegionUnit* L : Allies) { Names.Add(MakeShared<FJsonValueString>(L->GetCallsign())); }
+	Res->SetBoolField(TEXT("ok"), Names.Num() > 0);
+	Res->SetArrayField(TEXT("selected_allies"), Names);
+	return JsonObjectToString(Res);
+}
+
+bool UBattleAICommandService::RunLegionToolSelfTest()
+{
+	ALegionGameMode* GM = GetLegionGameMode();
+	if (!GM || GM->GetPlayerLegions().Num() == 0 || GM->GetEnemyLegions().Num() == 0)
+	{
+		UE_LOG(LogERLegion, Warning, TEXT("[LegionAISelfTest] FAIL: LegionGameMode or units not ready"));
+		return false;
+	}
+
+	// 1. 快照 JSON 与工具定义非空校验
+	const TSharedPtr<FJsonObject> Snap = BuildBattlefieldSnapshotJson();
+	const bool bSnapOk = Snap.IsValid() && Snap->HasField(TEXT("allies")) && Snap->HasField(TEXT("enemies"));
+	const bool bToolsOk = BuildOpenAIToolsJson().Num() >= 7 && BuildAnthropicToolsJson().Num() >= 7;
+
+	// 2. 模拟用户输入 "全部部队优先合力进攻对方第一旅" 触发的工具调用
+	EmitLog(EERAICommandLogKind::User, TEXT("全部部队优先合力进攻对方第一旅"));
+	TSharedPtr<FJsonObject> AttackArgs = MakeShared<FJsonObject>();
+	TArray<TSharedPtr<FJsonValue>> AllArr;
+	AllArr.Add(MakeShared<FJsonValueString>(TEXT("all")));
+	AttackArgs->SetArrayField(TEXT("ally_ids"), AllArr);
+	AttackArgs->SetStringField(TEXT("target_id"), TEXT("对方第一旅"));
+
+	FString ResultJson;
+	const bool bDispatched = DispatchLegionToolCall(TEXT("order_attack"), AttackArgs, ResultJson);
+	EmitLog(EERAICommandLogKind::ToolCall, FString::Printf(TEXT("order_attack(%s)"), *JsonObjectToString(AttackArgs)));
+	EmitLog(EERAICommandLogKind::ToolResult, ResultJson);
+
+	ALegionUnit* E0 = GM->GetEnemyLegions()[0].Get();
+	bool bAllAttackingE0 = (E0 != nullptr);
+	for (ALegionUnit* Ally : GM->GetPlayerLegions())
+	{
+		if (Ally && !Ally->IsWiped() && Ally->GetAttackTarget() != E0)
+		{
+			bAllAttackingE0 = false;
+			break;
+		}
+	}
+	EmitLog(EERAICommandLogKind::Assistant, FString::Printf(TEXT("已下达集火指令：全部我方存活部队正合力进攻 %s。"),
+		E0 ? *E0->GetCallsign() : TEXT("敌第一旅")));
+
+	UE_LOG(LogERLegion, Log, TEXT("[LegionAISelfTest] %s: snapshot & OpenAI/Anthropic tool schemas valid"),
+		(bSnapOk && bToolsOk) ? TEXT("PASS") : TEXT("FAIL"));
+	UE_LOG(LogERLegion, Log, TEXT("[LegionAISelfTest] %s: order_attack(all -> 对方第一旅) targets %s for all allies"),
+		(bDispatched && bAllAttackingE0) ? TEXT("PASS") : TEXT("FAIL"), E0 ? *E0->GetCallsign() : TEXT("null"));
+	return bSnapOk && bToolsOk && bDispatched && bAllAttackingE0;
 }
 
 #endif // ER_WITH_AI_COMMAND

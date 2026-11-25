@@ -36,9 +36,15 @@ class EBBINGRAINBOW_API UERAICommandPanel : public UERInteractiveWidget
 
 public:
 	static UERAICommandPanel* InstallOnBattleHUD(UUserWidget* OwnerHUD, UCanvasPanel* RootCanvas, float ScreenMargin);
+	/** 挂载到大兵团等高线地图视角左上角 (「接入 AI」按钮 + 左侧展开终端) */
+	static UERAICommandPanel* InstallOnLegionMapHUD(UUserWidget* OwnerHUD, UCanvasPanel* RootCanvas, float ScreenMargin);
 	static bool IsAnyTextInputFocused();
+	/** 任一 AI 面板或其开关按钮当前被鼠标悬停或拥有输入焦点 (用于拦截地图拖拽/缩放/点选) */
+	static bool IsAnyPanelHoveredOrFocused();
 
 	void BindService(UBattleAICommandService* InService);
+	void SetHostVisible(bool bVisible);
+	void SetPanelOpen(bool bOpen);
 	void OnPanelOpened();
 	bool IsTextInputFocused() const;
 
@@ -123,5 +129,6 @@ private:
 	FERCipherReveal CaptionCipher;
 	bool bBuilt = false;
 	bool bSettingsExpanded = false;
+	bool bLegionModeUI = false;
 	float IndexRefreshAccum = 0.0f;
 };

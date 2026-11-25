@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Campaign/GalacticCampaignTypes.h"
 #include "GameFramework/HUD.h"
 #include "LegionHUD.generated.h"
 
@@ -10,6 +11,7 @@ class ALegionGameMode;
 class ALegionPlayerController;
 class ALegionUnit;
 class ULegionHUDWidget;
+class UTexture2D;
 
 /**
  * 虹膜军团战场 HUD:
@@ -39,7 +41,23 @@ public:
 	/** 取某兵团番号牌的屏幕中心 (上一帧布局结果) */
 	bool GetStrategicBadgeCenter(const ALegionUnit* Unit, FVector2D& OutCenter) const;
 
+	/** 第一人称战场视角: 命中测试抬头瞄准的敌军天空部队 Logo (命中框由 DrawHUD 实时生成) */
+	ALegionUnit* PickEnemySkyBanner(const FVector2D& ScreenPos) const;
+
+	/** 取某敌军天空 Logo 的屏幕中心 (上一帧投影结果) */
+	bool GetEnemySkyBannerScreenCenter(const ALegionUnit* Unit, FVector2D& OutCenter) const;
+
+	/** 取某敌军天空 Logo 的绘制底边 Y (供准星提示避让, 防止文字重叠) */
+	bool GetEnemySkyBannerBottomY(const ALegionUnit* Unit, float& OutBottomY) const;
+
+	/** 同步等高线地图视角状态到 UMG 控件 (地图视角下隐藏底部四张部队卡) */
+	void NotifyStrategicMapOpen(bool bMapOpen);
+
+	ULegionHUDWidget* GetHUDWidget() const { return Widget.Get(); }
+
 private:
+	void LoadPlaceholderLogos();
+	UTexture2D* GetClassLogoTexture(ELegionClass Archetype, bool bAlly) const;
 	void DrawMinimap(ALegionGameMode* GM, ALegionPlayerController* PC);
 	void DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* PC);
 	void DrawCrosshair(ALegionPlayerController* PC);
@@ -48,7 +66,10 @@ private:
 		bool bPrism, bool bEmphasis, bool bHover);
 	void DrawOrderOverlays(ALegionGameMode* GM, ALegionPlayerController* PC);
 	void DrawUnitBadge(ALegionUnit* Unit, bool bSelected);
+	void DrawEnemySkyBanner(ALegionUnit* Unit, ALegionPlayerController* PC, bool bHovered, bool bFocusedTarget);
 	void DrawProjectedLine(const FVector& A, const FVector& B, const FLinearColor& Color, float Thickness);
+	/** 带相机近平面裁剪的 3D 线段投影: 抬头看天时地面起点在相机后方仍能完整画出通天竖线 */
+	void DrawClippedWorldLine(const FVector& A, const FVector& B, const FLinearColor& Color, float Thickness);
 	void DrawDropZoneWarning(const FVector& WorldPos, const FString& Label, float RemainingSec);
 
 	struct FStrategicBadgeRect
@@ -57,6 +78,21 @@ private:
 		FBox2D Rect;
 	};
 	TArray<FStrategicBadgeRect> StrategicBadgeRects;
+
+	struct FEnemySkyBannerEntry
+	{
+		TWeakObjectPtr<ALegionUnit> Unit;
+		FBox2D HitRect;
+		FVector2D Center = FVector2D::ZeroVector;
+		float DistSq = 0.0f;
+	};
+	TArray<FEnemySkyBannerEntry> EnemySkyBannerEntries;
+
+	UPROPERTY(Transient)
+	TMap<ELegionClass, TObjectPtr<UTexture2D>> AllyClassLogos;
+
+	UPROPERTY(Transient)
+	TMap<ELegionClass, TObjectPtr<UTexture2D>> EnemyClassLogos;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ULegionHUDWidget> Widget;

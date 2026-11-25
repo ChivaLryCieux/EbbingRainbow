@@ -47,9 +47,6 @@ struct FLegionArchetypeStats
 	float BraceAntiMeleeMul = 1.0f;
 	/** 近战冲击施加的击退速度 (cm/s) */
 	float KnockbackImpulse = 0.0f;
-	/** 主动技冷却 (s) 与持续时间 (s) */
-	float SkillCooldown = 14.0f;
-	float SkillDuration = 5.0f;
 	/** 编队横纵比 (越大越宽扁) */
 	float ColumnBias = 2.0f;
 	/** 士兵视觉尺度微调 */
@@ -70,8 +67,6 @@ struct FLegionArchetypeStats
 			S.FrontalBlockRatio = 0.65f; // 正面抗线极硬, 怕侧背
 			S.BraceAntiMeleeMul = 1.15f;
 			S.KnockbackImpulse = 90.0f;
-			S.SkillCooldown = 14.0f;
-			S.SkillDuration = 6.0f;
 			S.ColumnBias = 1.8f; // 稳固方阵, 适配任意朝向个人转身
 			S.BodyXYScale = 1.15f;
 			break;
@@ -85,8 +80,6 @@ struct FLegionArchetypeStats
 			S.FrontalBlockRatio = 0.25f;
 			S.BraceAntiMeleeMul = 1.85f; // 静止驻守专克突击冲阵
 			S.KnockbackImpulse = 260.0f;
-			S.SkillCooldown = 12.0f;
-			S.SkillDuration = 1.5f;
 			S.ColumnBias = 1.7f;
 			S.BodyXYScale = 0.98f;
 			break;
@@ -100,8 +93,6 @@ struct FLegionArchetypeStats
 			S.FrontalBlockRatio = 0.15f;
 			S.BraceAntiMeleeMul = 1.0f;
 			S.KnockbackImpulse = 190.0f;
-			S.SkillCooldown = 11.0f;
-			S.SkillDuration = 5.0f;
 			S.ColumnBias = 1.4f;
 			S.BodyXYScale = 1.0f;
 			break;
@@ -116,8 +107,6 @@ struct FLegionArchetypeStats
 			S.FrontalBlockRatio = 0.0f;
 			S.BraceAntiMeleeMul = 0.65f; // 被贴身弱势
 			S.KnockbackImpulse = 70.0f;
-			S.SkillCooldown = 15.0f;
-			S.SkillDuration = 4.0f;
 			S.ColumnBias = 1.8f;
 			S.BodyXYScale = 0.92f;
 			break;
@@ -172,6 +161,12 @@ struct FLegionSoldier
 	float GroundZ = 0.0f;
 
 	bool bAlive = true;
+
+	/** 个体当前生命值 (确保指挥官精准射击与兵团交战共享一致血量池, 射中谁就扣谁的血/死谁) */
+	float HP = 0.0f;
+
+	/** 致死击飞方向 (世界 XY; 子弹击杀时沿弹道方向击飞) */
+	FVector DeathImpulseDir = FVector::ZeroVector;
 
 	/** 步伐/交战突刺的相位种子 (确定性, 非真随机) */
 	float Phase = 0.0f;

@@ -51,10 +51,11 @@ struct FLegionMapView
  * 虹膜军团战术控制器 (3C: 第一人称指挥官 + 等高线地图双视角):
  *
  * 【战场视角 (默认)】 第一人称步行:
- *  - WASD 移动, 鼠标转向, Shift 疾跑;
- *  - 准星瞄兵团 左键 点选 (Ctrl 增减), 右键 点地面机动 / 点敌团集火, 右键按住转动视角拉出阵型朝向;
- *  - 1..8 快选兵团, Z 主动协议, X 停驻, G 全军突击, F 令选中兵团(无选中则全军)跟随/取消跟随;
- *  - 按住 Alt 呼出光标 (点左上小地图 / 底部兵团牌 / 按钮); M 或点小地图进入等高线地图。
+ *  - WASD 移动, 鼠标转向, Shift 疾跑, 空格跳跃;
+ *  - 左键纯射击 (手枪), 右键全权指挥: 点我方兵团选中/取消 (Ctrl 增减), 点地面机动 (按住拖动拉出阵型朝向);
+ *  - 敌军番号不显示在头顶而直插天空显示部队 Logo, 集火敌军需抬头瞄准天空 Logo 后右键, 防止地面指令误触;
+ *  - 1..8 快选部队, X 停驻, G 全军突击, F 令选中部队(无选中则全军)跟随/取消跟随;
+ *  - 按住 Alt 呼出光标 (点左上小地图 / 底部部队卡片 / 按钮); M 或点小地图进入等高线地图。
  *
  * 【等高线地图视角】 战场自动暂停, 地图全屏铺开:
  *  - 滚轮以鼠标为中心缩放, 左键拖拽 / 中键拖拽 平移;
@@ -80,7 +81,11 @@ public:
 	bool IsLegionSelected(const ALegionUnit* Legion) const;
 
 	void SelectLegionByIndex(int32 Index);
-	void TriggerSelectedSkills();
+
+	/** 供战术 AI / 外部指令直接设置选中部队、跟随状态与计算编队落位 */
+	void SetSelectedLegions(const TArray<ALegionUnit*>& Legions);
+	void SetLegionsFollowing(const TArray<ALegionUnit*>& Legions, bool bFollow);
+	void ComputeSlotsForLegions(const TArray<ALegionUnit*>& Legions, const FVector& Center, const FVector& FacingDir, TArray<FVector>& OutSlots) const;
 
 	// ---- 视角状态 ----
 	bool IsStrategicMapOpen() const { return bMapOpen; }
@@ -94,6 +99,10 @@ public:
 	/** 控制台 / 自动截图链路调用: 在地图视角里模拟缩放、点番号、集火、机动、点返回, 日志输出 PASS/FAIL */
 	UFUNCTION(Exec)
 	void ERMapSelfTest();
+
+	/** 控制台自检: 验证地面瞄准敌军不误触、抬头瞄准天空 Logo 右键成功下达集火 */
+	UFUNCTION(Exec)
+	void ERSkyBannerSelfTest();
 
 	/** 自检主体; bCloseAtEnd=false 时保持地图打开 (便于截图), 之后调用 FinishMapSelfTest */
 	void RunMapSelfTest(bool bCloseAtEnd);
@@ -163,13 +172,12 @@ protected:
 	void OnKey6() { OnKeySelect(5); }
 	void OnKey7() { OnKeySelect(6); }
 	void OnKey8() { OnKeySelect(7); }
-	void OnKeyZ() { TriggerSelectedSkills(); }
 	void OnKeyX();
 	void OnKeyG();
 	void OnKeyF();
 	void OnKeyRestart();
 	void OnEscape();
-	void OnKeyMapToggle() { SetStrategicMapOpen(!bMapOpen); }
+	void OnKeyMapToggle();
 
 	void ClearSelection();
 	void SetSingleSelection(ALegionUnit* Legion);

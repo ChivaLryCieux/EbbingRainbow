@@ -44,6 +44,110 @@ bool UERAICommandPanel::IsAnyTextInputFocused()
 	return false;
 }
 
+bool UERAICommandPanel::IsAnyPanelHoveredOrFocused()
+{
+	ActivePanels().RemoveAll([](const TWeakObjectPtr<UERAICommandPanel>& P) { return !P.IsValid(); });
+	const bool bHasSlate = FSlateApplication::IsInitialized();
+	const FVector2D CursorPos = bHasSlate ? FSlateApplication::Get().GetCursorPos() : FVector2D::ZeroVector;
+	for (const TWeakObjectPtr<UERAICommandPanel>& P : ActivePanels())
+	{
+		UERAICommandPanel* Panel = P.Get();
+		if (!Panel) { continue; }
+		if (Panel->IsInteractiveHovered()) { return true; }
+		if (UERActionButton* Btn = Panel->LinkedToggleButton.Get())
+		{
+			if (Btn->GetVisibility() == ESlateVisibility::Visible)
+			{
+				if (Btn->IsHovered() || (bHasSlate && Btn->GetCachedGeometry().IsUnderLocation(CursorPos)))
+				{
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+UERAICommandPanel* UERAICommandPanel::InstallOnLegionMapHUD(UUserWidget* OwnerHUD, UCanvasPanel* RootCanvas, float ScreenMargin)
+{
+#if ER_WITH_AI_COMMAND
+	if (!OwnerHUD || !OwnerHUD->WidgetTree || !RootCanvas)
+	{
+		return nullptr;
+	}
+
+	UWidgetTree* Tree = OwnerHUD->WidgetTree;
+	UERActionButton* ToggleBtn = Cast<UERActionButton>(Tree->FindWidget(TEXT("LegionAIConnectButton")));
+	if (!ToggleBtn)
+	{
+		ToggleBtn = Tree->ConstructWidget<UERActionButton>(UERActionButton::StaticClass(), TEXT("LegionAIConnectButton"));
+		ToggleBtn->Label = INVTEXT("接入 AI");
+		ToggleBtn->bShowArrow = false;
+		ToggleBtn->bPrismAccent = true;
+		ToggleBtn->FontSize = 20;
+		ToggleBtn->ContentPadding = FMargin(18.0f, 8.0f);
+		ToggleBtn->SetVisibility(ESlateVisibility::Collapsed);
+		UCanvasPanelSlot* BtnSlot = RootCanvas->AddChildToCanvas(ToggleBtn);
+		BtnSlot->SetAnchors(FAnchors(0.0f, 0.0f));
+		BtnSlot->SetAlignment(FVector2D(0.0f, 0.0f));
+		BtnSlot->SetPosition(FVector2D(ScreenMargin, 108.0f));
+		BtnSlot->SetAutoSize(true);
+		BtnSlot->SetZOrder(25);
+	}
+
+	UERAICommandPanel* Panel = Cast<UERAICommandPanel>(Tree->FindWidget(TEXT("LegionAICommandPanel")));
+	if (!Panel)
+	{
+		Panel = Tree->ConstructWidget<UERAICommandPanel>(UERAICommandPanel::StaticClass(), TEXT("LegionAICommandPanel"));
+		Panel->bLegionModeUI = true;
+		Panel->SetVisibility(ESlateVisibility::Collapsed);
+		UCanvasPanelSlot* PanelSlot = RootCanvas->AddChildToCanvas(Panel);
+		PanelSlot->SetAnchors(FAnchors(0.0f, 0.0f));
+		PanelSlot->SetAlignment(FVector2D(0.0f, 0.0f));
+		PanelSlot->SetPosition(FVector2D(ScreenMargin, 166.0f));
+		PanelSlot->SetAutoSize(true);
+		PanelSlot->SetZOrder(35);
+	}
+
+	Panel->bLegionModeUI = true;
+	Panel->LinkedToggleButton = ToggleBtn;
+	ToggleBtn->OnActionClicked.AddUniqueDynamic(Panel, &UERAICommandPanel::HandleToggleButtonClicked);
+	Panel->OnCloseRequested.AddUniqueDynamic(Panel, &UERAICommandPanel::HandleToggleButtonClicked);
+
+	if (UWorld* World = OwnerHUD->GetWorld())
+	{
+		if (UBattleAICommandService* Svc = UBattleAICommandService::Get(World))
+		{
+			Panel->BindService(Svc);
+		}
+	}
+	return Panel;
+#else
+	return nullptr;
+#endif
+}
+
+void UERAICommandPanel::SetHostVisible(bool bVisible)
+{
+	if (UERActionButton* ToggleBtn = LinkedToggleButton.Get())
+	{
+		ToggleBtn->SetVisibility(bVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+	if (!bVisible && GetVisibility() == ESlateVisibility::Visible)
+	{
+		SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+void UERAICommandPanel::SetPanelOpen(bool bOpen)
+{
+	SetVisibility(bOpen ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (bOpen)
+	{
+		OnPanelOpened();
+	}
+}
+
 UERAICommandPanel* UERAICommandPanel::InstallOnBattleHUD(UUserWidget* OwnerHUD, UCanvasPanel* RootCanvas, float ScreenMargin)
 {
 #if ER_WITH_AI_COMMAND
@@ -153,8 +257,8 @@ void UERAICommandPanel::BuildLayout()
 	const UERUITheme* T = ERUI::Theme();
 
 	USizeBox* PanelSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("PanelSize"));
-	PanelSize->SetWidthOverride(508.0f);
-	PanelSize->SetMaxDesiredHeight(640.0f);
+	PanelSize->SetWidthOverride(bLegionModeUI ? 460.0f : 508.0f);
+	PanelSize->SetMaxDesiredHeight(bLegionModeUI ? 620.0f : 640.0f);
 	WidgetTree->RootWidget = PanelSize;
 
 	RootBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("RootBorder"));
@@ -306,7 +410,7 @@ void UERAICommandPanel::BuildLayout()
 		SaveRow->AddChildToHorizontalBox(WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass()))
 			->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
-		SaveConfigButton = MakeTechButton(TEXT("保存配置 // SAVE"), true, T->Bone, T->Bone, T->PureInk);
+		SaveConfigButton = MakeTechButton(TEXT("保存配置"), true, T->Bone, T->Bone, T->PureInk);
 		SaveRow->AddChildToHorizontalBox(SaveConfigButton);
 
 		MainCol->AddChildToVerticalBox(SettingsDrawer)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
@@ -361,32 +465,37 @@ void UERAICommandPanel::BuildLayout()
 		FeedBg->SetContent(LogScrollBox);
 	}
 
-	// ---- 5. 底部指令控制台 (反白石膏主执行 CTA) ----
+	// ---- 5. 底部指令控制台 (主行: 宽输入框 + 执行按钮; 次行: 新对话 + 清屏) ----
 	{
 		UHorizontalBox* InputRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("InputRow"));
 		MainCol->AddChildToVerticalBox(InputRow);
 
 		CommandInput = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass(), TEXT("CommandInput"));
-		StyleInputBox(CommandInput, INVTEXT("输入战术指令，如：让当前单位攻击 E1"), false);
+		StyleInputBox(CommandInput, bLegionModeUI
+			? INVTEXT("输入指令，如：全部部队优先合力进攻对方第一旅")
+			: INVTEXT("输入战术指令，如：让当前单位攻击 E1"), false);
 		UHorizontalBoxSlot* InSlot = InputRow->AddChildToHorizontalBox(CommandInput);
 		InSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		InSlot->SetVerticalAlignment(VAlign_Center);
 		InSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
 
 		SendButton = MakeTechButton(TEXT("执行"), true, T->Bone, T->Bone, T->PureInk, &SendButtonText, &SendButtonBg);
-		UHorizontalBoxSlot* SendSlot = InputRow->AddChildToHorizontalBox(SendButton);
-		SendSlot->SetVerticalAlignment(VAlign_Center);
-		SendSlot->SetPadding(FMargin(0.0f, 0.0f, 6.0f, 0.0f));
+		InputRow->AddChildToHorizontalBox(SendButton)->SetVerticalAlignment(VAlign_Center);
+
+		UHorizontalBox* UtilRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("UtilRow"));
+		MainCol->AddChildToVerticalBox(UtilRow)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+		UtilRow->AddChildToHorizontalBox(WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass()))
+			->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
 		NewContextButton = MakeTechButton(TEXT("新对话"), false,
 			FLinearColor(0.015f, 0.017f, 0.022f, 0.94f), FLinearColor(0.92f, 0.92f, 0.90f, 0.24f), T->BoneSecondary);
-		UHorizontalBoxSlot* CtxSlot = InputRow->AddChildToHorizontalBox(NewContextButton);
+		UHorizontalBoxSlot* CtxSlot = UtilRow->AddChildToHorizontalBox(NewContextButton);
 		CtxSlot->SetVerticalAlignment(VAlign_Center);
 		CtxSlot->SetPadding(FMargin(0.0f, 0.0f, 6.0f, 0.0f));
 
 		ClearLogButton = MakeTechButton(TEXT("清屏"), false,
 			FLinearColor(0.015f, 0.017f, 0.022f, 0.94f), FLinearColor(0.92f, 0.92f, 0.90f, 0.18f), T->BoneTertiary);
-		InputRow->AddChildToHorizontalBox(ClearLogButton)->SetVerticalAlignment(VAlign_Center);
+		UtilRow->AddChildToHorizontalBox(ClearLogButton)->SetVerticalAlignment(VAlign_Center);
 	}
 
 	AppendLogLine(EERAICommandLogKind::System, TEXT("战术链路已就绪。支持多轮上下文追问，点击「新对话」可重置记忆。"));
@@ -466,6 +575,10 @@ void UERAICommandPanel::OnPanelOpened()
 {
 	SyncConfigFieldsFromService();
 	RefreshUnitIndexBar();
+	if (UBattleAICommandService* Svc = Service.Get())
+	{
+		UpdateBusyUI(Svc->IsBusy(), Svc->GetStatusLabel());
+	}
 
 	OpenTrack.Trigger(0.46f);
 	CaptionCipher.Start(TEXT("战术神经链路"), 0.36f, 0.04f);
@@ -528,13 +641,15 @@ void UERAICommandPanel::UpdateBusyUI(bool bBusy, const FString& StatusLabel)
 	if (UERActionButton* ToggleBtn = LinkedToggleButton.Get())
 	{
 		ToggleBtn->SetUrgent(bBusy);
-		if (bBusy)
+		if (bLegionModeUI)
 		{
-			ToggleBtn->SetLabel(INVTEXT("推演中"));
+			if (bBusy) { ToggleBtn->SetLabel(INVTEXT("AI 推演中")); }
+			else       { ToggleBtn->SetLabel(bReady ? INVTEXT("接入 AI · 就绪") : INVTEXT("接入 AI")); }
 		}
 		else
 		{
-			ToggleBtn->SetLabel(bReady ? INVTEXT("战术链路 · 就绪") : INVTEXT("战术链路"));
+			if (bBusy) { ToggleBtn->SetLabel(INVTEXT("推演中")); }
+			else       { ToggleBtn->SetLabel(bReady ? INVTEXT("战术链路 · 就绪") : INVTEXT("战术链路")); }
 		}
 	}
 }
@@ -627,7 +742,8 @@ void UERAICommandPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTim
 		const float E = OpenTrack.Expo(0.00f, 0.36f);
 		const float DivE = OpenTrack.Expo(0.08f, 0.36f);
 		SetRenderOpacity(E);
-		SetRenderTranslation(FVector2D(18.0f * (1.0f - E), 0.0f));
+		const float SlideX = bLegionModeUI ? -18.0f : 18.0f;
+		SetRenderTranslation(FVector2D(SlideX * (1.0f - E), 0.0f));
 		if (PanelFrame)    { PanelFrame->SetMotionState(FMath::Lerp(0.45f, 1.0f, E), 0.0f, E < 0.99f ? E : 1.0f); }
 		if (HeaderDivider) { HeaderDivider->SetRevealAlpha(DivE); }
 	}

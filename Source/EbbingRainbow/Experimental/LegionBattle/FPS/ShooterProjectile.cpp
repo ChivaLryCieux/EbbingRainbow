@@ -80,7 +80,10 @@ void AShooterProjectile::NotifyHit(class UPrimitiveComponent* MyComp, AActor* Ot
 	} else {
 
 		// single hit projectile. Process the collided actor
-		ProcessHit(Other, OtherComp, Hit.ImpactPoint, -Hit.ImpactNormal);
+		const FVector TravelDir = (ProjectileMovement && !ProjectileMovement->Velocity.IsNearlyZero())
+			? ProjectileMovement->Velocity.GetSafeNormal()
+			: -Hit.ImpactNormal;
+		ProcessHit(Other, OtherComp, Hit.ImpactPoint, TravelDir, Hit.Item);
 
 	}
 
@@ -142,14 +145,14 @@ void AShooterProjectile::ExplosionCheck(const FVector& ExplosionCenter)
 	}
 }
 
-void AShooterProjectile::ProcessHit(AActor* HitActor, UPrimitiveComponent* HitComp, const FVector& HitLocation, const FVector& HitDirection)
+void AShooterProjectile::ProcessHit(AActor* HitActor, UPrimitiveComponent* HitComp, const FVector& HitLocation, const FVector& HitDirection, int32 HitItem)
 {
-	// 命中兵团判定盒: 只对敌方兵团结算 (指挥官手枪可以杀伤敌兵)
+	// 命中兵团个体代理: 伤害精确结算到被命中的那名敌兵 (射中谁就打/死谁)
 	if (ALegionUnit* HitLegion = Cast<ALegionUnit>(HitActor))
 	{
 		if (HitLegion->GetTeam() == ELegionTeam::Enemy && !HitLegion->IsWiped())
 		{
-			HitLegion->ApplyDamage(HitDamage, nullptr, true);
+			HitLegion->ApplySoldierProjectileHit(HitComp, HitItem, HitLocation, HitDirection, HitDamage);
 		}
 		return;
 	}

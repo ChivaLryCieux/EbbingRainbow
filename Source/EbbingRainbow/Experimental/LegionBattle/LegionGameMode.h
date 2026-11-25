@@ -256,6 +256,8 @@ private:
 	bool bPlayerWon = false;
 
 	bool bAutoShotRequested = false;
+	bool bSkyShotRequested = false;
+	bool bMapShotRequested = false;
 	int32 AutoShotStage = 0;
 	float AutoShotTimer = 0.0f;
 	bool bOpeningShotDone = false;
