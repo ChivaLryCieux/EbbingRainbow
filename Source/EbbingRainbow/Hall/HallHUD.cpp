@@ -59,11 +59,13 @@ void AHallHUD::BeginPlay()
 	{
 		if (UWorld* World = GetWorld())
 		{
+			int32 GalaTab = 0;
+			FParse::Value(FCommandLine::Get(), TEXT("GalaTab="), GalaTab);
 			TWeakObjectPtr<AHallHUD> Self(this);
 			FTimerHandle T1, T2;
-			World->GetTimerManager().SetTimer(T1, [Self]()
+			World->GetTimerManager().SetTimer(T1, [Self, GalaTab]()
 			{
-				if (Self.IsValid()) { Self->OpenGalacticPanel(0); }
+				if (Self.IsValid()) { Self->OpenGalacticPanel(GalaTab); }
 			}, 1.2f, false);
 			World->GetTimerManager().SetTimer(T2, []()
 			{

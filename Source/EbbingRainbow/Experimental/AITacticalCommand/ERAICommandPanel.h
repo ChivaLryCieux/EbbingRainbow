@@ -36,7 +36,7 @@ class EBBINGRAINBOW_API UERAICommandPanel : public UERInteractiveWidget
 
 public:
 	static UERAICommandPanel* InstallOnBattleHUD(UUserWidget* OwnerHUD, UCanvasPanel* RootCanvas, float ScreenMargin);
-	/** 挂载到大兵团等高线地图视角左上角 (「接入 AI」按钮 + 左侧展开终端) */
+	/** 挂载到大兵团战场 HUD 右上角 (「接入 AI」按钮 + 右侧展开终端; 战场/地图双视角常驻) */
 	static UERAICommandPanel* InstallOnLegionMapHUD(UUserWidget* OwnerHUD, UCanvasPanel* RootCanvas, float ScreenMargin);
 	static bool IsAnyTextInputFocused();
 	/** 任一 AI 面板或其开关按钮当前被鼠标悬停或拥有输入焦点 (用于拦截地图拖拽/缩放/点选) */

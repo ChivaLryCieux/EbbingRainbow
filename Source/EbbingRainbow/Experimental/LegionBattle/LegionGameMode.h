@@ -164,6 +164,12 @@ public:
 	const TArray<FPendingEnemyWave>& GetPendingWaves() const { return PendingWaves; }
 	const TArray<FLegionTracerBeam>& GetTracerBeams() const { return TracerBeams; }
 
+	/** 真实弹道模拟: 士兵开火生成的轻量子弹 (HUD 据以绘制曳光) */
+	const TArray<FLegionBullet>& GetBullets() const { return Bullets; }
+
+	/** 士兵开火: 在 MuzzlePos 处以 Vel 速度生成一发实体弹道子弹 (阵营取自 Source) */
+	void SpawnBullet(const FVector& MuzzlePos, const FVector& Vel, ALegionUnit* Source);
+
 	void AddTracerBeam(const FVector& Start, const FVector& End, const FLinearColor& Color, float Duration = 0.25f);
 
 	float GetBattlefieldHalfExtent() const
@@ -189,6 +195,13 @@ public:
 
 	bool IsBattleOver() const { return bBattleOver; }
 	bool DidPlayerWin() const { return bPlayerWon; }
+
+	/** 战斗是否已打响: 接驳加载屏驻留期间为 false —— Elapsed/索敌/增援波次全部冻结,
+	 *  敌军不会趁玩家还在加载画面里白嫖机动。自动化截图链路直接为 true。 */
+	bool IsBattleStarted() const { return bBattleStarted; }
+
+	/** 玩家点击「进入战场」后由加载屏调用: 解冻战斗时钟与双方接敌逻辑 */
+	void BeginBattle();
 
 	FString GetBattleTitleText() const { return BattleTitleText; }
 	FString GetBattleSubText() const { return BattleSubText; }
@@ -222,6 +235,10 @@ private:
 
 	TArray<FPendingEnemyWave> PendingWaves;
 	TArray<FLegionTracerBeam> TracerBeams;
+	TArray<FLegionBullet> Bullets;
+
+	/** 逐帧推进全部在飞子弹: 线段扫描敌兵胶囊/地形静态物, 命中即结算, 脱靶即湮灭 */
+	void SimulateBullets(float DeltaSeconds);
 
 	// 运行时缓存资产 (供延迟增援波次使用)
 	UPROPERTY(Transient) TObjectPtr<UStaticMesh> CachedAllyBody;
@@ -254,10 +271,16 @@ private:
 	float AggroScanTimer = 0.0f;
 	bool bBattleOver = false;
 	bool bPlayerWon = false;
+	/** 见 IsBattleStarted: StartPlay 末尾按自动化参数决断, 接驳屏点击「进入战场」后置 true */
+	bool bBattleStarted = false;
 
 	bool bAutoShotRequested = false;
 	bool bSkyShotRequested = false;
 	bool bMapShotRequested = false;
+	/** -DeployShot: 不跳过接驳屏, 自动截 加载中/就绪/进入后战场 三态 (接驳屏自身到点自动点击进入) */
+	bool bDeployShotRequested = false;
+	/** -LegionCloseup: 战斗打响后把玩家传送到我方第一旅旁连拍, 验证持枪/开火动画/曳光近景 */
+	bool bCloseupShotRequested = false;
 	int32 AutoShotStage = 0;
 	float AutoShotTimer = 0.0f;
 	bool bOpeningShotDone = false;

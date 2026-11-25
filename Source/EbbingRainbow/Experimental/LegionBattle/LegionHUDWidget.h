@@ -64,7 +64,6 @@ private:
 	UFUNCTION() void OnReturnHallClicked();
 
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> TitleText;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> SubTitleText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> StatusAllyText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> StatusEnemyText;
 
@@ -76,7 +75,7 @@ private:
 
 	UPROPERTY(Transient) TObjectPtr<UCanvasPanel> RootPanel;
 	UPROPERTY(Transient) TObjectPtr<UERAICommandPanel> AICommandPanel;
-	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> LegionBar;
+	UPROPERTY(Transient) TObjectPtr<UVerticalBox> LegionBar;
 	UPROPERTY(Transient) TArray<TObjectPtr<UButton>> LegionPlateButtons;
 	UPROPERTY(Transient) TArray<TObjectPtr<UERTechFrame>> LegionPlateFrames;
 	TArray<bool> LegionPlateSelected;

@@ -11,6 +11,7 @@
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "TextureResource.h"
+#include "Experimental/LegionBattle/LegionDeployScreen.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
 #include "Experimental/LegionBattle/LegionHUDWidget.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
@@ -29,6 +30,22 @@ void ALegionHUD::BeginPlay()
 		if (Widget)
 		{
 			Widget->AddToViewport(0);
+		}
+
+		// 出击部署接驳屏: 战斗未打响时铺满全屏, 封锁输入并轮询流送/植被就绪度;
+		// 就绪后由玩家点击「进入战场」才真正开战 (自动化链路 GameMode 会直接置 bBattleStarted, 不进此分支)
+		ALegionGameMode* GM = GetWorld() ? Cast<ALegionGameMode>(GetWorld()->GetAuthGameMode()) : nullptr;
+		if (GM && !GM->IsBattleStarted())
+		{
+			if (ULegionDeployScreen* Screen = CreateWidget<ULegionDeployScreen>(PC, ULegionDeployScreen::StaticClass()))
+			{
+				Screen->SetupInteractive();
+				Screen->AddToViewport(500);
+				if (ALegionPlayerController* LPC = Cast<ALegionPlayerController>(PC))
+				{
+					LPC->SetDeploymentInputLocked(true);
+				}
+			}
 		}
 	}
 }
@@ -100,6 +117,16 @@ void ALegionHUD::DrawHUD()
 		FLinearColor C = B.Color;
 		C.A *= Alpha;
 		DrawProjectedLine(B.Start, B.End, C, 2.2f);
+	}
+
+	// 1b. 实体弹道曳光: 每发在飞子弹绘一小段速度方向亮线 (我方偏青/敌方偏橙红)
+	for (const FLegionBullet& B : GM->GetBullets())
+	{
+		const FVector Tail = B.Pos - B.Vel * 0.016f;
+		const FLinearColor C = (B.Team == ELegionTeam::Player)
+			? FLinearColor(0.35f, 0.9f, 1.0f, 0.95f)
+			: FLinearColor(1.0f, 0.38f, 0.16f, 0.95f);
+		DrawProjectedLine(Tail, B.Pos, C, 1.6f);
 	}
 
 	// 2. 敌军增援空降点预警

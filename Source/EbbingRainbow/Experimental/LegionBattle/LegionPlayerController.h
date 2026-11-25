@@ -187,6 +187,14 @@ protected:
 	void OrderAttack(ALegionUnit* Target);
 	void OrderFormationMove(const FVector& Center, const FVector& FacingDir, bool bUseCustomFacing);
 
+public:
+	/** 接驳加载屏驻留期间锁定全部战场输入 (强制 UIOnly + 光标);
+	 *  加载屏撤屏时解锁并恢复 战场/地图 双视角自己的输入模式逻辑 */
+	void SetDeploymentInputLocked(bool bLocked);
+	bool IsDeploymentInputLocked() const { return bDeploymentInputLocked; }
+
+protected:
+
 	/** 战场视角: 光标可见时取光标下兵团, 否则取准星下兵团 */
 	ALegionUnit* PickLegion(FHitResult& OutHit) const;
 	/** 战场视角: 光标可见时取光标下地面, 否则取准星下地面 */
@@ -212,6 +220,7 @@ private:
 
 	bool bMapOpen = false;
 	bool bAltCursor = false;
+	bool bDeploymentInputLocked = false;
 	FLegionMapView MapView;
 	ELegionTimeMode PrevTimeMode = ELegionTimeMode::Normal;
 

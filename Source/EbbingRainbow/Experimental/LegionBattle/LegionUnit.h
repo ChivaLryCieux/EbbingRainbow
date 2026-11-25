@@ -108,6 +108,15 @@ public:
 	int32 ApplySoldierProjectileHit(const UPrimitiveComponent* HitComp, int32 HitItem,
 		const FVector& HitLocation, const FVector& HitDirection, float DamageAmount);
 
+	/** 实体弹道命中结算: 直接按索引对个体士兵扣血 (Geometric 命中, 不经碰撞组件) */
+	int32 ApplyBulletHitToSoldier(int32 SoldierIndex, float DamageAmount, const FVector& HitDirection);
+
+	/** 查询存活士兵脚底世界位置 (供弹道扫描); 士兵阵亡/索引越界返回 false */
+	bool GetAliveSoldierFeet(int32 SoldierIndex, FVector& OutFeet) const;
+
+	/** 随机取一名存活士兵索引 (弹道目标选择); 全灭返回 INDEX_NONE */
+	int32 PickRandomAliveSoldier() const;
+
 	/** 自检: 验证命中指定个体胶囊时只击杀该个体且立即关闭其碰撞 */
 	bool RunExactHitSelfTest();
 
@@ -259,6 +268,11 @@ private:
 	TWeakObjectPtr<ALegionUnit> AttackTarget;
 	float RepathTimer = 0.0f;
 	float VolleyTimer = 0.0f;
+
+	/** 真实弹道: 目标兵团扫描节流 (0.35s 轮询最近射程内敌团) */
+	float FireScanTimer = 0.0f;
+	/** 真实弹道: 当前自动开火目标团 (无需攻击命令, 驻守亦会自卫射击) */
+	TWeakObjectPtr<ALegionUnit> CachedFireTarget;
 
 	FVector KnockbackVelocity = FVector::ZeroVector;
 

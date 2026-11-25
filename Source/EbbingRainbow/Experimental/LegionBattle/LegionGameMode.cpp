@@ -47,12 +47,13 @@ ALegionGameMode::ALegionGameMode()
 	AllyBodyMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/AdvancedRealisticGlass/Models/SM_Quinn.SM_Quinn")));
 	AllySkeletalMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple")));
 	EnemyBodyMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/AdvancedRealisticGlass/Models/SM_Quinn.SM_Quinn")));
-	AllyAnimIdle = TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle.MM_Idle")));
-	AllyAnimMove = TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jog/MF_Unarmed_Jog_Fwd.MF_Unarmed_Jog_Fwd")));
+	// 2026-12 真实弹道改造: 全员换装 FP 射击模板的手枪姿态/射击动画
+	AllyAnimIdle = TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Pistol/MF_Pistol_Idle_ADS.MF_Pistol_Idle_ADS")));
+	AllyAnimMove = TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Pistol/Jog/MF_Pistol_Jog_Fwd.MF_Pistol_Jog_Fwd")));
+	// 交战姿态 = ADS 瞄准站姿: MM_Pistol_Fire 是 additive 叠加层, 单节点实例无法播放 (会变 bind pose 僵尸直立);
+	// 开火反馈由弹道曳光/击杀承担, 士兵保持瞄准姿态即正确交战视觉
 	AllyAnimAttacks = {
-		TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01.MM_Attack_01"))),
-		TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_02.MM_Attack_02"))),
-		TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_03.MM_Attack_03"))),
+		TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Pistol/MF_Pistol_Idle_ADS.MF_Pistol_Idle_ADS"))),
 	};
 	AllyAnimDeaths = {
 		TSoftObjectPtr<UAnimationAsset>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_01.MM_Death_Front_01"))),
@@ -72,6 +73,8 @@ void ALegionGameMode::BeginPlay()
 	bAutoShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-LegionShot"));
 	bSkyShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-SkyShot"));
 	bMapShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-MapShot"));
+	bDeployShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-DeployShot"));
+	bCloseupShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-LegionCloseup"));
 }
 
 void ALegionGameMode::LoadRuntimeAssets()
@@ -352,8 +355,21 @@ void ALegionGameMode::StartPlay()
 
 	SetTacticalTimeMode(ELegionTimeMode::Normal);
 
-	UE_LOG(LogERLegion, Log, TEXT("[Legion] Deployed %d ally legions vs %d enemy legions (+%d pending waves), animated=%d"),
-		PlayerLegions.Num(), EnemyLegions.Num(), PendingWaves.Num(), (int32)bUseAnimatedAlly);
+	// 自动化截图链路与显式跳过参数不走接驳屏, 战斗立即打响;
+	// 正常玩家流程由 ALegionHUD 挂载 ULegionDeployScreen, 点击「进入战场」后调 BeginBattle
+	const bool bSkipDeployScreen = bAutoShotRequested || bSkyShotRequested || bMapShotRequested || bCloseupShotRequested
+		|| FParse::Param(FCommandLine::Get(), TEXT("NoDeployScreen"));
+	bBattleStarted = bSkipDeployScreen;
+
+	UE_LOG(LogERLegion, Log, TEXT("[Legion] Deployed %d ally legions vs %d enemy legions (+%d pending waves), animated=%d, deployscreen=%d"),
+		PlayerLegions.Num(), EnemyLegions.Num(), PendingWaves.Num(), (int32)bUseAnimatedAlly, (int32)!bBattleStarted);
+}
+
+void ALegionGameMode::BeginBattle()
+{
+	if (bBattleStarted) { return; }
+	bBattleStarted = true;
+	UE_LOG(LogERLegion, Log, TEXT("[Legion] Deployment link confirmed -> battle begins."));
 }
 
 void ALegionGameMode::SpawnForest()
@@ -540,9 +556,8 @@ void ALegionGameMode::SetTacticalTimeMode(ELegionTimeMode NewMode)
 void ALegionGameMode::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	Elapsed += DeltaSeconds;
 
-	// 更新与清理弹道视觉轨迹
+	// 更新与清理弹道视觉轨迹 (接驳屏驻留期不会产生轨迹, 但清理本身无害)
 	for (int32 i = TracerBeams.Num() - 1; i >= 0; --i)
 	{
 		TracerBeams[i].Remaining -= DeltaSeconds;
@@ -551,6 +566,12 @@ void ALegionGameMode::Tick(float DeltaSeconds)
 			TracerBeams.RemoveAtSwap(i);
 		}
 	}
+
+	// 接驳加载屏未确认前: 战斗时钟/增援波次/索敌接敌/胜负判定全部冻结,
+	// 世界照常流转 (草皮流送继续构筑), 双方兵团原地待命
+	if (bBattleStarted)
+	{
+		Elapsed += DeltaSeconds;
 
 	// 检查延迟增援波次
 	for (FPendingEnemyWave& PW : PendingWaves)
@@ -596,6 +617,9 @@ void ALegionGameMode::Tick(float DeltaSeconds)
 		}
 	}
 
+	// 真实弹道推进: 实体子弹逐帧积分+命中扫描
+	SimulateBullets(DeltaSeconds);
+
 	// 胜负判定 (0.5s 轮询)
 	EndCheckTimer -= DeltaSeconds;
 	if (EndCheckTimer <= 0.0f)
@@ -603,6 +627,7 @@ void ALegionGameMode::Tick(float DeltaSeconds)
 		EndCheckTimer = 0.5f;
 		CheckBattleEnd();
 	}
+	} // end if (bBattleStarted)
 
 	HandleAutoShot();
 }
@@ -705,6 +730,32 @@ void ALegionGameMode::AllOutAssault(ELegionTeam Team)
 
 void ALegionGameMode::HandleAutoShot()
 {
+	// -DeployShot: 接驳屏三态连拍 (加载中 -> 就绪 -> 进入战场后带草皮的战场实况);
+	// 与别的截图链路不同, 此模式故意不跳过接驳屏 —— 它验证的就是接驳屏本身
+	if (bDeployShotRequested)
+	{
+		AutoShotTimer += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+		if (AutoShotStage == 0 && AutoShotTimer > 1.0f)
+		{
+			// 加载中态: MinDwellSeconds=1.4 保证 1.0s 时必然未就绪, 按钮禁用
+			FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionDeployLoading"), true, true);
+			AutoShotStage = 1;
+		}
+		else if (AutoShotStage == 1 && AutoShotTimer > 4.5f)
+		{
+			// 就绪态: 加速构筑下通常 2~4s 接驳完成, 按钮激活
+			FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionDeployReady"), true, true);
+			AutoShotStage = 2;
+		}
+		else if (AutoShotStage == 2 && AutoShotTimer > 9.0f)
+		{
+			// 战场实况: 接驳屏就绪后 1.2s 自动点击进入, 此时草皮应已铺满视野
+			FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionDeployField"), true, true);
+			AutoShotStage = 3;
+		}
+		return;
+	}
+
 	if (bMapShotRequested)
 	{
 		AutoShotTimer += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
@@ -800,6 +851,48 @@ void ALegionGameMode::HandleAutoShot()
 		return;
 	}
 
+	if (bCloseupShotRequested)
+	{
+		AutoShotTimer += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+		UWorld* World = GetWorld();
+		APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+		ALegionUnit* FirstUnit = PlayerLegions.Num() > 0 ? PlayerLegions[0].Get() : nullptr;
+		if (!PC || !Pawn || !FirstUnit) { return; }
+
+		// 传送与截图分两帧: 传送到编队侧翼 5m 后隔 0.3s 等 TAA 收敛再截 (运动模糊已在入场时关闭)
+		auto TeleportNearLegion = [&]()
+		{
+			const FVector Anchor = FirstUnit->GetActorLocation();
+			const FVector Pos = Anchor + FVector(280.0f, -420.0f, 110.0f);
+			const FVector AimAt = Anchor + FVector(0.0f, 0.0f, 110.0f);
+			const FRotator Face = (AimAt - Pos).Rotation();
+			Pawn->TeleportTo(Pos, Face, false, true);
+			PC->SetControlRotation(Face);
+		};
+		auto Shoot = [&](const FString& Name)
+		{
+			FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / Name, true, true);
+		};
+
+		if (AutoShotStage == 0 && AutoShotTimer > 0.5f)
+		{
+			if (IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality")))
+			{
+				IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality"))->Set(0);
+			}
+			AllOutAssault(ELegionTeam::Player);
+			AutoShotStage = 1;
+		}
+		else if (AutoShotStage == 1 && AutoShotTimer > 8.0f)  { TeleportNearLegion(); AutoShotStage = 2; }
+		else if (AutoShotStage == 2 && AutoShotTimer > 8.35f) { Shoot(TEXT("LegionCloseupA")); AutoShotStage = 3; }
+		else if (AutoShotStage == 3 && AutoShotTimer > 15.0f) { TeleportNearLegion(); AutoShotStage = 4; }
+		else if (AutoShotStage == 4 && AutoShotTimer > 15.35f){ Shoot(TEXT("LegionCloseupB")); AutoShotStage = 5; }
+		else if (AutoShotStage == 5 && AutoShotTimer > 24.0f) { TeleportNearLegion(); AutoShotStage = 6; }
+		else if (AutoShotStage == 6 && AutoShotTimer > 24.35f){ Shoot(TEXT("LegionCloseupC")); AutoShotStage = 7; }
+		return;
+	}
+
 	if (!bAutoShotRequested) { return; }
 	AutoShotTimer += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
 
@@ -879,5 +972,123 @@ void ALegionGameMode::HandleAutoShot()
 			return false;
 		}), 3.4f);
 		AutoShotStage = 6;
+	}
+}
+
+void ALegionGameMode::SpawnBullet(const FVector& MuzzlePos, const FVector& Vel, ALegionUnit* Source)
+{
+	if (!Source || !bBattleStarted || bBattleOver) { return; }
+	FLegionBullet B;
+	B.Pos = MuzzlePos;
+	B.PrevPos = MuzzlePos;
+	B.Vel = Vel;
+	B.Life = 1.6f; // ~8300cm 极限行程, 覆盖 2600 射程绰绰有余
+	B.Team = Source->GetTeam();
+	B.Source = Source;
+	Bullets.Add(B);
+}
+
+void ALegionGameMode::SimulateBullets(float DeltaSeconds)
+{
+	if (Bullets.Num() == 0) { return; }
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+
+	// 单发命中伤害: 士兵统一 40HP, 两枪倒
+	constexpr float BulletDamage = 25.0f;
+	// 士兵胶囊近似: 半径 40cm, 轴段覆盖脚底 +15..+165
+	constexpr float CapsuleRadius = 40.0f;
+	constexpr float AxisLo = 15.0f;
+	constexpr float AxisHi = 165.0f;
+	// 沿飞行线段步进采样间距 (远小于胶囊半径, 保证不穿透漏检)
+	constexpr float StepCm = 15.0f;
+
+	for (int32 i = Bullets.Num() - 1; i >= 0; --i)
+	{
+		FLegionBullet& B = Bullets[i];
+		B.PrevPos = B.Pos;
+		B.Pos += B.Vel * DeltaSeconds;
+		B.Life -= DeltaSeconds;
+
+		bool bKill = (B.Life <= 0.0f);
+		FVector SegEnd = B.Pos;
+
+		// 1. 地形/岩石/树干等静态物遮挡: 线段trace, 命中则截断飞行线段 (掩体自然生效)
+		float TerrainT = 1.0f;
+		if (!bKill)
+		{
+			FHitResult TerrainHit;
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(LegionBulletTerrain), false);
+			if (World->LineTraceSingleByChannel(TerrainHit, B.PrevPos, B.Pos, ECC_WorldStatic, Params))
+			{
+				TerrainT = FMath::Clamp(TerrainHit.Time, 0.0f, 1.0f);
+				SegEnd = FMath::Lerp(B.PrevPos, B.Pos, TerrainT);
+				bKill = true; // 无论是否先打中士兵, 子弹最多飞到遮挡点
+			}
+		}
+
+		// 2. 敌兵胶囊扫描 (仅敌方阵营: 弹道不允许误伤友军, 穿透己方队列是设计选择)
+		if (!bKill || TerrainT < 1.0f)
+		{
+			const TArray<TObjectPtr<ALegionUnit>>& Foes =
+				(B.Team == ELegionTeam::Player) ? EnemyLegions : PlayerLegions;
+
+			const float SegLen = FVector::Dist(B.PrevPos, SegEnd);
+			const int32 Steps = FMath::Max(1, FMath::CeilToInt(SegLen / StepCm));
+
+			ALegionUnit* BestUnit = nullptr;
+			int32 BestSoldier = INDEX_NONE;
+			float BestT = 2.0f;
+			FVector BestHitPos = FVector::ZeroVector;
+
+			for (ALegionUnit* Foe : Foes)
+			{
+				if (!Foe || Foe->IsWiped()) { continue; }
+
+				// 粗剔除: 线段中点距团中心超过编队半径+射程余量则整团跳过
+				const FVector SegMid = (B.PrevPos + SegEnd) * 0.5f;
+				const float RoughR = Foe->GetFormationHalfExtent().GetMax() + SegLen + 200.0f;
+				if (FVector::DistSquared2D(SegMid, Foe->GetActorLocation()) > RoughR * RoughR) { continue; }
+
+				const int32 Count = Foe->GetSoldierCount();
+				for (int32 s = 0; s < Count; ++s)
+				{
+					FVector Feet;
+					if (!Foe->GetAliveSoldierFeet(s, Feet)) { continue; }
+
+					for (int32 k = 0; k <= Steps; ++k)
+					{
+						const float T = (float)k / (float)Steps;
+						if (T >= BestT) { break; }
+						const FVector P = FMath::Lerp(B.PrevPos, SegEnd, T);
+
+						// 垂直胶囊点测: 水平偏移 + 轴向夹取
+						const float Dz = (P.Z < Feet.Z + AxisLo) ? (Feet.Z + AxisLo - P.Z)
+							: (P.Z > Feet.Z + AxisHi) ? (P.Z - Feet.Z - AxisHi) : 0.0f;
+						const float Dxy = FVector::Dist2D(P, Feet);
+						if (Dxy * Dxy + Dz * Dz <= CapsuleRadius * CapsuleRadius)
+						{
+							BestT = T;
+							BestUnit = Foe;
+							BestSoldier = s;
+							BestHitPos = P;
+							break;
+						}
+					}
+				}
+			}
+
+			if (BestUnit && BestSoldier != INDEX_NONE)
+			{
+				const FVector HitDir = B.Vel.GetSafeNormal();
+				BestUnit->ApplyBulletHitToSoldier(BestSoldier, BulletDamage, HitDir);
+				bKill = true;
+			}
+		}
+
+		if (bKill)
+		{
+			Bullets.RemoveAtSwap(i);
+		}
 	}
 }

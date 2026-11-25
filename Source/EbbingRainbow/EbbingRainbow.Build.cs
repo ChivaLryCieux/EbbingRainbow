@@ -26,6 +26,9 @@ public class EbbingRainbow : ModuleRules
 			"DeveloperSettings",
 			"ProceduralMeshComponent",
 			"Niagara",
+			// 出击部署接驳屏: 轮询 Landscape 草皮实例数判定植被构筑完成度
+			"Landscape",
+			"Foliage",
 			// 技能系统 2.0: 标签容器 (技能/状态/反应表的语义标识)
 			"GameplayTags"
 		});

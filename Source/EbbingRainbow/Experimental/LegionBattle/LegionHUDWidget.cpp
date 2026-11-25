@@ -65,18 +65,14 @@ void ULegionHUDWidget::Build()
 
 		UERPrismBar* Prism = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("Prism"));
 		Prism->bVertical = true;
-		Prism->BarSize = FVector2D(4.0f, 56.0f);
+		Prism->BarSize = FVector2D(4.0f, 42.0f);
 		TitleRow->AddChildToHorizontalBox(Prism)->SetPadding(FMargin(0.0f, 0.0f, 12.0f, 0.0f));
 
 		UVerticalBox* TitleCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("TitleCol"));
 
-		TitleText = ERUI::MakeText(this, INVTEXT("虹膜军团指挥终端"), EERTypeScale::Title, T->Bone);
-		TitleText->SetFont(ERUI::FontBold(26, 50));
+		TitleText = ERUI::MakeText(this, INVTEXT("端点星"), EERTypeScale::Title, T->Bone);
+		TitleText->SetFont(ERUI::FontBold(38, 90));
 		TitleCol->AddChildToVerticalBox(TitleText);
-
-		SubTitleText = ERUI::MakeText(this, INVTEXT("虹膜基金会  ·  银河军事指挥"), EERTypeScale::Micro, T->BoneSecondary, false);
-		SubTitleText->SetFont(ERUI::FontBold(13, 120));
-		TitleCol->AddChildToVerticalBox(SubTitleText)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
 
 		TitleRow->AddChildToHorizontalBox(TitleCol);
 		Anchor(TitleRow, Root, FAnchors(0.0f, 0.0f), FVector2D(0.0f, 0.0f),
@@ -103,11 +99,13 @@ void ULegionHUDWidget::Build()
 			FVector2D(T->ScreenMargin, -44.0f));
 	}
 
-	// ---- 底部居中: 部队卡片栏 (仅显示 部队名称 / Logo / 兵员数量 三要素) ----
+	// ---- 左侧竖排: 部队卡片栏 (仅显示 部队名称 / Logo / 兵员数量 三要素) ----
+	// 锚定在小地图正下方: 小地图为 Canvas 绘制, 1080p 基准占 Y 108~312 (占视口高 0.29),
+	// 两者随视口高度同比例缩放, 故用比例锚点 0.31 保证任意分辨率不重叠
 	{
-		LegionBar = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LegionBar"));
-		Anchor(LegionBar, Root, FAnchors(0.5f, 1.0f), FVector2D(0.5f, 1.0f),
-			FVector2D(0.0f, -44.0f));
+		LegionBar = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LegionBar"));
+		Anchor(LegionBar, Root, FAnchors(0.0f, 0.31f), FVector2D(0.0f, 0.0f),
+			FVector2D(T->ScreenMargin, 0.0f));
 	}
 
 	// ---- 中央结算面板 ----
@@ -145,8 +143,13 @@ void ULegionHUDWidget::Build()
 		Anchor(ResultBox, Root, FAnchors(0.5f, 0.5f), FVector2D(0.5f, 0.5f), FVector2D::ZeroVector);
 	}
 
-	// ---- 地图视角左上角「接入 AI」自然语言指挥终端 (默认隐藏, 仅地图视角显示) ----
+	// ---- 右上角「接入 AI」自然语言指挥终端: 战场/地图双视角常驻
+	// (战场视角按 Alt 呼出光标即可交互, 与兵团牌同一交互模型) ----
 	AICommandPanel = UERAICommandPanel::InstallOnLegionMapHUD(this, Root, T->ScreenMargin);
+	if (AICommandPanel)
+	{
+		AICommandPanel->SetHostVisible(true);
+	}
 }
 
 void ULegionHUDWidget::NativeConstruct()
@@ -158,11 +161,8 @@ void ULegionHUDWidget::NativeConstruct()
 		Build();
 	}
 
-	if (ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
-	{
-		if (TitleText) { TitleText->SetText(FText::FromString(GM->GetBattleTitleText())); }
-		if (SubTitleText) { SubTitleText->SetText(FText::FromString(GM->GetBattleSubText())); }
-	}
+	// 左上角固定显示任务星球名 —— 当前「端点星」为占位, 后续应由委托/星区数据驱动
+	if (TitleText) { TitleText->SetText(INVTEXT("端点星")); }
 	RefreshStatus();
 }
 
@@ -171,10 +171,6 @@ void ULegionHUDWidget::SetStrategicMapMode(bool bMapOpen)
 	if (LegionBar)
 	{
 		LegionBar->SetVisibility(bMapOpen ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
-	}
-	if (AICommandPanel)
-	{
-		AICommandPanel->SetHostVisible(bMapOpen);
 	}
 }
 
@@ -259,7 +255,7 @@ void ULegionHUDWidget::BuildLegionBar(int32 Count)
 		USizeBox* CardSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 		CardSize->SetMinDesiredWidth(132.0f);
 
-		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->AllyMark, false, FMargin(16.0f, 10.0f));
+		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->AllyMark, false, FMargin(14.0f, 8.0f));
 		CardSize->AddChild(Card.Root);
 		Btn->SetContent(CardSize);
 		LegionPlateFrames.Add(Card.Frame);
@@ -276,7 +272,7 @@ void ULegionHUDWidget::BuildLegionBar(int32 Count)
 			S->SetHorizontalAlignment(HAlign_Center);
 		}
 
-		// 2. 部队占位 Logo (暗曜石方框 + 技能图标占位)
+		// 2. 部队占位 Logo (暗曜石方框 + 技能图标占位) —— 竖排空间紧凑, 图标 44px
 		UBorder* LogoBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 		LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.012f, 0.013f, 0.018f, 0.94f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.5f)));
 		LogoBox->SetBrushColor(FLinearColor::White);
@@ -284,14 +280,14 @@ void ULegionHUDWidget::BuildLegionBar(int32 Count)
 
 		UImage* LogoImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 		FSlateBrush IconBrush;
-		IconBrush.ImageSize = FVector2D(52.0f, 52.0f);
+		IconBrush.ImageSize = FVector2D(44.0f, 44.0f);
 		IconBrush.DrawAs = ESlateBrushDrawType::Image;
 		LogoImg->SetBrush(IconBrush);
 		LogoBox->SetContent(LogoImg);
 		if (UVerticalBoxSlot* S = Col->AddChildToVerticalBox(LogoBox))
 		{
 			S->SetHorizontalAlignment(HAlign_Center);
-			S->SetPadding(FMargin(0.0f, 7.0f, 0.0f, 7.0f));
+			S->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 5.0f));
 		}
 
 		// 3. 兵员数量
@@ -303,7 +299,7 @@ void ULegionHUDWidget::BuildLegionBar(int32 Count)
 			S->SetHorizontalAlignment(HAlign_Center);
 		}
 
-		LegionBar->AddChildToHorizontalBox(Btn)->SetPadding(FMargin(i > 0 ? 12.0f : 0.0f, 0.0f, 0.0f, 0.0f));
+		LegionBar->AddChildToVerticalBox(Btn)->SetPadding(FMargin(0.0f, i > 0 ? 10.0f : 0.0f, 0.0f, 0.0f));
 		LegionNameTexts.Add(Name);
 		LegionLogoImages.Add(LogoImg);
 		LegionCountTexts.Add(CountText);
@@ -359,7 +355,7 @@ void ULegionHUDWidget::RefreshLegionBar()
 					CachedCardLogos[i] = Tex;
 					FSlateBrush Brush;
 					Brush.SetResourceObject(Tex);
-					Brush.ImageSize = FVector2D(52.0f, 52.0f);
+					Brush.ImageSize = FVector2D(44.0f, 44.0f);
 					Brush.DrawAs = ESlateBrushDrawType::Image;
 					LegionLogoImages[i]->SetBrush(Brush);
 				}

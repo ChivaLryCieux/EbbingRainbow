@@ -59,8 +59,24 @@ void ALegionPlayerController::BeginPlay()
 	ApplyInputMode();
 }
 
+void ALegionPlayerController::SetDeploymentInputLocked(bool bLocked)
+{
+	bDeploymentInputLocked = bLocked;
+	ApplyInputMode();
+}
+
 void ALegionPlayerController::ApplyInputMode()
 {
+	// 接驳加载屏驻留期间: 一切战场输入让给 UI, 光标常驻
+	if (bDeploymentInputLocked)
+	{
+		bShowMouseCursor = true;
+		FInputModeUIOnly Mode;
+		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(Mode);
+		return;
+	}
+
 	const bool bCursor = bMapOpen || bAltCursor;
 	bShowMouseCursor = bCursor;
 	if (bCursor)

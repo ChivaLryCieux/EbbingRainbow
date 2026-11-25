@@ -958,6 +958,16 @@ void ALegionUnit::Tick(float DeltaSeconds)
 					if (USkeletalMeshComponent* C = S.SkelComp.Get())
 					{
 						C->SetRelativeRotation(FRotator(0.0f, S.CurYaw - ActorYaw - 90.0f + S.JitterYaw, 0.0f));
+
+						// 开火动画播完: 回落到当前状态循环动画
+						if (S.FireAnimEndTime > 0.0f && GetWorld()->GetTimeSeconds() >= S.FireAnimEndTime)
+						{
+							S.FireAnimEndTime = -1.0f;
+							if (UAnimationAsset* A = PickAnimForState(State, i))
+							{
+								C->PlayAnimation(A, true);
+							}
+						}
 					}
 				}
 			}
@@ -967,42 +977,82 @@ void ALegionUnit::Tick(float DeltaSeconds)
 			}
 		}
 
-		// ---- 交战结算 ----
-		if (State == ELegionState::Engaged)
+		// ---- 真实弹道自动开火 (2026-12 改造) ----
+		// 不再有按秒/按齐射的数值结算: 任意状态下敌兵团进入射程, 存活士兵即按各自
+		// Cadence 独立开火, 子弹实体飞行, 命中与否完全由几何决定 (绝境北地式实时模拟)。
+		if (!bWiped && AliveCount > 0)
 		{
-			if (ALegionUnit* Target = AttackTarget.Get())
+			ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr);
+			if (GM && GM->IsBattleStarted())
 			{
-				const float Dist = FVector::Dist2D(GetActorLocation(), Target->GetActorLocation());
-				if (ArchetypeStats.bRanged && Dist > 350.0f)
+				FireScanTimer -= DeltaSeconds;
+				if (FireScanTimer <= 0.0f)
 				{
-					VolleyTimer -= DeltaSeconds;
-					if (VolleyTimer <= 0.0f)
+					FireScanTimer = 0.35f;
+					CachedFireTarget = nullptr;
+					const TArray<TObjectPtr<ALegionUnit>>& Foes =
+						(Team == ELegionTeam::Player) ? GM->GetEnemyLegions() : GM->GetPlayerLegions();
+					float BestD2 = FMath::Square(ArchetypeStats.EngageRange);
+					for (ALegionUnit* F : Foes)
 					{
-						VolleyTimer = ArchetypeStats.VolleyInterval;
-						FireRangedVolley(Target);
+						if (!F || F->IsWiped()) { continue; }
+						const float D2 = FVector::DistSquared2D(GetActorLocation(), F->GetActorLocation());
+						if (D2 < BestD2) { BestD2 = D2; CachedFireTarget = F; }
 					}
 				}
-				else
+
+				ALegionUnit* Foe = CachedFireTarget.Get();
+				if (Foe && Foe->IsWiped()) { Foe = nullptr; CachedFireTarget = nullptr; }
+				if (Foe)
 				{
-					const float ElevMul = FLegionTerrainGrid::ComputeElevationMultiplier(
-						GetActorLocation().Z, Target->GetActorLocation().Z);
-					float CounterMul = 1.0f;
-
-					// 长戟静止驻守时对近战突击兵造成高额反制与击退
-					if (Target->GetArchetype() == ELegionClass::Vanguard && Archetype == ELegionClass::Pikeman)
+					const float FireNow = GetWorld()->GetTimeSeconds();
+					const float Cadence = FMath::Max(0.5f, ArchetypeStats.VolleyInterval);
+					constexpr float BulletSpeed = 5200.0f;
+					for (int32 i = 0; i < Soldiers.Num(); ++i)
 					{
-						CounterMul = ArchetypeStats.BraceAntiMeleeMul;
-					}
-					// 射手被贴身时近战削弱
-					if (ArchetypeStats.bRanged)
-					{
-						CounterMul *= 0.55f;
-					}
+						FLegionSoldier& S = Soldiers[i];
+						if (!S.bAlive) { continue; }
+						S.FireTimer -= DeltaSeconds;
+						if (S.FireTimer > 0.0f) { continue; }
+						S.FireTimer = Cadence * FMath::RandRange(0.7f, 1.3f);
 
-					const float Dps = (float)AliveCount * DamagePerSoldierPerSecond * ElevMul * CounterMul;
-					Target->ApplyDamage(Dps * DeltaSeconds, this, false);
+						const int32 Victim = Foe->PickRandomAliveSoldier();
+						if (Victim == INDEX_NONE) { break; }
+						FVector VictimFeet, MuzzleFeet;
+						if (!Foe->GetAliveSoldierFeet(Victim, VictimFeet) || !GetAliveSoldierFeet(i, MuzzleFeet)) { continue; }
+
+						// 枪口: 胸口高度 + 朝目标方向略前伸; 瞄准点: 目标胸腹部
+						const FVector ToVictim = (VictimFeet - MuzzleFeet).GetSafeNormal2D();
+						const FVector MuzzlePos = MuzzleFeet + FVector(0.0f, 0.0f, 138.0f) + ToVictim * 45.0f;
+						const FVector AimPos = VictimFeet + FVector(0.0f, 0.0f, 118.0f);
+						FVector Dir = (AimPos - MuzzlePos).GetSafeNormal();
+						if (Dir.IsNearlyZero()) { continue; }
+
+						// 散布锥: 基础抖动 + 己/敌机动惩罚 —— 射不准是常态, 命中才扣血
+						float HalfAngleDeg = 1.5f;
+						if (State == ELegionState::Moving) { HalfAngleDeg += 0.9f; }
+						if (Foe->GetLegionState() == ELegionState::Moving) { HalfAngleDeg += 1.4f; }
+						Dir = FMath::VRandCone(Dir, FMath::DegreesToRadians(HalfAngleDeg));
+
+						GM->SpawnBullet(MuzzlePos, Dir * BulletSpeed, this);
+
+						// 开火动画 (骨骼士兵): 单发播放后回落到状态动画
+						if (bSkeletalSoldiers && AnimAttackPool.Num() > 0)
+						{
+							if (USkeletalMeshComponent* C = S.SkelComp.Get())
+							{
+								C->PlayAnimation(AnimAttackPool[0].Get(), false);
+								C->SetPosition(0.0f, false);
+								S.FireAnimEndTime = FireNow + 0.55f;
+							}
+						}
+					}
 				}
 			}
+		}
+
+		if (State == ELegionState::Engaged)
+		{
 			bNeedTransforms = true;
 		}
 		else if (State == ELegionState::Moving)
@@ -1218,6 +1268,49 @@ void ALegionUnit::SpawnSkeletalSoldier(FLegionSoldier& S)
 	Proxy->SetCanEverAffectNavigation(false);
 	Proxy->RegisterComponent();
 
+	// FP 模板枪械: 手枪静态网格附加到手部骨骼, 随射击动画一起运动
+	{
+		static TWeakObjectPtr<UStaticMesh> CachedPistolMesh;
+		UStaticMesh* PistolMesh = CachedPistolMesh.Get();
+		if (!PistolMesh)
+		{
+			if (UERAssetCatalog* Catalog = UERAssetCatalog::Get(this))
+			{
+				PistolMesh = Catalog->LoadAsset<UStaticMesh>(TEXT("/Game/Weapons/Pistol/Meshes/SM_Pistol.SM_Pistol"));
+				CachedPistolMesh = PistolMesh;
+			}
+		}
+		if (PistolMesh)
+		{
+			UStaticMeshComponent* Gun = NewObject<UStaticMeshComponent>(this, NAME_None, RF_Transient);
+			Gun->SetupAttachment(C, TEXT("hand_r"));
+			Gun->SetStaticMesh(PistolMesh);
+			Gun->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Gun->SetCanEverAffectNavigation(false);
+			Gun->RegisterComponent();
+
+			static bool bLoggedGunProbe = false;
+			if (!bLoggedGunProbe)
+			{
+				bLoggedGunProbe = true;
+				const int32 BoneIdx = C->GetBoneIndex(TEXT("hand_r"));
+				UE_LOG(LogERLegion, Log, TEXT("[Legion][GunProbe] mesh=%s bone hand_r idx=%d gunpos=%s attachparent=%s"),
+					PistolMesh ? TEXT("ok") : TEXT("null"), BoneIdx,
+					*Gun->GetComponentLocation().ToCompactString(),
+					Gun->GetAttachParent() ? *Gun->GetAttachParent()->GetName() : TEXT("null"));
+			}
+		}
+		else
+		{
+			static bool bLoggedGunFail = false;
+			if (!bLoggedGunFail)
+			{
+				bLoggedGunFail = true;
+				UE_LOG(LogERLegion, Warning, TEXT("[Legion][GunProbe] pistol mesh load FAILED"));
+			}
+		}
+	}
+
 	S.SkelComp = C;
 	S.HitProxy = Proxy;
 }
@@ -1398,4 +1491,55 @@ void ALegionUnit::ComputeSoldierTransforms(const FLegionSoldier& S, float TimeSe
 	OutBody = SoldierFrame * FTransform(FRotator::ZeroRotator, FVector(0.0f, 0.0f, LiftB),
 		FVector(SB * SoldierXYScale, SB * SoldierXYScale, SB));
 	OutHead = SoldierFrame * FTransform(GearRot, GearOffset * SoldierScale, GearScale * SoldierScale);
+}
+
+int32 ALegionUnit::ApplyBulletHitToSoldier(int32 SoldierIndex, float DamageAmount, const FVector& HitDirection)
+{
+	if (bWiped || DamageAmount <= 0.0f) { return 0; }
+	if (!Soldiers.IsValidIndex(SoldierIndex) || !Soldiers[SoldierIndex].bAlive) { return 0; }
+
+	FLegionSoldier& S = Soldiers[SoldierIndex];
+	const float Applied = FMath::Min(S.HP, DamageAmount);
+	S.HP = FMath::Max(0.0f, S.HP - Applied);
+	LegionHP = FMath::Max(0.0f, LegionHP - Applied);
+
+	int32 Killed = 0;
+	if (S.HP <= KINDA_SMALL_NUMBER)
+	{
+		S.HP = 0.0f;
+		S.DeathImpulseDir = HitDirection.GetSafeNormal2D();
+		AliveCount = FMath::Max(0, AliveCount - 1);
+		StartDying(SoldierIndex);
+		Killed = 1;
+		CheckAndHandleWiped();
+	}
+	return Killed;
+}
+
+bool ALegionUnit::GetAliveSoldierFeet(int32 SoldierIndex, FVector& OutFeet) const
+{
+	if (!Soldiers.IsValidIndex(SoldierIndex) || !Soldiers[SoldierIndex].bAlive) { return false; }
+	const FLegionSoldier& S = Soldiers[SoldierIndex];
+	if (USkeletalMeshComponent* C = S.SkelComp.Get())
+	{
+		OutFeet = C->GetComponentLocation();
+		return true;
+	}
+	// HISM 退化路径: 编队槽位经 Actor 变换近似 (无逐兵组件)
+	OutFeet = GetActorTransform().TransformPosition(S.HomeOffset + FVector(0.0f, 0.0f, S.GroundZ));
+	return true;
+}
+
+int32 ALegionUnit::PickRandomAliveSoldier() const
+{
+	if (AliveCount <= 0) { return INDEX_NONE; }
+	// 随机起点单向扫描, 均摊到任一存活个体
+	const int32 Count = Soldiers.Num();
+	const int32 StartIdx = FMath::RandHelper(Count);
+	for (int32 k = 0; k < Count; ++k)
+	{
+		const int32 Idx = (StartIdx + k) % Count;
+		if (Soldiers[Idx].bAlive) { return Idx; }
+	}
+	return INDEX_NONE;
 }

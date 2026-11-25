@@ -86,6 +86,9 @@ public:
 	bool LoadConfig();
 	bool SaveConfig() const;
 	void ApplyPreset(const FString& PresetName);
+
+	/** 查询预设协议/供应商的接口地址与默认模型 (DeepSeek/OpenAI/Qwen/Anthropic/Ollama) */
+	static bool GetPresetValues(const FString& PresetName, FString& OutEndpoint, FString& OutModel);
 	bool HasApiKey() const;
 	bool IsAnthropicProtocol() const;
 

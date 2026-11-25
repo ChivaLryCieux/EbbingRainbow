@@ -88,9 +88,9 @@ UERAICommandPanel* UERAICommandPanel::InstallOnLegionMapHUD(UUserWidget* OwnerHU
 		ToggleBtn->ContentPadding = FMargin(18.0f, 8.0f);
 		ToggleBtn->SetVisibility(ESlateVisibility::Collapsed);
 		UCanvasPanelSlot* BtnSlot = RootCanvas->AddChildToCanvas(ToggleBtn);
-		BtnSlot->SetAnchors(FAnchors(0.0f, 0.0f));
-		BtnSlot->SetAlignment(FVector2D(0.0f, 0.0f));
-		BtnSlot->SetPosition(FVector2D(ScreenMargin, 108.0f));
+		BtnSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+		BtnSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+		BtnSlot->SetPosition(FVector2D(-ScreenMargin, 28.0f));
 		BtnSlot->SetAutoSize(true);
 		BtnSlot->SetZOrder(25);
 	}
@@ -102,9 +102,9 @@ UERAICommandPanel* UERAICommandPanel::InstallOnLegionMapHUD(UUserWidget* OwnerHU
 		Panel->bLegionModeUI = true;
 		Panel->SetVisibility(ESlateVisibility::Collapsed);
 		UCanvasPanelSlot* PanelSlot = RootCanvas->AddChildToCanvas(Panel);
-		PanelSlot->SetAnchors(FAnchors(0.0f, 0.0f));
-		PanelSlot->SetAlignment(FVector2D(0.0f, 0.0f));
-		PanelSlot->SetPosition(FVector2D(ScreenMargin, 166.0f));
+		PanelSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+		PanelSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+		PanelSlot->SetPosition(FVector2D(-ScreenMargin, 82.0f));
 		PanelSlot->SetAutoSize(true);
 		PanelSlot->SetZOrder(35);
 	}
@@ -742,7 +742,8 @@ void UERAICommandPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTim
 		const float E = OpenTrack.Expo(0.00f, 0.36f);
 		const float DivE = OpenTrack.Expo(0.08f, 0.36f);
 		SetRenderOpacity(E);
-		const float SlideX = bLegionModeUI ? -18.0f : 18.0f;
+		// 两种挂载模式现均锚定右上角, 统一自右侧滑入
+		const float SlideX = 18.0f;
 		SetRenderTranslation(FVector2D(SlideX * (1.0f - E), 0.0f));
 		if (PanelFrame)    { PanelFrame->SetMotionState(FMath::Lerp(0.45f, 1.0f, E), 0.0f, E < 0.99f ? E : 1.0f); }
 		if (HeaderDivider) { HeaderDivider->SetRevealAlpha(DivE); }

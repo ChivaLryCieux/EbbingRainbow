@@ -87,7 +87,7 @@ void UERHallHUD::NativeConstruct()
 	}
 	if (RoutesButton)
 	{
-		RoutesButton->SetButtonTexts(INVTEXT("银河委托"), FText::GetEmpty());
+		RoutesButton->SetButtonTexts(INVTEXT("接取委托"), FText::GetEmpty());
 		RoutesButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
 		RoutesButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleRoutesClicked);
 	}

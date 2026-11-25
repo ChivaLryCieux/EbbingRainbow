@@ -7,6 +7,7 @@
 #include "LegionTypes.generated.h"
 
 class USkeletalMeshComponent;
+class ALegionUnit;
 
 /** 兵团阵营 (与战斗系统 EBattleTeam 语义对齐, 但独立定义避免耦合) */
 UENUM(BlueprintType)
@@ -54,62 +55,26 @@ struct FLegionArchetypeStats
 
 	static FLegionArchetypeStats GetForClass(ELegionClass InClass)
 	{
+		// 2026-12 真实弹道改造: 敌我全员统一为同一套射手数值。
+		// 杀伤不再按兵种数值结算, 完全由实体弹道命中决定 (见 LegionGameMode 子弹模拟);
+		// 兵种差异暂退居纯视觉/战役身份, 克制链等真实弹道版兵种特性成熟后再回归。
 		FLegionArchetypeStats S;
 		S.Class = InClass;
+		S.MoveSpeed = 520.0f;
+		S.SoldierHP = 40;             // 统一两枪倒 (步枪单发 25)
+		S.DamagePerSoldierPerSec = 0.0f; // 已废弃: 不再有按秒自动结算伤害
+		S.EngageRange = 2600.0f;      // 统一步枪射程
+		S.bRanged = true;
+		S.VolleyInterval = 1.9f;      // 单兵射击基础 Cadence (秒), 个体带 ±30% 抖动
+		S.FrontalBlockRatio = 0.0f;
+		S.BraceAntiMeleeMul = 1.0f;
+		S.KnockbackImpulse = 0.0f;
 		switch (InClass)
 		{
-		case ELegionClass::Shieldbearer:
-			S.MoveSpeed = 420.0f;
-			S.SoldierHP = 48;
-			S.DamagePerSoldierPerSec = 4.6f;
-			S.EngageRange = 320.0f;
-			S.bRanged = false;
-			S.FrontalBlockRatio = 0.65f; // 正面抗线极硬, 怕侧背
-			S.BraceAntiMeleeMul = 1.15f;
-			S.KnockbackImpulse = 90.0f;
-			S.ColumnBias = 1.8f; // 稳固方阵, 适配任意朝向个人转身
-			S.BodyXYScale = 1.15f;
-			break;
-
-		case ELegionClass::Pikeman:
-			S.MoveSpeed = 480.0f;
-			S.SoldierHP = 34;
-			S.DamagePerSoldierPerSec = 6.2f;
-			S.EngageRange = 420.0f;
-			S.bRanged = false;
-			S.FrontalBlockRatio = 0.25f;
-			S.BraceAntiMeleeMul = 1.85f; // 静止驻守专克突击冲阵
-			S.KnockbackImpulse = 260.0f;
-			S.ColumnBias = 1.7f;
-			S.BodyXYScale = 0.98f;
-			break;
-
-		case ELegionClass::Vanguard:
-			S.MoveSpeed = 660.0f;
-			S.SoldierHP = 32;
-			S.DamagePerSoldierPerSec = 8.4f;
-			S.EngageRange = 300.0f;
-			S.bRanged = false;
-			S.FrontalBlockRatio = 0.15f;
-			S.BraceAntiMeleeMul = 1.0f;
-			S.KnockbackImpulse = 190.0f;
-			S.ColumnBias = 1.4f;
-			S.BodyXYScale = 1.0f;
-			break;
-
-		case ELegionClass::Marksman:
-			S.MoveSpeed = 500.0f;
-			S.SoldierHP = 22;
-			S.DamagePerSoldierPerSec = 6.8f;
-			S.EngageRange = 2300.0f; // 远程射程 (配合高地可达 ~3000cm, 远小于开局间距)
-			S.bRanged = true;
-			S.VolleyInterval = 1.05f;
-			S.FrontalBlockRatio = 0.0f;
-			S.BraceAntiMeleeMul = 0.65f; // 被贴身弱势
-			S.KnockbackImpulse = 70.0f;
-			S.ColumnBias = 1.8f;
-			S.BodyXYScale = 0.92f;
-			break;
+		case ELegionClass::Shieldbearer: S.ColumnBias = 1.8f; S.BodyXYScale = 1.15f; break;
+		case ELegionClass::Pikeman:      S.ColumnBias = 1.7f; S.BodyXYScale = 0.98f; break;
+		case ELegionClass::Vanguard:     S.ColumnBias = 1.4f; S.BodyXYScale = 1.0f;  break;
+		case ELegionClass::Marksman:     S.ColumnBias = 1.8f; S.BodyXYScale = 0.92f; break;
 		}
 		return S;
 	}
@@ -123,6 +88,21 @@ struct FLegionTracerBeam
 	FLinearColor Color = FLinearColor::White;
 	float Remaining = 0.25f;
 	float Duration = 0.25f;
+};
+
+/**
+ * 真实弹道子弹 (2026-12 改造): 纯值类型轻量模拟, 不生成 Actor。
+ * GameMode 逐帧积分推进, 线段扫描敌方士兵胶囊与地形静态物,
+ * 只有几何上确实命中目标个体胶囊才结算伤害 —— 射不准就真的是打飞。
+ */
+struct FLegionBullet
+{
+	FVector Pos = FVector::ZeroVector;
+	FVector PrevPos = FVector::ZeroVector;
+	FVector Vel = FVector::ZeroVector;
+	float Life = 0.0f;
+	ELegionTeam Team = ELegionTeam::Player;
+	TWeakObjectPtr<ALegionUnit> Source;
 };
 
 /**
@@ -176,4 +156,10 @@ struct FLegionSoldier
 
 	/** 布娃娃已开启 (仅骨骼士兵模式) */
 	bool bRagdolled = false;
+
+	/** 距下次可开火剩余秒数 (真实弹道射击 Cadence; 逐兵独立带相位抖动) */
+	float FireTimer = 0.0f;
+
+	/** 开火动画播放截止的世界时间 (<=0 表示未在播开火动画) */
+	float FireAnimEndTime = -1.0f;
 };

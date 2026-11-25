@@ -8,6 +8,7 @@
 #include "Components/Border.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
@@ -22,6 +23,10 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Core/ERLog.h"
 #include "Engine/Texture2D.h"
+#include "Engine/World.h"
+#include "Experimental/AITacticalCommand/UBattleAICommandService.h"
+#include "Experimental/LegionBattle/LegionDeployScreen.h"
+#include "GameFramework/PlayerController.h"
 #include "UI/ERActionButton.h"
 #include "UI/ERUIStatics.h"
 #include "UI/ERUITheme.h"
@@ -55,6 +60,7 @@ void UERGalaCommandPanel::OpenPanel(int32 InitialTab)
 	SetVisibility(ESlateVisibility::Visible);
 	SetActiveTab(InitialTab);
 	RefreshAll();
+	SyncSettingsInputsFromService();
 }
 
 void UERGalaCommandPanel::ClosePanel()
@@ -285,7 +291,7 @@ void UERGalaCommandPanel::BuildLayout()
 	}
 
 	// =========================================================================
-	// TAB 3: 设置 (占位)
+	// TAB 3: 设置 (AI 战术指挥接入配置)
 	// =========================================================================
 	{
 		UVerticalBox* Page3 = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SettingsPage"));
@@ -300,14 +306,82 @@ void UERGalaCommandPanel::BuildLayout()
 		Page3->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("终端设置"), 22))
 			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
-		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->BoneGhost, false, FMargin(22.0f, 16.0f));
+		// ---- AI 战术指挥接入卡: 协议预设 + 接口/模型/密钥 + 保存 ----
+		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->Accent, false, FMargin(24.0f, 18.0f));
+		UVerticalBox* Inner = Card.Content;
+
+		UTextBlock* AITitle = ERUI::MakeText(this, INVTEXT("AI 战术指挥接入"), EERTypeScale::Title, ERUI::InkText(), false);
+		AITitle->SetFont(ERUI::FontBold(20, 40));
+		Inner->AddChildToVerticalBox(AITitle)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
+
+		UTextBlock* AIDesc = ERUI::MakeText(this,
+			INVTEXT("配置大模型接口后, 战场上可通过右上「接入 AI」以自然语言指挥全军。接口地址同时决定通信协议: 以 /messages 结尾走 Anthropic 协议, 其余走 OpenAI 兼容协议。"),
+			EERTypeScale::Micro, ERUI::InkText(0.55f), false);
+		AIDesc->SetFont(ERUI::FontRegular(13, 20));
+		AIDesc->SetAutoWrapText(true);
+		Inner->AddChildToVerticalBox(AIDesc)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+
+		// 输入行: 标签固定宽 + 输入框通栏
+		auto AddInputRow = [this, Inner](const FText& Label, TObjectPtr<UEditableTextBox>& OutInput, const FText& Hint, bool bPassword)
+		{
+			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+
+			USizeBox* LabelBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+			LabelBox->SetWidthOverride(90.0f);
+			UTextBlock* Lbl = ERUI::MakeText(this, Label, EERTypeScale::Micro, ERUI::InkText(0.72f), false);
+			Lbl->SetFont(ERUI::FontBold(14, 60));
+			LabelBox->AddChild(Lbl);
+			Row->AddChildToHorizontalBox(LabelBox)->SetVerticalAlignment(VAlign_Center);
+
+			UEditableTextBox* InputWidget = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass());
+			StyleBoneInputBox(InputWidget, Hint, bPassword);
+			OutInput = InputWidget;
+			{
+				UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(InputWidget);
+				S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+				S->SetVerticalAlignment(VAlign_Center);
+			}
+			Inner->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+		};
+
+		AddInputRow(INVTEXT("接口地址"), SettingsEndpointInput, INVTEXT("https://api.deepseek.com/v1/chat/completions"), false);
+		AddInputRow(INVTEXT("模型名称"), SettingsModelInput,    INVTEXT("deepseek-chat"), false);
+		AddInputRow(INVTEXT("API Key"), SettingsApiKeyInput,   INVTEXT("sk-... (仅保存于本地 Saved/ER_AIConfig.json)"), true);
+
+		UTextBlock* KeyNote = ERUI::MakeText(this,
+			INVTEXT("密钥仅保存在本机 Saved/ER_AIConfig.json, 不上传任何其他服务器, 也不进入版本库。"),
+			EERTypeScale::Micro, ERUI::InkText(0.45f), false);
+		KeyNote->SetFont(ERUI::FontRegular(12, 20));
+		KeyNote->SetAutoWrapText(true);
+		Inner->AddChildToVerticalBox(KeyNote)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+
+		// 保存行: 按钮 + 状态反馈
+		{
+			UHorizontalBox* SaveRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			UERActionButton* SaveBtn = MakeBoneButton(INVTEXT("保存配置"), 18, true,
+				[this]() { OnSaveAIConfigClicked(); });
+			SaveRow->AddChildToHorizontalBox(SaveBtn)->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+
+			SettingsStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, ERUI::InkText(0.55f), false);
+			SettingsStatusText->SetFont(ERUI::FontRegular(13, 20));
+			SettingsStatusText->SetAutoWrapText(true);
+			{
+				UHorizontalBoxSlot* S = SaveRow->AddChildToHorizontalBox(SettingsStatusText);
+				S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+				S->SetVerticalAlignment(VAlign_Center);
+			}
+			Inner->AddChildToVerticalBox(SaveRow);
+		}
+		Page3->AddChildToVerticalBox(Card.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+
+		// ---- 画面与音频 (后续周期开放) ----
+		ERUI::FBoneCard StubCard = ERUI::MakeBoneCard(this, T->BoneGhost, false, FMargin(24.0f, 14.0f));
 		UTextBlock* Placeholder = ERUI::MakeText(this,
-			INVTEXT("暂无可用设置项。画面、音频与指挥终端偏好将在后续周期开放。"),
-			EERTypeScale::Body, ERUI::InkText(0.62f), false);
-		Placeholder->SetFont(ERUI::FontRegular(16, 20));
-		Placeholder->SetAutoWrapText(true);
-		Card.Content->AddChildToVerticalBox(Placeholder);
-		Page3->AddChildToVerticalBox(Card.Root);
+			INVTEXT("画面、音频与指挥终端偏好将在后续周期开放。"),
+			EERTypeScale::Body, ERUI::InkText(0.5f), false);
+		Placeholder->SetFont(ERUI::FontRegular(14, 20));
+		StubCard.Content->AddChildToVerticalBox(Placeholder);
+		Page3->AddChildToVerticalBox(StubCard.Root);
 	}
 
 	// =========================================================================
@@ -469,73 +543,175 @@ void UERGalaCommandPanel::RebuildContractList()
 		}
 		UVerticalBox* Inner = Card.Content;
 
-		// 标题行
-		UHorizontalBox* TopRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		const FGalacticSector* Sec = Campaign->FindSector(C.TargetSectorId);
+		const FString SecName = Sec ? Sec->Name : TEXT("未知星区");
+
+		// ---- 卡片正文: 七要素垂直排列, 每行独占一个横带, 行间留白 ----
+
+		// 1. 任务地点 Logo (技能图标占位): 暗曜石方框 + 红色系图标 (按星区取模选型)
+		{
+			UBorder* LogoBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+			LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.012f, 0.013f, 0.018f, 0.94f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.5f)));
+			LogoBox->SetBrushColor(FLinearColor::White);
+			LogoBox->SetPadding(FMargin(4.0f));
+			LogoBox->SetHorizontalAlignment(HAlign_Left);
+
+			UImage* LogoImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+			static const ELegionClass Pick[4] = {
+				ELegionClass::Shieldbearer, ELegionClass::Pikeman, ELegionClass::Vanguard, ELegionClass::Marksman
+			};
+			if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr,
+				ERGalacticMeta::GetClassLogoAssetPath(Pick[C.TargetSectorId % 4], false)))
+			{
+				FSlateBrush Brush;
+				Brush.SetResourceObject(Tex);
+				Brush.ImageSize = FVector2D(52.0f, 52.0f);
+				Brush.DrawAs = ESlateBrushDrawType::Image;
+				LogoImg->SetBrush(Brush);
+			}
+			else
+			{
+				FSlateBrush IconBrush;
+				IconBrush.ImageSize = FVector2D(52.0f, 52.0f);
+				IconBrush.DrawAs = ESlateBrushDrawType::Image;
+				LogoImg->SetBrush(IconBrush);
+			}
+			LogoBox->SetContent(LogoImg);
+			{
+				UVerticalBoxSlot* S = Inner->AddChildToVerticalBox(LogoBox);
+				S->SetHorizontalAlignment(HAlign_Left);
+				S->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 14.0f));
+			}
+		}
+
+		// 2. 任务名字 (独占整宽, 不与 Logo/星级抢横向空间)
 		UTextBlock* Title = ERUI::MakeText(this, FText::FromString(C.Title), EERTypeScale::Title, ERUI::InkText(), false);
 		Title->SetFont(ERUI::FontBold(24, 40));
 		Title->SetAutoWrapText(true);
+		Inner->AddChildToVerticalBox(Title)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+
+		// 3. 任务地点: 标签浅墨 + 星区名重墨
 		{
-			UHorizontalBoxSlot* S = TopRow->AddChildToHorizontalBox(Title);
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			S->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
+			UHorizontalBox* LocRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			UTextBlock* LocLabel = ERUI::MakeText(this, INVTEXT("任务地点"), EERTypeScale::Micro, ERUI::InkText(0.48f), false);
+			LocLabel->SetFont(ERUI::FontBold(13, 80));
+			LocRow->AddChildToHorizontalBox(LocLabel)->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+			UTextBlock* LocValue = ERUI::MakeText(this, FText::FromString(SecName), EERTypeScale::Caption, ERUI::InkText(0.92f), false);
+			LocValue->SetFont(ERUI::FontBold(16, 50));
+			LocRow->AddChildToHorizontalBox(LocValue);
+			Inner->AddChildToVerticalBox(LocRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
 		}
 
-		FString Stars;
-		for (int32 s = 0; s < 5; ++s) { Stars += (s < C.DangerRating) ? TEXT("★") : TEXT("☆"); }
-		UTextBlock* DangerTxt = ERUI::MakeText(this, FText::FromString(FString::Printf(TEXT("威胁 %s"), *Stars)),
-			EERTypeScale::Caption, FLinearColor(0.58f, 0.31f, 0.0f, 1.0f), false);
-		DangerTxt->SetFont(ERUI::FontBold(14, 60));
-		TopRow->AddChildToHorizontalBox(DangerTxt);
-		Inner->AddChildToVerticalBox(TopRow);
-
-		// 雇主与战区行
-		const FGalacticSector* Sec = Campaign->FindSector(C.TargetSectorId);
-		const FString SecName = Sec ? Sec->Name : TEXT("未知星区");
+		// 雇主 → 敌对 (tertiary 情报行)
 		UTextBlock* Meta = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("雇主: %s   →   敌对: %s   |   战区: %s"),
+			FText::FromString(FString::Printf(TEXT("雇主 %s  ·  敌对 %s"),
 				*ERGalacticMeta::GetFactionName(C.Employer),
-				*ERGalacticMeta::GetFactionName(C.EnemyFaction),
-				*SecName)),
-			EERTypeScale::Micro, ERUI::InkText(0.82f), false);
-		Meta->SetFont(ERUI::FontBold(16, 40));
-		Meta->SetAutoWrapText(true);
-		Inner->AddChildToVerticalBox(Meta)->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 7.0f));
+				*ERGalacticMeta::GetFactionName(C.EnemyFaction))),
+			EERTypeScale::Micro, ERUI::InkText(0.55f), false);
+		Meta->SetFont(ERUI::FontRegular(13, 30));
+		Inner->AddChildToVerticalBox(Meta)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
-		// 简报
-		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(C.Briefing), EERTypeScale::Body, ERUI::InkText(0.68f), false);
-		Brief->SetFont(ERUI::FontRegular(16, 20));
-		Brief->SetAutoWrapText(true);
-		Inner->AddChildToVerticalBox(Brief)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
-
-		// 敌情与报酬 + 出击按钮
-		UHorizontalBox* BotRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		UTextBlock* Intel = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("敌情: %d 波次 · %d 名作战单位  |  酬金: +%d 信用点  |  控制权 %+.1f%%"),
-				C.EnemyWaves.Num(), C.GetTotalEnemySoldiers(), C.RewardCredits, C.ControlShift)),
-			EERTypeScale::Micro, ERUI::InkText(), false);
-		Intel->SetFont(ERUI::FontBold(16, 30));
-		Intel->SetAutoWrapText(true);
+		// 4. 难度星级: 最低一星, 标签浅墨 + 琥珀星同行
 		{
-			UHorizontalBoxSlot* S = BotRow->AddChildToHorizontalBox(Intel);
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
+			UHorizontalBox* StarRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			UTextBlock* StarLabel = ERUI::MakeText(this, INVTEXT("任务难度"), EERTypeScale::Micro, ERUI::InkText(0.48f), false);
+			StarLabel->SetFont(ERUI::FontBold(13, 80));
+			{
+				UHorizontalBoxSlot* S = StarRow->AddChildToHorizontalBox(StarLabel);
+				S->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+				S->SetVerticalAlignment(VAlign_Center);
+			}
+			FString Stars;
+			const int32 Rating = FMath::Clamp(C.DangerRating, 1, 5);
+			for (int32 s = 0; s < 5; ++s) { Stars += (s < Rating) ? TEXT("★") : TEXT("☆"); }
+			UTextBlock* DangerTxt = ERUI::MakeText(this, FText::FromString(Stars),
+				EERTypeScale::Caption, FLinearColor(0.58f, 0.31f, 0.0f, 1.0f), false);
+			DangerTxt->SetFont(ERUI::FontBold(17, 40));
+			StarRow->AddChildToHorizontalBox(DangerTxt);
+			Inner->AddChildToVerticalBox(StarRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 		}
 
+		// 5. 任务简述: 占据弹性空间, 把报酬与按钮压到底部
+		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(C.Briefing), EERTypeScale::Body, ERUI::InkText(0.66f), false);
+		Brief->SetFont(ERUI::FontRegular(15, 20));
+		Brief->SetAutoWrapText(true);
+		{
+			UVerticalBoxSlot* S = Inner->AddChildToVerticalBox(Brief);
+			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		}
+
+		// ---- 任务报酬 (要素 6): 标签/酬金/控制权/敌情各自成行 ----
+		UTextBlock* RewardLabel = ERUI::MakeText(this, INVTEXT("任务报酬"), EERTypeScale::Micro, ERUI::InkText(0.48f), false);
+		RewardLabel->SetFont(ERUI::FontBold(13, 80));
+		Inner->AddChildToVerticalBox(RewardLabel)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
+
+		UTextBlock* RewardValue = ERUI::MakeText(this,
+			FText::FromString(FString::Printf(TEXT("+%d 信用点"), C.RewardCredits)),
+			EERTypeScale::Caption, ERUI::InkText(), false);
+		RewardValue->SetFont(ERUI::FontBold(21, 30));
+		Inner->AddChildToVerticalBox(RewardValue)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 3.0f));
+
+		UTextBlock* ControlTxt = ERUI::MakeText(this,
+			FText::FromString(FString::Printf(TEXT("控制权 %+.1f%%"), C.ControlShift)),
+			EERTypeScale::Micro, ERUI::InkText(0.78f), false);
+		ControlTxt->SetFont(ERUI::FontBold(14, 30));
+		Inner->AddChildToVerticalBox(ControlTxt)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 6.0f));
+
+		UTextBlock* Intel = ERUI::MakeText(this,
+			FText::FromString(FString::Printf(TEXT("敌情 %d 波次 · %d 名作战单位"),
+				C.EnemyWaves.Num(), C.GetTotalEnemySoldiers())),
+			EERTypeScale::Micro, ERUI::InkText(0.55f), false);
+		Intel->SetFont(ERUI::FontRegular(13, 30));
+		Inner->AddChildToVerticalBox(Intel)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+
+		// ---- 接取按钮 (要素 7): 通栏主按钮 ----
 		const int32 ContractId = C.ContractId;
-		UERActionButton* DeployBtn = MakeBoneButton(INVTEXT("接入虹膜 · 出击部署"), 24, true,
+		UERActionButton* DeployBtn = MakeBoneButton(INVTEXT("接取委托 · 出击部署"), 22, true,
 			[this, ContractId]()
 			{
-				if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
+				UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this);
+				if (!Camp || bDeployInTransit) { return; }
+				bDeployInTransit = true;
+
+				// 先盖上静态「神经接驳」过渡屏, 随后直接调 OpenLevel —
+				// SetClientTravel 本就延迟到下一帧引擎 tick 才处理 (UEngine::TickWorldTravel),
+				// 本帧过渡屏照常光栅化, 关卡加载卡顿发生在接驳屏上,
+				// 与 Lvl_Legion 内的交互式接驳屏视觉连续 (草皮构筑期间玩家不会盯着黑屏)。
+				// 切勿经 FTSTicker 转一手: 核心 ticker 回调脱离 PIE 世界上下文 (GPlayInEditorID==-1),
+				// 此时 GetCurrentPlayWorld() 返回空, 部署静默失败 —— 已踩过 (2026-11)
+				ULegionDeployScreen* Screen = nullptr;
+				if (UWorld* World = GetWorld())
 				{
-					Camp->AcceptAndDeployContract(ContractId, this);
+					if (APlayerController* PC = World->GetFirstPlayerController())
+					{
+						Screen = CreateWidget<ULegionDeployScreen>(PC, ULegionDeployScreen::StaticClass());
+						if (Screen)
+						{
+							const FGalacticContract* Contract = Camp->FindContract(ContractId);
+							const FString Title = Contract ? Contract->Title : TEXT("出击部署");
+							const FString Sub = Contract
+								? FString::Printf(TEXT("委托  ·  %s 对 %s  ·  第 %02d 星区"),
+									*ERGalacticMeta::GetFactionCode(Contract->Employer),
+									*ERGalacticMeta::GetFactionCode(Contract->EnemyFaction),
+									Contract->TargetSectorId + 1)
+								: TEXT("虹膜基金会  ·  银河军事指挥");
+							Screen->SetupTransit(FText::FromString(Title), FText::FromString(Sub));
+							Screen->AddToViewport(999);
+						}
+					}
+				}
+
+				if (!Camp->AcceptAndDeployContract(ContractId, this))
+				{
+					// 部署被拒绝 (合同失效/无存活士兵等): 撤销过渡屏并解锁按钮
+					bDeployInTransit = false;
+					if (Screen) { Screen->RemoveFromParent(); }
 				}
 			});
-		BotRow->AddChildToHorizontalBox(DeployBtn)->SetVerticalAlignment(VAlign_Center);
 		{
-			UVerticalBoxSlot* S = Inner->AddChildToVerticalBox(BotRow);
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			S->SetVerticalAlignment(VAlign_Bottom);
+			UVerticalBoxSlot* S = Inner->AddChildToVerticalBox(DeployBtn);
+			S->SetHorizontalAlignment(HAlign_Fill);
 		}
 
 		if (UHorizontalBoxSlot* S = ContractListBox->AddChildToHorizontalBox(Card.Root))
@@ -722,5 +898,80 @@ void UERGalaCommandPanel::OnReinforceAllClicked()
 		{
 			RefreshAll();
 		}
+	}
+}
+
+void UERGalaCommandPanel::StyleBoneInputBox(UEditableTextBox* Box, const FText& Hint, bool bIsPassword)
+{
+	if (!Box) { return; }
+	const UERUITheme* T = ERUI::Theme();
+
+	// 白底墨字主题: 浅骨底 + 墨色文字, 聚焦时描边转虹彩
+	FEditableTextBoxStyle Style = Box->GetWidgetStyle();
+	Style.SetFont(ERUI::FontRegular(14, 20));
+	Style.SetForegroundColor(FSlateColor(ERUI::InkText()));
+	Style.SetFocusedForegroundColor(FSlateColor(ERUI::InkText()));
+	Style.SetBackgroundColor(FSlateColor(FLinearColor::White));
+	Style.SetBackgroundImageNormal(ERUI::RoundedBrush(0.0f, FLinearColor(0.93f, 0.925f, 0.90f, 1.0f), 1.0f, ERUI::InkText(0.22f)));
+	Style.SetBackgroundImageHovered(ERUI::RoundedBrush(0.0f, FLinearColor(0.95f, 0.945f, 0.92f, 1.0f), 1.0f, ERUI::InkText(0.45f)));
+	Style.SetBackgroundImageFocused(ERUI::RoundedBrush(0.0f, FLinearColor(0.97f, 0.965f, 0.94f, 1.0f), 1.2f, T->Accent));
+	Style.SetPadding(FMargin(10.0f, 7.0f));
+	Box->SetWidgetStyle(Style);
+	Box->SetHintText(Hint);
+	Box->SetIsPassword(bIsPassword);
+}
+
+void UERGalaCommandPanel::SyncSettingsInputsFromService()
+{
+	if (!SettingsEndpointInput) { return; }
+
+	UWorld* World = GetWorld();
+	UBattleAICommandService* Service = World ? UBattleAICommandService::Get(World) : nullptr;
+	if (!Service)
+	{
+		if (SettingsStatusText)
+		{
+			SettingsStatusText->SetText(INVTEXT("AI 指挥模块未编译启用 (ER_WITH_AI_COMMAND=0)"));
+			SettingsStatusText->SetColorAndOpacity(FSlateColor(ERUI::InkText(0.55f)));
+		}
+		return;
+	}
+
+	const FAICommandConfig& Cfg = Service->GetConfig();
+	SettingsEndpointInput->SetText(FText::FromString(Cfg.EndpointUrl));
+	if (SettingsModelInput) { SettingsModelInput->SetText(FText::FromString(Cfg.ModelName)); }
+	if (SettingsApiKeyInput) { SettingsApiKeyInput->SetText(FText::FromString(Cfg.ApiKey)); }
+
+	if (SettingsStatusText)
+	{
+		SettingsStatusText->SetText(FText::FromString(
+			Service->HasApiKey() ? TEXT("密钥已就绪 · 战场中可接入 AI") : TEXT("未配置密钥 · AI 接入不可用")));
+		SettingsStatusText->SetColorAndOpacity(FSlateColor(ERUI::InkText(0.55f)));
+	}
+}
+
+void UERGalaCommandPanel::OnSaveAIConfigClicked()
+{
+	UWorld* World = GetWorld();
+	UBattleAICommandService* Service = World ? UBattleAICommandService::Get(World) : nullptr;
+	if (!Service || !SettingsEndpointInput || !SettingsModelInput || !SettingsApiKeyInput)
+	{
+		return;
+	}
+
+	// 保留现有附加提示词/工具轮次等不在此面板编辑的字段
+	FAICommandConfig NewCfg = Service->GetConfig();
+	NewCfg.EndpointUrl = SettingsEndpointInput->GetText().ToString();
+	NewCfg.ModelName = SettingsModelInput->GetText().ToString();
+	NewCfg.ApiKey = SettingsApiKeyInput->GetText().ToString();
+	Service->SetConfig(NewCfg, true);
+
+	if (SettingsStatusText)
+	{
+		const bool bReady = Service->HasApiKey();
+		SettingsStatusText->SetText(FText::FromString(
+			bReady ? TEXT("配置已保存 · 密钥已就绪") : TEXT("配置已保存 · 警告: 密钥为空, 远程接口将鉴权失败")));
+		SettingsStatusText->SetColorAndOpacity(FSlateColor(
+			bReady ? FLinearColor(0.15f, 0.45f, 0.2f, 1.0f) : FLinearColor(0.6f, 0.3f, 0.05f, 1.0f)));
 	}
 }

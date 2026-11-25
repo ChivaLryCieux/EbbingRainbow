@@ -10,6 +10,7 @@
 class UBorder;
 class UCanvasPanel;
 class UERActionButton;
+class UEditableTextBox;
 class UHorizontalBox;
 class UProgressBar;
 class UScrollBox;
@@ -61,6 +62,11 @@ private:
 	void OnRefreshContractsClicked();
 	void OnReinforceAllClicked();
 
+	/** 终端设置页: AI 战术指挥接入配置 (与战场 AI 面板共用 Saved/ER_AIConfig.json) */
+	void SyncSettingsInputsFromService();
+	void OnSaveAIConfigClicked();
+	void StyleBoneInputBox(UEditableTextBox* Box, const FText& Hint, bool bIsPassword);
+
 	/** 「白底墨字彩条」按钮 (只含中文); OnClick 用 lambda 承载载荷 */
 	UERActionButton* MakeBoneButton(const FText& Label, int32 FontSize, bool bArrow, TFunction<void()> OnClick);
 
@@ -81,7 +87,14 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> RecruitBarBox;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> RosterSummaryText;
 
+	UPROPERTY(Transient) TObjectPtr<UEditableTextBox> SettingsEndpointInput;
+	UPROPERTY(Transient) TObjectPtr<UEditableTextBox> SettingsModelInput;
+	UPROPERTY(Transient) TObjectPtr<UEditableTextBox> SettingsApiKeyInput;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> SettingsStatusText;
+
 	bool bBuilt = false;
 	bool bIsOpen = false;
 	int32 ActiveTab = 0;
+	/** 出击部署已点击、等待下一帧 OpenLevel: 防止卡顿期间重复点击触发多次部署 */
+	bool bDeployInTransit = false;
 };

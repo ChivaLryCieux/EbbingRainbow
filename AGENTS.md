@@ -66,6 +66,22 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
 （自然岛 nav 诊断）、`-Atmo`（显式开启程序氛围：种子化三点光+虚空雾；
 默认关——生成器不生成灯也不调雾，关卡自摆光照归用户手调）。
 
+军团战场（Lvl_Legion）：`-DeployShot`（出击接驳屏三态连拍：加载中/就绪/进入战场，
+脚本 `Scripts/legion_deploy_shot.ps1`）、`-NoDeployScreen`（跳过接驳屏直接开战；
+`-LegionShot/-SkyShot/-MapShot` 自动化隐含跳过）。
+**PIE 世界上下文陷阱（2026-11 踩过）**：`GEngine->GetCurrentPlayWorld()` 依赖线程上下文
+`GPlayInEditorID`，只在 PIE 世界的 tick/输入处理栈内才返回 PIE 世界；在核心 ticker
+（FTSTicker）回调、编辑器循环其他阶段调用会返回 nullptr——依赖它的逻辑（如
+`AcceptAndDeployContract` 不传 WorldContext）在 PIE 里静默失败且无任何日志。
+规矩：PIE 可能触达的调用一律显式传 WorldContext（PC/面板/任意世界内对象），
+或留在世界上下文内（输入处理器、Actor tick）直接调用；OpenLevel 的 SetClientTravel
+本来就延迟到下一帧引擎 tick，无需再用 ticker 手动延迟。接驳屏 `ULegionDeployScreen` 的关键认知：
+**Landscape 草皮生成本质是全图无界的**（本图几十万亩 instances 线性增长永不收敛，
+暂停世界还会冻结生成），就绪判定只能统计玩家相机 ~80m「可见泡」内的植被稳定性
+（草种 EndCull 最远 70m，泡外反正不可见，进场后随移动增量流送），并用
+`ULandscapeSubsystem::PrioritizeGrassCreation` 近处优先+4 倍配额把就绪压到 ~1.5s；
+战斗门控在 `ALegionGameMode::bBattleStarted/BeginBattle`（加载期不计时、不索敌、不空降）。
+
 ## 场景架构（当前）
 
 - `Lvl_Route`（空关卡，全部程序生成）：`ARouteSceneBuilder` 在
@@ -93,6 +109,26 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   不按场景复制。
 - 旧 `WFC3DArenaGenerator_Atrium`（语法+socket 铺瓦）保留不用。
 - 航线节点 `Battle`→体素场，`BattleNature`→自然岛，遭遇种子来自节点。
+
+## 军团战场真实弹道（2026-12 改造）关键认知
+
+- **FP 模板 Mannequin 的 `MM_*` 动作动画是 additive 叠加层**（MM_Pistol_Fire/
+  Reload/Equip 等），`EAnimationMode::AnimationSingleNode` 单节点实例**不能播放**
+  ——日志告警 "Setting an additive animation ... is not allowed"，渲染出来是
+  bind-pose 僵尸直立。交战姿态用 `MF_Pistol_Idle_ADS`（瞄准站姿）代替，开火
+  反馈由弹道曳光/击杀承担。`MF_*` 前缀（Idle/Jog/Walk 系列）才是全身姿态动画。
+- 手枪 `SM_Pistol` 以**恒等相对变换 attach 到 `hand_r` 骨骼**即正确入握
+  （Epic 网格原点就在握把），无需手工偏移。
+- **`-LegionCloseup` 自动化**：进 Lvl_Legion 后全军突击 + 把玩家传送到第一旅
+  侧翼 5m，8/15/24s 连拍三张近景（LegionCloseupA/B/C），验证持枪/交战姿态/
+  曳光/死亡。传送截图必须**先 `r.MotionBlurQuality 0` 且传送后隔 0.3s 再截**，
+  否则相机瞬移整帧拉花。
+- 弹道模拟在 `ALegionGameMode::SimulateBullets`（子弹数组+扫描命中+地形遮挡），
+  士兵逐兵冷却 (`FLegionSoldier::FireTimer`) 自动开火，命中走
+  `ALegionUnit::ApplyBulletHitToSoldier` 逐兵扣血+沿弹道击飞。
+- 静等资源加载用 `UERAssetCatalog::LoadAsset`（同步 TryLoad + 弱引用缓存），
+  但静态网格渲染数据仍会流送延迟（"Waiting on static mesh being ready"），
+  开局几秒内枪形可能不可见属正常。
 
 ## 代码约定与已知坑
 

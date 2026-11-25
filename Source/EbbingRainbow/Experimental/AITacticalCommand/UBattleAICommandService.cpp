@@ -228,27 +228,36 @@ void UBattleAICommandService::SetConfig(const FAICommandConfig& NewConfig, bool 
 	}
 }
 
+bool UBattleAICommandService::GetPresetValues(const FString& PresetName, FString& OutEndpoint, FString& OutModel)
+{
+	struct FPresetRow { const TCHAR* Name; const TCHAR* Endpoint; const TCHAR* Model; };
+	static const FPresetRow Presets[] =
+	{
+		{ TEXT("DeepSeek"),  TEXT("https://api.deepseek.com/v1/chat/completions"),                        TEXT("deepseek-chat")    },
+		{ TEXT("OpenAI"),    TEXT("https://api.openai.com/v1/chat/completions"),                          TEXT("gpt-4o-mini")      },
+		{ TEXT("Qwen"),      TEXT("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"),  TEXT("qwen-plus")        },
+		{ TEXT("Anthropic"), TEXT("https://api.anthropic.com/v1/messages"),                               TEXT("claude-sonnet-4-5") },
+		{ TEXT("Ollama"),    TEXT("http://localhost:11434/v1/chat/completions"),                          TEXT("qwen2.5:7b")       },
+	};
+	for (const FPresetRow& Row : Presets)
+	{
+		if (PresetName.Equals(Row.Name, ESearchCase::IgnoreCase))
+		{
+			OutEndpoint = Row.Endpoint;
+			OutModel = Row.Model;
+			return true;
+		}
+	}
+	return false;
+}
+
 void UBattleAICommandService::ApplyPreset(const FString& PresetName)
 {
-	if (PresetName.Equals(TEXT("DeepSeek"), ESearchCase::IgnoreCase))
+	FString Endpoint, Model;
+	if (GetPresetValues(PresetName, Endpoint, Model))
 	{
-		Config.EndpointUrl = TEXT("https://api.deepseek.com/v1/chat/completions");
-		Config.ModelName = TEXT("deepseek-chat");
-	}
-	else if (PresetName.Equals(TEXT("OpenAI"), ESearchCase::IgnoreCase))
-	{
-		Config.EndpointUrl = TEXT("https://api.openai.com/v1/chat/completions");
-		Config.ModelName = TEXT("gpt-4o-mini");
-	}
-	else if (PresetName.Equals(TEXT("Qwen"), ESearchCase::IgnoreCase))
-	{
-		Config.EndpointUrl = TEXT("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
-		Config.ModelName = TEXT("qwen-plus");
-	}
-	else if (PresetName.Equals(TEXT("Ollama"), ESearchCase::IgnoreCase))
-	{
-		Config.EndpointUrl = TEXT("http://localhost:11434/v1/chat/completions");
-		Config.ModelName = TEXT("qwen2.5:7b");
+		Config.EndpointUrl = Endpoint;
+		Config.ModelName = Model;
 	}
 }
 
