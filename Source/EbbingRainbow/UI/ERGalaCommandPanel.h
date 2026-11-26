@@ -12,7 +12,7 @@ class UCanvasPanel;
 class UERActionButton;
 class UEditableTextBox;
 class UHorizontalBox;
-class UProgressBar;
+class UERControlSharePie;
 class UScrollBox;
 class UTextBlock;
 class UVerticalBox;
@@ -53,6 +53,7 @@ protected:
 	virtual void NativeConstruct() override;
 
 private:
+	void RefreshCampaignSaveStatus();
 	void BuildLayout();
 	void RebuildFactionAndSectorList();
 	void RebuildContractList();
@@ -73,11 +74,17 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> PanelTitleText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CreditsText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CycleText;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> CampaignSaveNotice;
+	UPROPERTY(Transient) TObjectPtr<UERActionButton> CampaignSaveRetryButton;
+	UPROPERTY(Transient) TObjectPtr<UERActionButton> RefreshContractsButton;
+	UPROPERTY(Transient) TObjectPtr<UERActionButton> ReinforceAllButton;
 	UPROPERTY(Transient) TObjectPtr<UWidget> ContractsPage;
 	UPROPERTY(Transient) TObjectPtr<UWidget> RosterPage;
 	UPROPERTY(Transient) TObjectPtr<UWidget> SituationPage;
 	UPROPERTY(Transient) TObjectPtr<UWidget> SettingsPage;
 
+	UPROPERTY(Transient) TObjectPtr<UERControlSharePie> ControlSharePie;
+	UPROPERTY(Transient) TObjectPtr<UWidget> ControlShareCard;
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> FactionListBox;
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> SectorListBox;
 	UPROPERTY(Transient) TObjectPtr<UBorder> LastOutcomeBox;

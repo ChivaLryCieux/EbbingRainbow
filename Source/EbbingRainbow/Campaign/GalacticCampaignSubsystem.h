@@ -7,11 +7,25 @@
 #include "Campaign/GalacticCampaignTypes.h"
 #include "GalacticCampaignSubsystem.generated.h"
 
+class UGalacticCampaignSaveGame;
+
+/** 银河战役存档状态 (Volatile = 命令行/编辑器调试沙盘, 不写盘) */
+enum class EGalacticCampaignSaveStatus : uint8
+{
+	Volatile,
+	Saved,
+	Recovered,
+	WriteFailed,
+	LoadFailed,
+	Incompatible
+};
+
 /**
  * 虹膜基金会银河战役全局子系统 (跨 Hall / Lvl_Legion 关卡存活):
  *  - 维护基金会资金、玩家常备虹膜链接兵团编制、三大阵营声望与银河控制率、星区态势；
  *  - 生成并派发阵营委托合同 (FGalacticContract)，驱动 Lvl_Legion 战场配置；
- *  - 结算战果：更新兵团战损、发放经费、推动银河战局与星区控制权变迁。
+ *  - 结算战果：更新兵团战损、发放经费、推动银河战局与星区控制权变迁；
+ *  - 正常游戏世界以双槽位原生 .sav 持久化战役快照。
  */
 UCLASS()
 class EBBINGRAINBOW_API UGalacticCampaignSubsystem : public UGameInstanceSubsystem
@@ -24,9 +38,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Campaign")
 	static UGalacticCampaignSubsystem* Get(const UObject* WorldContextObject);
 
-	/** 重置开新战役 */
+	/** 内存沙盘重置 (不会替换已经落盘的战役) */
 	UFUNCTION(BlueprintCallable, Category = "Campaign")
 	void ResetCampaign(int32 Seed = 2026);
+
+	// ---------------- 存档状态 ----------------
+
+	EGalacticCampaignSaveStatus GetSaveStatus() const { return SaveStatus; }
+	bool IsCampaignAvailable() const
+	{
+		return SaveStatus != EGalacticCampaignSaveStatus::LoadFailed
+			&& SaveStatus != EGalacticCampaignSaveStatus::Incompatible;
+	}
+	FText GetSaveNotice() const;
+	bool RetryCampaignSave();
 
 	// ---------------- 查询 ----------------
 
@@ -43,7 +68,6 @@ public:
 	const FGalacticSector* FindSector(int32 SectorId) const;
 
 	const TArray<FManagedLegionData>& GetPlayerLegions() const { return PlayerLegions; }
-	FManagedLegionData* FindPlayerLegionMutable(int32 LegionId);
 
 	const TArray<FGalacticContract>& GetAvailableContracts() const { return AvailableContracts; }
 	const FGalacticContract* FindContract(int32 ContractId) const;
@@ -62,11 +86,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Campaign")
 	bool AcceptAndDeployContract(int32 ContractId, const UObject* WorldContext);
 
-	/**
-	 * 战斗结算入口 (由 ALegionGameMode 战终调用):
-	 *  - SurvivingByLegionId: key = FManagedLegionData::LegionId, value = 剩余存活士兵数
-	 */
-	void CommitBattleOutcome(bool bVictory, const TMap<int32, int32>& SurvivingByLegionId,
+	/** 战斗结算入口 (由 ALegionGameMode 战终调用, ContractId 必须与当前合同一致) */
+	void CommitBattleOutcome(int32 ContractId, bool bVictory, const TMap<int32, int32>& SurvivingByLegionId,
 		int32 TotalPlayerCasualties, int32 TotalEnemyEliminated);
 
 	// ---------------- 军团整备 ----------------
@@ -94,8 +115,20 @@ public:
 	FOnCampaignUpdated OnCampaignUpdated;
 
 private:
-	void InitFactionsAndSectors(FRandomStream& Rng);
+	friend class FGalacticCampaignSaveTest;
+
+	void InitializeCampaignState(int32 Seed);
+	void InitFactionsAndSectors();
 	void InitStarterLegions();
+	void GenerateContracts();
+	bool BeginContract(int32 ContractId);
+	bool LoadCampaign(bool bCreateIfMissing);
+	bool SaveCampaign();
+	bool IsValidSnapshot(const UGalacticCampaignSaveGame& Snapshot) const;
+	void ApplySnapshot(const UGalacticCampaignSaveGame& Snapshot);
+	void PublishCampaignChange();
+
+	FManagedLegionData* FindPlayerLegionMutable(int32 LegionId);
 	void ShiftGalacticControl(EFactionId Winner, EFactionId Loser, float Amount, int32 SectorId);
 	void NormalizeControls();
 
@@ -113,6 +146,9 @@ private:
 
 	UPROPERTY()
 	int32 NextContractId = 1;
+
+	UPROPERTY()
+	int32 ContractRefreshNonce = 0;
 
 	UPROPERTY()
 	TArray<FFactionStatus> Factions;
@@ -134,4 +170,10 @@ private:
 
 	UPROPERTY()
 	FLegionBattleOutcome LastOutcome;
+
+	FString SaveSlotPrefix;
+	EGalacticCampaignSaveStatus SaveStatus = EGalacticCampaignSaveStatus::Volatile;
+	int32 LastSavedSlot = INDEX_NONE;
+	int64 LastSavedGeneration = 0;
+	bool bSaveDirty = false;
 };

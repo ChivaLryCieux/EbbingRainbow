@@ -82,6 +82,7 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativePreConstruct() override;
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 	UFUNCTION() void HandlePersonnelClicked();
@@ -107,6 +108,8 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> SettingsButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> ZenHintBorder;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ZenHintText;
+	UPROPERTY(Transient) TObjectPtr<UBorder> CampaignSaveNoticeBorder;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> CampaignSaveNoticeText;
 
 	UPROPERTY(Transient, meta = (BindWidgetAnimOptional)) TObjectPtr<UWidgetAnimation> Anim_Intro;
 	UPROPERTY(Transient, meta = (BindWidgetAnimOptional)) TObjectPtr<UWidgetAnimation> Anim_ZenEnter;
@@ -114,6 +117,7 @@ protected:
 private:
 	void BuildLayout();
 	void ApplyZenState(bool bInZen);
+	void RefreshCampaignSaveNotice();
 	void ApplyEntrancePose();
 	UWorld* ResolvePlayWorld() const;
 

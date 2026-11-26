@@ -204,6 +204,7 @@ void ALegionGameMode::StartPlay()
 	// 2. 从战役子系统读取委托编成, 或走独立演武沙盘预设
 	UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this);
 	const bool bUseContract = Campaign && Campaign->HasActiveContract();
+	BattleContractId = bUseContract ? Campaign->GetActiveContract().ContractId : INDEX_NONE;
 
 	PlayerLegions.Reset();
 	EnemyLegions.Reset();
@@ -689,9 +690,12 @@ void ALegionGameMode::CheckBattleEnd()
 	}
 	const int32 EnemyEliminated = FMath::Max(0, InitialEnemySoldiersTotal - CountAliveSoldiers(ELegionTeam::Enemy));
 
-	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+	if (BattleContractId != INDEX_NONE)
 	{
-		Campaign->CommitBattleOutcome(bPlayerWon, SurvivingById, TotalCasualties, EnemyEliminated);
+		if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+		{
+			Campaign->CommitBattleOutcome(BattleContractId, bPlayerWon, SurvivingById, TotalCasualties, EnemyEliminated);
+		}
 	}
 
 	UE_LOG(LogERLegion, Log, TEXT("[Legion] Battle over: %s (Player %d legions / %d soldiers)"),

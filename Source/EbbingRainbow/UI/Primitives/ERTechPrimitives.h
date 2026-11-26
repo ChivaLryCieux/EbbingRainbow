@@ -10,6 +10,7 @@ class SERTechFrameLeaf;
 class SERTechDividerLeaf;
 class SERPrismBarLeaf;
 class SERCornerReticleLeaf;
+class SERControlSharePieLeaf;
 
 /** 切角机能面板的点睛色条位置 */
 UENUM(BlueprintType)
@@ -253,4 +254,27 @@ protected:
 
 private:
 	TSharedPtr<SERCornerReticleLeaf> MyLeaf;
+};
+
+struct FERControlShareSlice
+{
+	float Share = 0.0f;
+	FLinearColor Fill = FLinearColor::Black;
+};
+
+UCLASS()
+class EBBINGRAINBOW_API UERControlSharePie : public UWidget
+{
+	GENERATED_BODY()
+
+public:
+	void SetSlices(TArray<FERControlShareSlice> InSlices);
+	virtual void ReleaseSlateResources(bool bReleaseChildren) override;
+
+protected:
+	virtual TSharedRef<SWidget> RebuildWidget() override;
+
+private:
+	TArray<FERControlShareSlice> Slices;
+	TSharedPtr<SERControlSharePieLeaf> MyLeaf;
 };

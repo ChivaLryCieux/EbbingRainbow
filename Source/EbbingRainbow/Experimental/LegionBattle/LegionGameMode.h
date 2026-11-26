@@ -204,6 +204,7 @@ public:
 	void BeginBattle();
 
 	FString GetBattleTitleText() const { return BattleTitleText; }
+	bool IsCampaignBattle() const { return BattleContractId != INDEX_NONE; }
 	FString GetBattleSubText() const { return BattleSubText; }
 
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLegionBattleEnd, bool);
@@ -260,6 +261,7 @@ private:
 
 	// 记录开局各兵团初始人数, 用于结算阵亡总数
 	TMap<int32, int32> InitialPlayerCounts;
+	int32 BattleContractId = INDEX_NONE;
 	int32 InitialEnemySoldiersTotal = 0;
 
 	FString BattleTitleText = TEXT("军团演武");

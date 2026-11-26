@@ -762,3 +762,211 @@ void UERCornerReticle::ReleaseSlateResources(bool bReleaseChildren)
 	Super::ReleaseSlateResources(bReleaseChildren);
 	MyLeaf.Reset();
 }
+
+// ============================================================
+// 5. SERControlSharePieLeaf & UERControlSharePie
+// ============================================================
+
+class SERControlSharePieLeaf : public SLeafWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SERControlSharePieLeaf) {}
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments&) {}
+
+	TArray<FERControlShareSlice> Slices;
+
+	virtual FVector2D ComputeDesiredSize(float) const override { return FVector2D(420.0, 420.0); }
+
+	virtual int32 OnPaint(const FPaintArgs&, const FGeometry& Geo, const FSlateRect&,
+		FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle&, bool) const override
+	{
+		const FVector2D Size = Geo.GetLocalSize();
+		const FVector2D Center = Size * 0.5;
+		const float Side = static_cast<float>(FMath::Min(Size.X, Size.Y));
+		if (Side < 80.0f) { return LayerId; }
+
+		float Total = 0.0f;
+		int32 LastPositive = INDEX_NONE;
+		for (int32 Index = 0; Index < Slices.Num(); ++Index)
+		{
+			const float Share = Slices[Index].Share;
+			if (FMath::IsFinite(Share) && Share > 0.0f)
+			{
+				Total += Share;
+				LastPositive = Index;
+			}
+		}
+		if (LastPositive == INDEX_NONE || !FMath::IsFinite(Total)) { return LayerId; }
+
+		const float Outer = Side * 0.408f;
+		const float Inner = Outer * 0.39f;
+		const float Start = -0.5f * PI;
+		constexpr float FullTurn = 2.0f * PI;
+		const auto Point = [Center](float Angle, float Radius)
+		{
+			return Center + FVector2D(FMath::Cos(Angle), FMath::Sin(Angle)) * Radius;
+		};
+
+		const FPaintGeometry PaintGeo = Geo.ToPaintGeometry();
+
+		// 克制的轨道基座与刻度, 不压制主体扇区。
+		{
+			TArray<FVector2D> Orbit;
+			const float OrbitRadius = Outer + Side * 0.035f;
+			constexpr int32 OrbitSteps = 72;
+			Orbit.Reserve(OrbitSteps + 1);
+			for (int32 Step = 0; Step <= OrbitSteps; ++Step)
+			{
+				Orbit.Add(Point(Start + FullTurn * Step / OrbitSteps, OrbitRadius));
+			}
+			FSlateDrawElement::MakeLines(OutDrawElements, LayerId, PaintGeo, Orbit,
+				ESlateDrawEffect::None, FLinearColor(0.10f, 0.10f, 0.10f, 0.18f), true, 1.0f);
+
+			for (int32 Tick = 0; Tick < 48; ++Tick)
+			{
+				const float Angle = Start + FullTurn * Tick / 48.0f;
+				const float InnerTick = Outer + Side * 0.045f;
+				const float OuterTick = Outer + Side * ((Tick % 4 == 0) ? 0.062f : 0.052f);
+				TArray<FVector2D> Line = { Point(Angle, InnerTick), Point(Angle, OuterTick) };
+				const bool bMajor = Tick % 4 == 0;
+				FSlateDrawElement::MakeLines(OutDrawElements, LayerId, PaintGeo, Line,
+					ESlateDrawEffect::None, FLinearColor(0.10f, 0.10f, 0.10f, bMajor ? 0.20f : 0.10f),
+					true, bMajor ? 1.0f : 0.8f);
+			}
+		}
+
+		struct FPaintedSlice
+		{
+			int32 SliceIndex = INDEX_NONE;
+			float StartAngle = 0.0f;
+			float EndAngle = 0.0f;
+			FLinearColor Fill = FLinearColor::Black;
+		};
+
+		TArray<FSlateVertex> Verts;
+		TArray<SlateIndex> Indices;
+		TArray<FPaintedSlice> Painted;
+		float Angle = Start;
+		const FSlateRenderTransform& RT = Geo.GetAccumulatedRenderTransform();
+		for (int32 Index = 0; Index < Slices.Num(); ++Index)
+		{
+			const FERControlShareSlice& Slice = Slices[Index];
+			const float Share = Slice.Share;
+			if (!FMath::IsFinite(Share) || Share <= 0.0f)
+			{
+				continue;
+			}
+
+			const float End = Index == LastPositive ? Start + FullTurn : Angle + FullTurn * (Share / Total);
+			const int32 Steps = FMath::Max(1, FMath::CeilToInt((End - Angle) * (128.0f / FullTurn)));
+			const int32 SliceBase = Verts.Num();
+			const FColor VertexColor = Slice.Fill.ToFColor(true);
+
+			for (int32 Step = 0; Step <= Steps; ++Step)
+			{
+				const float SampleAngle = FMath::Lerp(Angle, End, static_cast<float>(Step) / Steps);
+				const FVector2D OuterPoint = Point(SampleAngle, Outer);
+				const FVector2D InnerPoint = Point(SampleAngle, Inner);
+				Verts.Add(FSlateVertex::Make<ESlateVertexRounding::Disabled>(RT,
+					FVector2f(static_cast<float>(OuterPoint.X), static_cast<float>(OuterPoint.Y)),
+					FVector2f(0.5f, 0.5f), VertexColor));
+				Verts.Add(FSlateVertex::Make<ESlateVertexRounding::Disabled>(RT,
+					FVector2f(static_cast<float>(InnerPoint.X), static_cast<float>(InnerPoint.Y)),
+					FVector2f(0.5f, 0.5f), VertexColor));
+			}
+			for (int32 Step = 0; Step < Steps; ++Step)
+			{
+				const int32 Base = SliceBase + Step * 2;
+				Indices.Add(static_cast<SlateIndex>(Base));
+				Indices.Add(static_cast<SlateIndex>(Base + 2));
+				Indices.Add(static_cast<SlateIndex>(Base + 1));
+				Indices.Add(static_cast<SlateIndex>(Base + 2));
+				Indices.Add(static_cast<SlateIndex>(Base + 3));
+				Indices.Add(static_cast<SlateIndex>(Base + 1));
+			}
+
+			Painted.Add({ Index, Angle, End, Slice.Fill });
+			Angle = End;
+		}
+
+		const FSlateResourceHandle WhiteHandle = GetWhiteResourceHandle();
+		if (WhiteHandle.IsValid() && Verts.Num() > 0 && Indices.Num() > 0)
+		{
+			FSlateDrawElement::MakeCustomVerts(OutDrawElements, LayerId + 1, WhiteHandle, Verts, Indices, nullptr, 0, 0);
+		}
+
+		if (Painted.Num() > 1)
+		{
+			const FLinearColor SeamColor(0.93f, 0.93f, 0.91f, 0.9f);
+			for (const FPaintedSlice& Slice : Painted)
+			{
+				TArray<FVector2D> Seam = { Point(Slice.StartAngle, Inner), Point(Slice.StartAngle, Outer) };
+				FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 2, PaintGeo, Seam,
+					ESlateDrawEffect::None, SeamColor, true, 1.2f);
+			}
+		}
+
+		if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetRenderer())
+		{
+			TSharedRef<FSlateFontMeasure> Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+			auto DrawCentered = [&](const FString& Text, const FVector2D& TextCenter, const FSlateFontInfo& Font,
+				const FLinearColor& Color)
+			{
+				const FVector2D TextSize = Measure->Measure(Text, Font);
+				const FVector2D Pos = TextCenter - FVector2D(TextSize.X * 0.5, TextSize.Y * 0.5);
+				FSlateDrawElement::MakeText(OutDrawElements, LayerId + 3,
+					Geo.ToPaintGeometry(TextSize, FSlateLayoutTransform(Pos)),
+					Text, Font, ESlateDrawEffect::None, Color);
+			};
+
+			const FString TotalText = FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Total));
+			const FSlateFontInfo TotalFont = ERUI::FontBold(FMath::Clamp(FMath::RoundToInt(Side * 0.062f), 12, 26), 0);
+			const FSlateFontInfo LabelFont = ERUI::FontRegular(FMath::Clamp(FMath::RoundToInt(Side * 0.035f), 8, 13), 40);
+			DrawCentered(TotalText, Center + FVector2D(0.0, -Side * 0.026), TotalFont, ERUI::InkText());
+			DrawCentered(TEXT("控制总量"), Center + FVector2D(0.0, Side * 0.025), LabelFont, ERUI::InkText(0.62f));
+
+			if (Side >= 190.0f)
+			{
+				const FSlateFontInfo WedgeFont = ERUI::FontBold(FMath::Clamp(FMath::RoundToInt(Side * 0.038f), 11, 16), 40);
+				const float LabelRadius = FMath::Lerp(Inner, Outer, 0.52f);
+				for (const FPaintedSlice& Slice : Painted)
+				{
+					if (Slice.EndAngle - Slice.StartAngle < 0.27f)
+					{
+						continue;
+					}
+					const FVector2D LabelPos = Point((Slice.StartAngle + Slice.EndAngle) * 0.5f, LabelRadius);
+					const FLinearColor LabelColor = Slice.Fill.GetLuminance() > 0.24f ? ERUI::InkText() : FLinearColor::White;
+					DrawCentered(FString::Printf(TEXT("%02d"), Slice.SliceIndex + 1), LabelPos, WedgeFont, LabelColor);
+				}
+			}
+		}
+
+		return LayerId + 4;
+	}
+};
+
+TSharedRef<SWidget> UERControlSharePie::RebuildWidget()
+{
+	MyLeaf = SNew(SERControlSharePieLeaf);
+	MyLeaf->Slices = Slices;
+	return MyLeaf.ToSharedRef();
+}
+
+void UERControlSharePie::SetSlices(TArray<FERControlShareSlice> InSlices)
+{
+	Slices = MoveTemp(InSlices);
+	if (MyLeaf.IsValid())
+	{
+		MyLeaf->Slices = Slices;
+		MyLeaf->Invalidate(EInvalidateWidgetReason::Paint);
+	}
+}
+
+void UERControlSharePie::ReleaseSlateResources(bool bReleaseChildren)
+{
+	Super::ReleaseSlateResources(bReleaseChildren);
+	MyLeaf.Reset();
+}

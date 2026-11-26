@@ -2,16 +2,70 @@
 
 #include "Campaign/GalacticCampaignSubsystem.h"
 
+#include "Campaign/GalacticCampaignSaveGame.h"
 #include "Core/ERLog.h"
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
+#include "UObject/StrongObjectPtr.h"
+
+namespace
+{
+	bool IsSupportedFaction(EFactionId Faction)
+	{
+		return Faction == EFactionId::Empire || Faction == EFactionId::Dominion || Faction == EFactionId::Rebels;
+	}
+
+	bool IsSupportedLegionClass(ELegionClass Archetype)
+	{
+		return Archetype == ELegionClass::Shieldbearer || Archetype == ELegionClass::Pikeman
+			|| Archetype == ELegionClass::Vanguard || Archetype == ELegionClass::Marksman;
+	}
+
+
+	bool HasCampaignDebugOverride()
+	{
+		static const TCHAR* ShotFlags[] = {
+			TEXT("LegionShot"), TEXT("SkyShot"), TEXT("MapShot"), TEXT("DeployShot"),
+			TEXT("LegionCloseup"), TEXT("LegionAIShot"), TEXT("ResultShot")
+		};
+		for (const TCHAR* Flag : ShotFlags)
+		{
+			if (FParse::Param(FCommandLine::Get(), Flag)) { return true; }
+		}
+
+		int32 Ignored = 0;
+		return FParse::Value(FCommandLine::Get(), TEXT("-LegionSeed="), Ignored)
+			|| FParse::Value(FCommandLine::Get(), TEXT("-LegionLegions="), Ignored)
+			|| FParse::Value(FCommandLine::Get(), TEXT("-LegionSoldiers="), Ignored);
+	}
+}
 
 void UGalacticCampaignSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	ResetCampaign(2026);
+
+	const UGameInstance* GameInstance = GetGameInstance();
+	const FWorldContext* Context = GameInstance ? GameInstance->GetWorldContext() : nullptr;
+	const bool bGameWorld = Context && Context->WorldType == EWorldType::Game;
+	const bool bVolatile = !bGameWorld || IsRunningDedicatedServer() || IsRunningCommandlet()
+		|| GIsAutomationTesting || HasCampaignDebugOverride();
+
+	if (bVolatile)
+	{
+		SaveSlotPrefix.Empty();
+		SaveStatus = EGalacticCampaignSaveStatus::Volatile;
+		InitializeCampaignState(2026);
+		return;
+	}
+
+	SaveSlotPrefix = TEXT("ER_GalacticCampaign");
+	SaveStatus = EGalacticCampaignSaveStatus::Volatile;
+	InitFactionsAndSectors();
+	LoadCampaign(true);
 }
 
 UGalacticCampaignSubsystem* UGalacticCampaignSubsystem::Get(const UObject* WorldContextObject)
@@ -23,26 +77,49 @@ UGalacticCampaignSubsystem* UGalacticCampaignSubsystem::Get(const UObject* World
 	return GI ? GI->GetSubsystem<UGalacticCampaignSubsystem>() : nullptr;
 }
 
+FText UGalacticCampaignSubsystem::GetSaveNotice() const
+{
+	switch (SaveStatus)
+	{
+	case EGalacticCampaignSaveStatus::Recovered:    return INVTEXT("存档损坏，已恢复可用备份");
+	case EGalacticCampaignSaveStatus::WriteFailed:  return INVTEXT("进度未保存；可在设置中重试");
+	case EGalacticCampaignSaveStatus::LoadFailed:   return INVTEXT("无法读取战役存档；原存档已保留");
+	case EGalacticCampaignSaveStatus::Incompatible: return INVTEXT("战役存档来自较新的版本；原存档已保留");
+	default:                                        return FText::GetEmpty();
+	}
+}
+
 void UGalacticCampaignSubsystem::ResetCampaign(int32 Seed)
+{
+	if (!IsCampaignAvailable() || bHasActiveContract || LastSavedGeneration != 0)
+	{
+		return;
+	}
+	InitializeCampaignState(Seed);
+	PublishCampaignChange();
+}
+
+void UGalacticCampaignSubsystem::InitializeCampaignState(int32 Seed)
 {
 	CampaignSeed = Seed;
 	Credits = 1200;
 	CycleIndex = 1;
 	NextLegionId = 1;
 	NextContractId = 1;
+	ContractRefreshNonce = 0;
 	bHasActiveContract = false;
+	ActiveContract = FGalacticContract();
 	LastOutcome = FLegionBattleOutcome();
 
-	FRandomStream Rng(CampaignSeed);
-	InitFactionsAndSectors(Rng);
+	InitFactionsAndSectors();
 	InitStarterLegions();
-	RefreshContracts();
+	GenerateContracts();
 
 	UE_LOG(LogERLegion, Log, TEXT("[Campaign] Initialized Iris Foundation campaign (Seed=%d, Credits=%d, Legions=%d)"),
 		CampaignSeed, Credits, PlayerLegions.Num());
 }
 
-void UGalacticCampaignSubsystem::InitFactionsAndSectors(FRandomStream& Rng)
+void UGalacticCampaignSubsystem::InitFactionsAndSectors()
 {
 	Factions.Reset();
 
@@ -161,10 +238,11 @@ const FGalacticContract* UGalacticCampaignSubsystem::FindContract(int32 Contract
 	return nullptr;
 }
 
-void UGalacticCampaignSubsystem::RefreshContracts()
+void UGalacticCampaignSubsystem::GenerateContracts()
 {
 	AvailableContracts.Reset();
-	FRandomStream Rng(CampaignSeed + CycleIndex * 7919);
+	++ContractRefreshNonce;
+	FRandomStream Rng(CampaignSeed + CycleIndex * 7919 + ContractRefreshNonce * 3571);
 
 	struct FContractTemplate
 	{
@@ -214,7 +292,6 @@ void UGalacticCampaignSubsystem::RefreshContracts()
 		}
 	};
 
-	// 每个周期产出 3 份覆盖三大阵营的委托
 	const EFactionId Employers[3] = { EFactionId::Empire, EFactionId::Dominion, EFactionId::Rebels };
 	for (int32 Slot = 0; Slot < 3; ++Slot)
 	{
@@ -233,13 +310,12 @@ void UGalacticCampaignSubsystem::RefreshContracts()
 		C.Title = Tpl.Title;
 		C.Briefing = Tpl.Briefing;
 		C.TargetSectorId = (Slot * 2 + Rng.RandRange(0, 1)) % FMath::Max(1, Sectors.Num());
-		C.TerrainSeed = CampaignSeed + CycleIndex * 97 + Slot * 313;
+		C.TerrainSeed = CampaignSeed + CycleIndex * 97 + Slot * 313 + ContractRefreshNonce * 1009;
 		C.DangerRating = FMath::Clamp(Tpl.Danger + (CycleIndex > 3 ? 1 : 0), 1, 5);
 		C.RewardCredits = 360 + C.DangerRating * 190 + Rng.RandRange(0, 80);
 		C.ControlShift = 4.5f + C.DangerRating * 2.0f;
 		C.ReputationGain = 10 + C.DangerRating * 4;
 
-		// 按危险等级与敌方阵营偏重生成多兵种敌军编成 (含后续空降增援波次)
 		const int32 BaseCount = 8 + C.DangerRating * 3;
 		auto AddWave = [&](ELegionClass Class, int32 Count, float Delay, float Lane)
 		{
@@ -257,10 +333,7 @@ void UGalacticCampaignSubsystem::RefreshContracts()
 			AddWave(ELegionClass::Shieldbearer, BaseCount + 4, 0.0f,  0.55f);
 			AddWave(ELegionClass::Marksman,     BaseCount,     0.0f,  0.0f);
 			AddWave(ELegionClass::Vanguard,     BaseCount,     18.0f, -0.8f);
-			if (C.DangerRating >= 3)
-			{
-				AddWave(ELegionClass::Pikeman,  BaseCount + 2, 24.0f,  0.8f);
-			}
+			if (C.DangerRating >= 3) { AddWave(ELegionClass::Pikeman, BaseCount + 2, 24.0f, 0.8f); }
 		}
 		else if (C.EnemyFaction == EFactionId::Dominion)
 		{
@@ -268,12 +341,9 @@ void UGalacticCampaignSubsystem::RefreshContracts()
 			AddWave(ELegionClass::Pikeman,      BaseCount + 2, 0.0f,  0.45f);
 			AddWave(ELegionClass::Marksman,     BaseCount + 2, 0.0f,  0.0f);
 			AddWave(ELegionClass::Shieldbearer, BaseCount,     20.0f, 0.0f);
-			if (C.DangerRating >= 3)
-			{
-				AddWave(ELegionClass::Marksman, BaseCount,     26.0f, 0.75f);
-			}
+			if (C.DangerRating >= 3) { AddWave(ELegionClass::Marksman, BaseCount, 26.0f, 0.75f); }
 		}
-		else // Rebels
+		else
 		{
 			AddWave(ELegionClass::Vanguard,     BaseCount + 2, 0.0f, -0.65f);
 			AddWave(ELegionClass::Vanguard,     BaseCount + 2, 0.0f,  0.65f);
@@ -281,19 +351,23 @@ void UGalacticCampaignSubsystem::RefreshContracts()
 			AddWave(ELegionClass::Vanguard,     BaseCount,     14.0f, -0.9f);
 			AddWave(ELegionClass::Pikeman,      BaseCount,     16.0f,  0.9f);
 		}
-
 		AvailableContracts.Add(C);
 	}
-
-	OnCampaignUpdated.Broadcast();
 }
 
-bool UGalacticCampaignSubsystem::AcceptAndDeployContract(int32 ContractId, const UObject* WorldContext)
+void UGalacticCampaignSubsystem::RefreshContracts()
 {
+	if (!IsCampaignAvailable() || bHasActiveContract) { return; }
+	GenerateContracts();
+	PublishCampaignChange();
+}
+
+bool UGalacticCampaignSubsystem::BeginContract(int32 ContractId)
+{
+	if (!IsCampaignAvailable() || bHasActiveContract) { return false; }
 	const FGalacticContract* Found = FindContract(ContractId);
 	if (!Found) { return false; }
 
-	// 至少要有一名存活士兵才能部署
 	int32 TotalAlive = 0;
 	for (const FManagedLegionData& L : PlayerLegions)
 	{
@@ -305,17 +379,30 @@ bool UGalacticCampaignSubsystem::AcceptAndDeployContract(int32 ContractId, const
 		return false;
 	}
 
+	const bool bNeedsCheckpoint = !SaveSlotPrefix.IsEmpty() && (bSaveDirty || LastSavedGeneration == 0);
+	if (bNeedsCheckpoint && !SaveCampaign())
+	{
+		UE_LOG(LogERLegion, Warning, TEXT("[Campaign] Deployment blocked: durable campaign checkpoint could not be written."));
+		OnCampaignUpdated.Broadcast();
+		return false;
+	}
+
 	ActiveContract = *Found;
 	bHasActiveContract = true;
+	if (bNeedsCheckpoint)
+	{
+		OnCampaignUpdated.Broadcast();
+	}
+	return true;
+}
 
+bool UGalacticCampaignSubsystem::AcceptAndDeployContract(int32 ContractId, const UObject* WorldContext)
+{
 	UWorld* World = (GEngine && WorldContext)
 		? GEngine->GetWorldFromContextObject(WorldContext, EGetWorldErrorMode::ReturnNull)
 		: nullptr;
-	if (!World && GEngine)
-	{
-		World = GEngine->GetCurrentPlayWorld();
-	}
-	if (!World) { return false; }
+	if (!World || !World->IsGameWorld()) { return false; }
+	if (!BeginContract(ContractId)) { return false; }
 
 	UE_LOG(LogERLegion, Log, TEXT("[Campaign] Deploying contract '%s' (%s vs %s) -> Lvl_Legion"),
 		*ActiveContract.Title,
@@ -326,17 +413,24 @@ bool UGalacticCampaignSubsystem::AcceptAndDeployContract(int32 ContractId, const
 	return true;
 }
 
-void UGalacticCampaignSubsystem::CommitBattleOutcome(bool bVictory, const TMap<int32, int32>& SurvivingByLegionId,
-	int32 TotalPlayerCasualties, int32 TotalEnemyEliminated)
+void UGalacticCampaignSubsystem::CommitBattleOutcome(int32 ContractId, bool bVictory,
+	const TMap<int32, int32>& SurvivingByLegionId, int32 TotalPlayerCasualties, int32 TotalEnemyEliminated)
 {
+	if (!bHasActiveContract || ContractId != ActiveContract.ContractId)
+	{
+		return;
+	}
+
 	FLegionBattleOutcome Out;
 	Out.bValid = true;
 	Out.bVictory = bVictory;
-	Out.bFromContract = bHasActiveContract;
+	Out.bFromContract = true;
 	Out.PlayerCasualties = TotalPlayerCasualties;
 	Out.EnemyEliminated = TotalEnemyEliminated;
+	Out.ContractTitle = ActiveContract.Title;
+	Out.Employer = ActiveContract.Employer;
+	Out.EnemyFaction = ActiveContract.EnemyFaction;
 
-	// 写回玩家常备兵团战损
 	for (FManagedLegionData& L : PlayerLegions)
 	{
 		if (const int32* Surv = SurvivingByLegionId.Find(L.LegionId))
@@ -349,63 +443,52 @@ void UGalacticCampaignSubsystem::CommitBattleOutcome(bool bVictory, const TMap<i
 		}
 	}
 
-	if (bHasActiveContract)
+	if (bVictory)
 	{
-		Out.ContractTitle = ActiveContract.Title;
-		Out.Employer = ActiveContract.Employer;
-		Out.EnemyFaction = ActiveContract.EnemyFaction;
-
-		if (bVictory)
+		Out.CreditsEarned = ActiveContract.RewardCredits;
+		Out.ControlShiftApplied = ActiveContract.ControlShift;
+		Out.ReputationDelta = ActiveContract.ReputationGain;
+		Credits += Out.CreditsEarned;
+		ShiftGalacticControl(ActiveContract.Employer, ActiveContract.EnemyFaction,
+			ActiveContract.ControlShift, ActiveContract.TargetSectorId);
+		for (FFactionStatus& F : Factions)
 		{
-			Out.CreditsEarned = ActiveContract.RewardCredits;
-			Out.ControlShiftApplied = ActiveContract.ControlShift;
-			Out.ReputationDelta = ActiveContract.ReputationGain;
-			Credits += Out.CreditsEarned;
-
-			ShiftGalacticControl(ActiveContract.Employer, ActiveContract.EnemyFaction,
-				ActiveContract.ControlShift, ActiveContract.TargetSectorId);
-
-			for (FFactionStatus& F : Factions)
+			if (F.Faction == ActiveContract.Employer)
 			{
-				if (F.Faction == ActiveContract.Employer)
-				{
-					F.Reputation = FMath::Clamp(F.Reputation + ActiveContract.ReputationGain, -100, 100);
-				}
-				else if (F.Faction == ActiveContract.EnemyFaction)
-				{
-					F.Reputation = FMath::Clamp(F.Reputation - ActiveContract.ReputationGain / 2, -100, 100);
-				}
+				F.Reputation = FMath::Clamp(F.Reputation + ActiveContract.ReputationGain, -100, 100);
+			}
+			else if (F.Faction == ActiveContract.EnemyFaction)
+			{
+				F.Reputation = FMath::Clamp(F.Reputation - ActiveContract.ReputationGain / 2, -100, 100);
 			}
 		}
-		else
+	}
+	else
+	{
+		Out.CreditsEarned = ActiveContract.RewardCredits / 5;
+		Out.ControlShiftApplied = -ActiveContract.ControlShift * 0.6f;
+		Out.ReputationDelta = -ActiveContract.ReputationGain / 2;
+		Credits += Out.CreditsEarned;
+		ShiftGalacticControl(ActiveContract.EnemyFaction, ActiveContract.Employer,
+			ActiveContract.ControlShift * 0.6f, ActiveContract.TargetSectorId);
+		for (FFactionStatus& F : Factions)
 		{
-			// 败北仍支付最低撤离保障金, 但敌方推进星区控制率
-			Out.CreditsEarned = ActiveContract.RewardCredits / 5;
-			Out.ControlShiftApplied = -ActiveContract.ControlShift * 0.6f;
-			Out.ReputationDelta = -ActiveContract.ReputationGain / 2;
-			Credits += Out.CreditsEarned;
-
-			ShiftGalacticControl(ActiveContract.EnemyFaction, ActiveContract.Employer,
-				ActiveContract.ControlShift * 0.6f, ActiveContract.TargetSectorId);
-
-			for (FFactionStatus& F : Factions)
+			if (F.Faction == ActiveContract.Employer)
 			{
-				if (F.Faction == ActiveContract.Employer)
-				{
-					F.Reputation = FMath::Clamp(F.Reputation + Out.ReputationDelta, -100, 100);
-				}
+				F.Reputation = FMath::Clamp(F.Reputation + Out.ReputationDelta, -100, 100);
 			}
 		}
-
-		bHasActiveContract = false;
-		CycleIndex++;
-		RefreshContracts();
 	}
 
+	bHasActiveContract = false;
+	ActiveContract = FGalacticContract();
+	CycleIndex++;
+	GenerateContracts();
 	LastOutcome = Out;
-	OnCampaignUpdated.Broadcast();
-	UE_LOG(LogERLegion, Log, TEXT("[Campaign] Battle committed: Victory=%d, Credits+%d (Total=%d), Casualties=%d"),
-		(int32)bVictory, Out.CreditsEarned, Credits, TotalPlayerCasualties);
+	PublishCampaignChange();
+
+	UE_LOG(LogERLegion, Log, TEXT("[Campaign] Battle committed: Contract=%d Victory=%d, Credits+%d (Total=%d), Casualties=%d"),
+		ContractId, (int32)bVictory, Out.CreditsEarned, Credits, TotalPlayerCasualties);
 }
 
 void UGalacticCampaignSubsystem::ShiftGalacticControl(EFactionId Winner, EFactionId Loser, float Amount, int32 SectorId)
@@ -435,8 +518,382 @@ void UGalacticCampaignSubsystem::NormalizeControls()
 	}
 }
 
+void UGalacticCampaignSubsystem::PublishCampaignChange()
+{
+	bSaveDirty = !SaveSlotPrefix.IsEmpty();
+	if (bSaveDirty)
+	{
+		SaveCampaign();
+	}
+	OnCampaignUpdated.Broadcast();
+}
+
+bool UGalacticCampaignSubsystem::LoadCampaign(bool bCreateIfMissing)
+{
+	if (SaveSlotPrefix.IsEmpty()) { return false; }
+
+	const FString SlotNames[2] = {
+		SaveSlotPrefix + TEXT("_A"),
+		SaveSlotPrefix + TEXT("_B")
+	};
+	ERGalacticSave::FReadResult Reads[2] = {
+		ERGalacticSave::ReadSlot(SlotNames[0]),
+		ERGalacticSave::ReadSlot(SlotNames[1])
+	};
+
+	bool bAnyFile = false;
+	bool bAnyInvalid = false;
+	int64 BestFutureGeneration = 0;
+	int32 BestSlot = INDEX_NONE;
+	int64 BestGeneration = 0;
+	TStrongObjectPtr<UGalacticCampaignSaveGame> BestSnapshot;
+
+	for (int32 Slot = 0; Slot < 2; ++Slot)
+	{
+		ERGalacticSave::FReadResult& Read = Reads[Slot];
+		if (Read.State == ERGalacticSave::ESlotState::Missing) { continue; }
+		bAnyFile = true;
+
+		if (Read.State == ERGalacticSave::ESlotState::NewerVersion)
+		{
+			BestFutureGeneration = FMath::Max(BestFutureGeneration, Read.Generation);
+			continue;
+		}
+		if (Read.State == ERGalacticSave::ESlotState::Valid && Read.Snapshot && IsValidSnapshot(*Read.Snapshot))
+		{
+			if (Read.Generation > BestGeneration)
+			{
+				BestGeneration = Read.Generation;
+				BestSlot = Slot;
+				BestSnapshot.Reset(Read.Snapshot);
+			}
+		}
+		else
+		{
+			bAnyInvalid = true;
+			UE_LOG(LogERLegion, Warning, TEXT("[Campaign] Save slot %s is damaged or semantically invalid."), *SlotNames[Slot]);
+		}
+	}
+
+	if (BestFutureGeneration > 0 && (BestSlot == INDEX_NONE || BestFutureGeneration >= BestGeneration))
+	{
+		SaveStatus = EGalacticCampaignSaveStatus::Incompatible;
+		LastSavedSlot = INDEX_NONE;
+		LastSavedGeneration = 0;
+		bSaveDirty = false;
+		UE_LOG(LogERLegion, Warning, TEXT("[Campaign] Newer unsupported campaign save generation detected (%lld); existing saves were preserved."), BestFutureGeneration);
+		return false;
+	}
+
+	if (BestSlot != INDEX_NONE && BestSnapshot.IsValid())
+	{
+		ApplySnapshot(*BestSnapshot.Get());
+		LastSavedSlot = BestSlot;
+		LastSavedGeneration = BestGeneration;
+		bSaveDirty = false;
+		SaveStatus = bAnyInvalid ? EGalacticCampaignSaveStatus::Recovered : EGalacticCampaignSaveStatus::Saved;
+		UE_LOG(LogERLegion, Log, TEXT("[Campaign] Loaded save slot %s generation %lld%s."),
+			*SlotNames[BestSlot], BestGeneration, bAnyInvalid ? TEXT(" (recovered past damaged sibling)") : TEXT(""));
+		return true;
+	}
+
+	if (bAnyFile)
+	{
+		SaveStatus = EGalacticCampaignSaveStatus::LoadFailed;
+		LastSavedSlot = INDEX_NONE;
+		LastSavedGeneration = 0;
+		bSaveDirty = false;
+		UE_LOG(LogERLegion, Warning, TEXT("[Campaign] No readable campaign save; existing save files were preserved."));
+		return false;
+	}
+
+	if (bCreateIfMissing)
+	{
+		InitializeCampaignState(2026);
+		PublishCampaignChange();
+		UE_LOG(LogERLegion, Log, TEXT("[Campaign] Created fresh persistent campaign seed 2026."));
+		return IsCampaignAvailable();
+	}
+
+	SaveStatus = EGalacticCampaignSaveStatus::LoadFailed;
+	return false;
+}
+
+bool UGalacticCampaignSubsystem::SaveCampaign()
+{
+	if (SaveSlotPrefix.IsEmpty())
+	{
+		return true;
+	}
+	if (!IsCampaignAvailable() || bHasActiveContract)
+	{
+		return false;
+	}
+
+	UGalacticCampaignSaveGame* Snapshot = NewObject<UGalacticCampaignSaveGame>(this);
+	Snapshot->CampaignSeed = CampaignSeed;
+	Snapshot->GalaxyCoins = Credits;
+	Snapshot->CycleIndex = CycleIndex;
+	Snapshot->NextLegionId = NextLegionId;
+	Snapshot->NextContractId = NextContractId;
+	Snapshot->ContractRefreshNonce = ContractRefreshNonce;
+	for (const FFactionStatus& F : Factions)
+	{
+		FGalacticSavedFaction SavedFaction;
+		SavedFaction.Faction = F.Faction;
+		SavedFaction.Reputation = F.Reputation;
+		SavedFaction.GalacticControl = F.GalacticControl;
+		Snapshot->Factions.Add(SavedFaction);
+	}
+	for (const FGalacticSector& S : Sectors)
+	{
+		FGalacticSavedSector SavedSector;
+		SavedSector.SectorId = S.SectorId;
+		SavedSector.Owner = S.ControllingFaction;
+		SavedSector.ConflictIntensity = S.ConflictIntensity;
+		Snapshot->Sectors.Add(SavedSector);
+	}
+	Snapshot->PlayerLegions = PlayerLegions;
+	Snapshot->AvailableContracts = AvailableContracts;
+	Snapshot->LastOutcome = LastOutcome;
+
+	if (!IsValidSnapshot(*Snapshot))
+	{
+		bSaveDirty = true;
+		SaveStatus = EGalacticCampaignSaveStatus::WriteFailed;
+		UE_LOG(LogERLegion, Error, TEXT("[Campaign] Refusing to write semantically invalid campaign snapshot."));
+		return false;
+	}
+
+	const int32 TargetSlot = (LastSavedSlot == 0) ? 1 : 0;
+	const FString SlotName = SaveSlotPrefix + (TargetSlot == 0 ? TEXT("_A") : TEXT("_B"));
+	const int64 Generation = LastSavedGeneration + 1;
+	if (!ERGalacticSave::WriteSlot(SlotName, *Snapshot, Generation))
+	{
+		bSaveDirty = true;
+		SaveStatus = EGalacticCampaignSaveStatus::WriteFailed;
+		UE_LOG(LogERLegion, Warning, TEXT("[Campaign] Failed writing campaign save slot %s."), *SlotName);
+		return false;
+	}
+
+	const ERGalacticSave::FReadResult Verify = ERGalacticSave::ReadSlot(SlotName);
+	if (Verify.State != ERGalacticSave::ESlotState::Valid || !Verify.Snapshot || Verify.Generation != Generation)
+	{
+		bSaveDirty = true;
+		SaveStatus = EGalacticCampaignSaveStatus::WriteFailed;
+		UE_LOG(LogERLegion, Warning, TEXT("[Campaign] Read-back verification failed for campaign save slot %s."), *SlotName);
+		return false;
+	}
+
+	LastSavedSlot = TargetSlot;
+	LastSavedGeneration = Generation;
+	bSaveDirty = false;
+	SaveStatus = EGalacticCampaignSaveStatus::Saved;
+	return true;
+}
+
+bool UGalacticCampaignSubsystem::RetryCampaignSave()
+{
+	bool bResult = true;
+	if (SaveStatus == EGalacticCampaignSaveStatus::LoadFailed || SaveStatus == EGalacticCampaignSaveStatus::Incompatible)
+	{
+		bResult = LoadCampaign(false);
+		OnCampaignUpdated.Broadcast();
+		return bResult;
+	}
+	if (bSaveDirty)
+	{
+		bResult = SaveCampaign();
+	}
+	OnCampaignUpdated.Broadcast();
+	return bResult;
+}
+
+bool UGalacticCampaignSubsystem::IsValidSnapshot(const UGalacticCampaignSaveGame& Snapshot) const
+{
+	if (Snapshot.CycleIndex <= 0 || Snapshot.ContractRefreshNonce <= 0 || Snapshot.GalaxyCoins < 0)
+	{
+		return false;
+	}
+	if (Snapshot.Factions.Num() != Factions.Num() || Snapshot.Sectors.Num() != Sectors.Num())
+	{
+		return false;
+	}
+
+	float ControlSum = 0.0f;
+	for (const FGalacticSavedFaction& SavedFaction : Snapshot.Factions)
+	{
+		if (!IsSupportedFaction(SavedFaction.Faction)
+			|| SavedFaction.Reputation < -100 || SavedFaction.Reputation > 100
+			|| !FMath::IsFinite(SavedFaction.GalacticControl)
+			|| SavedFaction.GalacticControl < 0.0f || SavedFaction.GalacticControl > 100.0f)
+		{
+			return false;
+		}
+		ControlSum += SavedFaction.GalacticControl;
+
+		int32 CatalogMatches = 0;
+		int32 SavedMatches = 0;
+		for (const FFactionStatus& Catalog : Factions)
+		{
+			if (Catalog.Faction == SavedFaction.Faction) { ++CatalogMatches; }
+		}
+		for (const FGalacticSavedFaction& Other : Snapshot.Factions)
+		{
+			if (Other.Faction == SavedFaction.Faction) { ++SavedMatches; }
+		}
+		if (CatalogMatches != 1 || SavedMatches != 1) { return false; }
+	}
+	if (FMath::Abs(ControlSum - 100.0f) > 0.01f)
+	{
+		return false;
+	}
+
+	for (const FGalacticSavedSector& SavedSector : Snapshot.Sectors)
+	{
+		if (!IsSupportedFaction(SavedSector.Owner)
+			|| !FMath::IsFinite(SavedSector.ConflictIntensity)
+			|| SavedSector.ConflictIntensity < 0.0f || SavedSector.ConflictIntensity > 1.0f)
+		{
+			return false;
+		}
+		int32 CatalogMatches = 0;
+		int32 SavedMatches = 0;
+		for (const FGalacticSector& Catalog : Sectors)
+		{
+			if (Catalog.SectorId == SavedSector.SectorId) { ++CatalogMatches; }
+		}
+		for (const FGalacticSavedSector& Other : Snapshot.Sectors)
+		{
+			if (Other.SectorId == SavedSector.SectorId) { ++SavedMatches; }
+		}
+		if (CatalogMatches != 1 || SavedMatches != 1) { return false; }
+	}
+
+	if (Snapshot.PlayerLegions.Num() < 1 || Snapshot.PlayerLegions.Num() > MaxPlayerLegions)
+	{
+		return false;
+	}
+	int32 HighestLegionId = 0;
+	for (const FManagedLegionData& Legion : Snapshot.PlayerLegions)
+	{
+		if (Legion.LegionId <= 0 || Legion.MaxSoldiers <= 0
+			|| Legion.AliveSoldiers < 0 || Legion.AliveSoldiers > Legion.MaxSoldiers
+			|| Legion.SyncLevel < 1 || Legion.SyncLevel > 5 || Legion.BattlesSurvived < 0
+			|| !IsSupportedLegionClass(Legion.Archetype))
+		{
+			return false;
+		}
+		int32 IdMatches = 0;
+		for (const FManagedLegionData& Other : Snapshot.PlayerLegions)
+		{
+			if (Other.LegionId == Legion.LegionId) { ++IdMatches; }
+		}
+		if (IdMatches != 1) { return false; }
+		HighestLegionId = FMath::Max(HighestLegionId, Legion.LegionId);
+	}
+	if (Snapshot.NextLegionId <= HighestLegionId)
+	{
+		return false;
+	}
+
+	if (Snapshot.AvailableContracts.Num() != 3)
+	{
+		return false;
+	}
+	int32 HighestContractId = 0;
+	for (const FGalacticContract& Contract : Snapshot.AvailableContracts)
+	{
+		if (Contract.ContractId <= 0 || !FindSector(Contract.TargetSectorId)
+			|| !IsSupportedFaction(Contract.Employer) || !IsSupportedFaction(Contract.EnemyFaction)
+			|| Contract.Employer == Contract.EnemyFaction
+			|| Contract.DangerRating < 1 || Contract.DangerRating > 5
+			|| Contract.RewardCredits < 0
+			|| !FMath::IsFinite(Contract.ControlShift) || Contract.ControlShift < 0.0f || Contract.ControlShift > 100.0f
+			|| Contract.EnemyWaves.Num() <= 0)
+		{
+			return false;
+		}
+		int32 IdMatches = 0;
+		for (const FGalacticContract& Other : Snapshot.AvailableContracts)
+		{
+			if (Other.ContractId == Contract.ContractId) { ++IdMatches; }
+		}
+		if (IdMatches != 1) { return false; }
+		for (const FEnemyWaveLegionSpec& Wave : Contract.EnemyWaves)
+		{
+			if (!IsSupportedLegionClass(Wave.Archetype) || Wave.SoldierCount <= 0
+				|| !FMath::IsFinite(Wave.DelaySeconds) || Wave.DelaySeconds < 0.0f
+				|| !FMath::IsFinite(Wave.LaneBias) || Wave.LaneBias < -1.0f || Wave.LaneBias > 1.0f)
+			{
+				return false;
+			}
+		}
+		HighestContractId = FMath::Max(HighestContractId, Contract.ContractId);
+	}
+	if (Snapshot.NextContractId <= HighestContractId)
+	{
+		return false;
+	}
+
+	const FLegionBattleOutcome& Outcome = Snapshot.LastOutcome;
+	if (Outcome.bValid)
+	{
+		if (!IsSupportedFaction(Outcome.Employer) || !IsSupportedFaction(Outcome.EnemyFaction)
+			|| Outcome.CreditsEarned < 0 || Outcome.PlayerCasualties < 0 || Outcome.EnemyEliminated < 0
+			|| !FMath::IsFinite(Outcome.ControlShiftApplied))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+void UGalacticCampaignSubsystem::ApplySnapshot(const UGalacticCampaignSaveGame& Snapshot)
+{
+	CampaignSeed = Snapshot.CampaignSeed;
+	Credits = Snapshot.GalaxyCoins;
+	CycleIndex = Snapshot.CycleIndex;
+	NextLegionId = Snapshot.NextLegionId;
+	NextContractId = Snapshot.NextContractId;
+	ContractRefreshNonce = Snapshot.ContractRefreshNonce;
+
+	for (FFactionStatus& Faction : Factions)
+	{
+		for (const FGalacticSavedFaction& SavedFaction : Snapshot.Factions)
+		{
+			if (SavedFaction.Faction == Faction.Faction)
+			{
+				Faction.Reputation = SavedFaction.Reputation;
+				Faction.GalacticControl = SavedFaction.GalacticControl;
+				break;
+			}
+		}
+	}
+	for (FGalacticSector& Sector : Sectors)
+	{
+		for (const FGalacticSavedSector& SavedSector : Snapshot.Sectors)
+		{
+			if (SavedSector.SectorId == Sector.SectorId)
+			{
+				Sector.ControllingFaction = SavedSector.Owner;
+				Sector.ConflictIntensity = SavedSector.ConflictIntensity;
+				break;
+			}
+		}
+	}
+
+	PlayerLegions = Snapshot.PlayerLegions;
+	AvailableContracts = Snapshot.AvailableContracts;
+	LastOutcome = Snapshot.LastOutcome;
+	ActiveContract = FGalacticContract();
+	bHasActiveContract = false;
+	bSaveDirty = false;
+}
+
 bool UGalacticCampaignSubsystem::ReinforceLegion(int32 LegionId)
 {
+	if (!IsCampaignAvailable() || bHasActiveContract) { return false; }
 	FManagedLegionData* L = FindPlayerLegionMutable(LegionId);
 	if (!L) { return false; }
 	const int32 Missing = L->GetMissingSoldiers();
@@ -448,12 +905,13 @@ bool UGalacticCampaignSubsystem::ReinforceLegion(int32 LegionId)
 
 	Credits -= Affordable * CostPer;
 	L->AliveSoldiers += Affordable;
-	OnCampaignUpdated.Broadcast();
+	PublishCampaignChange();
 	return true;
 }
 
 int32 UGalacticCampaignSubsystem::ReinforceAllLegions()
 {
+	if (!IsCampaignAvailable() || bHasActiveContract) { return 0; }
 	int32 TotalRestored = 0;
 	for (FManagedLegionData& L : PlayerLegions)
 	{
@@ -468,12 +926,13 @@ int32 UGalacticCampaignSubsystem::ReinforceAllLegions()
 			TotalRestored += Affordable;
 		}
 	}
-	if (TotalRestored > 0) { OnCampaignUpdated.Broadcast(); }
+	if (TotalRestored > 0) { PublishCampaignChange(); }
 	return TotalRestored;
 }
 
 bool UGalacticCampaignSubsystem::UpgradeLegionSync(int32 LegionId)
 {
+	if (!IsCampaignAvailable() || bHasActiveContract) { return false; }
 	FManagedLegionData* L = FindPlayerLegionMutable(LegionId);
 	if (!L || L->SyncLevel >= 5) { return false; }
 	const int32 Cost = L->GetSyncUpgradeCost();
@@ -483,7 +942,7 @@ bool UGalacticCampaignSubsystem::UpgradeLegionSync(int32 LegionId)
 	L->SyncLevel++;
 	L->MaxSoldiers += 2;
 	L->AliveSoldiers += 2;
-	OnCampaignUpdated.Broadcast();
+	PublishCampaignChange();
 	return true;
 }
 
@@ -501,6 +960,7 @@ int32 UGalacticCampaignSubsystem::GetRecruitCost(ELegionClass Archetype) const
 
 bool UGalacticCampaignSubsystem::RecruitLegion(ELegionClass Archetype)
 {
+	if (!IsCampaignAvailable() || bHasActiveContract) { return false; }
 	if (PlayerLegions.Num() >= MaxPlayerLegions) { return false; }
 	const int32 Cost = GetRecruitCost(Archetype);
 	if (Credits < Cost) { return false; }
@@ -515,6 +975,6 @@ bool UGalacticCampaignSubsystem::RecruitLegion(ELegionClass Archetype)
 	L.Callsign = ERGalacticMeta::GetBrigadeName(L.LegionId);
 	PlayerLegions.Add(L);
 
-	OnCampaignUpdated.Broadcast();
+	PublishCampaignChange();
 	return true;
 }

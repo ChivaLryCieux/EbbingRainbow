@@ -407,14 +407,17 @@ void ULegionHUDWidget::ShowResult(bool bPlayerWon)
 	ResultText->SetText(bPlayerWon ? INVTEXT("胜  利") : INVTEXT("败  北"));
 	ResultText->SetColorAndOpacity(FSlateColor(bPlayerWon ? T->Bone : T->DangerColor));
 
-	FString Summary;
-	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+	UWorld* World = GetWorld();
+	ALegionGameMode* GM = World ? Cast<ALegionGameMode>(World->GetAuthGameMode()) : nullptr;
+	FString Summary = TEXT("演武结束");
+	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this);
+		Campaign && GM && GM->IsCampaignBattle())
 	{
 		const FLegionBattleOutcome& Out = Campaign->GetLastOutcome();
 		if (Out.bValid && Out.bFromContract)
 		{
 			Summary = FString::Printf(
-				TEXT("委托: %s\n基金经费 +%d 信用点  |  我方阵亡 %d 人  |  歼敌 %d 人\n%s 星区控制率 %+.1f%%"),
+				TEXT("委托: %s\n基金经费 +%d 银河币  |  我方阵亡 %d 人  |  歼敌 %d 人\n%s 星区控制率 %+.1f%%"),
 				*Out.ContractTitle,
 				Out.CreditsEarned,
 				Out.PlayerCasualties,
@@ -422,10 +425,9 @@ void ULegionHUDWidget::ShowResult(bool bPlayerWon)
 				*ERGalacticMeta::GetFactionName(Out.Employer),
 				Out.ControlShiftApplied);
 		}
-		else if (Out.bValid)
+		if (Campaign->GetSaveStatus() == EGalacticCampaignSaveStatus::WriteFailed)
 		{
-			Summary = FString::Printf(TEXT("演武结束  |  我方阵亡 %d 人  |  歼敌 %d 人"),
-				Out.PlayerCasualties, Out.EnemyEliminated);
+			Summary += TEXT("\n进度未保存 · 返回大厅后可重试");
 		}
 	}
 	if (ResultSummaryText)

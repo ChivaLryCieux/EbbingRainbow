@@ -1,6 +1,7 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/ERHallHUD.h"
+#include "Campaign/GalacticCampaignSubsystem.h"
 #include "Animation/WidgetAnimation.h"
 #include "Blueprint/WidgetTree.h"
 #include "Core/ERLog.h"
@@ -63,6 +64,12 @@ void UERHallHUD::NativeConstruct()
 		BuildLayout();
 	}
 	Super::NativeConstruct();
+
+	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+	{
+		Campaign->OnCampaignUpdated.AddUObject(this, &UERHallHUD::RefreshCampaignSaveNotice);
+	}
+	RefreshCampaignSaveNotice();
 
 	if (!bBaseCached)
 	{
@@ -304,6 +311,49 @@ void UERHallHUD::BuildLayout()
 		HintSlot->SetAlignment(FVector2D(0.5f, 1.0f));
 		HintSlot->SetPosition(FVector2D(0.0f, -32.0f));
 		HintSlot->SetAutoSize(true);
+	}
+
+	// 右上银河战役存档提示 (正常时折叠)
+	if (!CampaignSaveNoticeBorder)
+	{
+		CampaignSaveNoticeBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CampaignSaveNoticeBorder"));
+		CampaignSaveNoticeBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.86f), 1.0f, T->BoneGhost));
+		CampaignSaveNoticeBorder->SetBrushColor(FLinearColor::White);
+		CampaignSaveNoticeBorder->SetPadding(FMargin(18.0f, 9.0f));
+		CampaignSaveNoticeBorder->SetVisibility(ESlateVisibility::Collapsed);
+
+		CampaignSaveNoticeText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
+		CampaignSaveNoticeText->SetAutoWrapText(true);
+		CampaignSaveNoticeBorder->SetContent(CampaignSaveNoticeText);
+
+		UCanvasPanelSlot* NoticeSlot = RootCanvas->AddChildToCanvas(CampaignSaveNoticeBorder);
+		NoticeSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+		NoticeSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+		NoticeSlot->SetPosition(FVector2D(-46.0f, 44.0f));
+		NoticeSlot->SetAutoSize(true);
+	}
+}
+
+void UERHallHUD::NativeDestruct()
+{
+	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+	{
+		Campaign->OnCampaignUpdated.RemoveAll(this);
+	}
+	Super::NativeDestruct();
+}
+
+void UERHallHUD::RefreshCampaignSaveNotice()
+{
+	UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this);
+	const FText Notice = Campaign ? Campaign->GetSaveNotice() : FText::GetEmpty();
+	if (CampaignSaveNoticeText)
+	{
+		CampaignSaveNoticeText->SetText(Notice);
+	}
+	if (CampaignSaveNoticeBorder)
+	{
+		CampaignSaveNoticeBorder->SetVisibility(Notice.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	}
 }
 
