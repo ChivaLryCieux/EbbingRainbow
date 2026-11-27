@@ -221,6 +221,15 @@ public:
 	/** 士兵开火: 在 MuzzlePos 处以 Vel 速度生成一发实体弹道子弹 (阵营取自 Source) */
 	void SpawnBullet(const FVector& MuzzlePos, const FVector& Vel, ALegionUnit* Source);
 
+	/** 玩家投射物数学扫描: 沿 Start..End 线段做地形遮挡截断 + 敌对士兵胶囊步进点测,
+	 *  命中则返回 true 并输出目标团/士兵索引/命中点。取代逐兵物理命中胶囊 (性能)。
+	 *  与士兵子弹同一套胶囊参数 (R40, 轴段 +15..+165), 只扫 ShooterTeam 的敌对阵营。 */
+	bool ScanProjectileSoldierHit(const FVector& Start, const FVector& End, ELegionTeam ShooterTeam,
+		ALegionUnit*& OutUnit, int32& OutSoldierIndex, FVector& OutHitPos);
+
+	/** 爆炸对敌对士兵的数学结算 (取代物理 overlap 命中代理), 返回命中士兵数 */
+	int32 ApplyExplosionToEnemySoldiers(const FVector& Center, float Radius, float Damage, ELegionTeam ShooterTeam);
+
 	void AddTracerBeam(const FVector& Start, const FVector& End, const FLinearColor& Color, float Duration = 0.25f);
 
 	float GetBattlefieldHalfExtent() const

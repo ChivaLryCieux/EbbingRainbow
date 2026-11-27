@@ -132,11 +132,14 @@ int32 ALegionUnit::ApplySoldierProjectileHit(const UPrimitiveComponent* HitComp,
 
 bool ALegionUnit::RunExactHitSelfTest()
 {
-	// 选最后一个存活士兵 (非前排), 模拟子弹命中其 HitProxy 胶囊
+	// 数学扫描命中自检 (逐兵物理命中胶囊废除后的新路径):
+	// 对最后一名存活士兵胸口做一条水平穿透线段扫描, 验证 ScanProjectileSoldierHit 精确锁定该士兵,
+	// 且伤害只结算到该个体
 	int32 TargetIdx = INDEX_NONE;
+	FVector TargetFeet = FVector::ZeroVector;
 	for (int32 i = Soldiers.Num() - 1; i >= 0; --i)
 	{
-		if (Soldiers[i].bAlive && Soldiers[i].HitProxy.IsValid())
+		if (Soldiers[i].bAlive && GetAliveSoldierFeet(i, TargetFeet))
 		{
 			TargetIdx = i;
 			break;
@@ -144,32 +147,42 @@ bool ALegionUnit::RunExactHitSelfTest()
 	}
 	if (TargetIdx == INDEX_NONE) { return false; }
 
+	ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr);
+	if (!GM) { return false; }
+
+	const FVector Chest = TargetFeet + FVector(0.0f, 0.0f, 90.0f);
+	const FVector ScanA = Chest - FVector(60.0f, 0.0f, 0.0f);
+	const FVector ScanB = Chest + FVector(60.0f, 0.0f, 0.0f);
+	const ELegionTeam ShooterTeam = (GetTeam() == ELegionTeam::Enemy) ? ELegionTeam::Player : ELegionTeam::Enemy;
+	ALegionUnit* ScanUnit = nullptr;
+	int32 ScanSoldier = INDEX_NONE;
+	FVector ScanHitPos = FVector::ZeroVector;
+	const bool bScanHit = GM->ScanProjectileSoldierHit(ScanA, ScanB, ShooterTeam, ScanUnit, ScanSoldier, ScanHitPos);
+	const bool bScanExact = bScanHit && ScanUnit == this && ScanSoldier == TargetIdx;
+
 	const int32 AliveBefore = AliveCount;
-	UCapsuleComponent* Proxy = Soldiers[TargetIdx].HitProxy.Get();
-	const FVector HitLoc = Proxy->GetComponentLocation();
 
 	// 第一枪未致命: 仅扣目标个体血量, 全团无人死亡
 	const float PartialDmg = FMath::Max(1.0f, Soldiers[TargetIdx].HP * 0.4f);
-	const int32 Killed1 = ApplySoldierProjectileHit(Proxy, INDEX_NONE, HitLoc, FVector(0.0f, 1.0f, 0.0f), PartialDmg);
+	const int32 Killed1 = ApplyBulletHitToSoldier(TargetIdx, PartialDmg, FVector(1.0f, 0.0f, 0.0f));
 	const bool bPartialOk = (Killed1 == 0 && Soldiers[TargetIdx].bAlive && AliveCount == AliveBefore);
 
-	// 第二枪致命: 仅 TargetIdx 阵亡, 其余士兵全部存活, 且 TargetIdx 碰撞立刻关闭
+	// 第二枪致命: 仅 TargetIdx 阵亡, 其余士兵全部存活
 	const float LethalDmg = Soldiers[TargetIdx].HP + 10.0f;
-	const int32 Killed2 = ApplySoldierProjectileHit(Proxy, INDEX_NONE, HitLoc, FVector(0.0f, 1.0f, 0.0f), LethalDmg);
+	const int32 Killed2 = ApplyBulletHitToSoldier(TargetIdx, LethalDmg, FVector(1.0f, 0.0f, 0.0f));
 	bool bOnlyTargetDied = (Killed2 == 1 && !Soldiers[TargetIdx].bAlive && AliveCount == AliveBefore - 1);
 	for (int32 i = 0; i < Soldiers.Num(); ++i)
 	{
 		if (i != TargetIdx && !Soldiers[i].bAlive) { bOnlyTargetDied = false; break; }
 	}
-	const bool bCollisionCleared = (Proxy->GetCollisionEnabled() == ECollisionEnabled::NoCollision);
 
+	UE_LOG(LogERLegion, Log, TEXT("[BulletHitSelfTest] %s: math scan hits exact target idx=%d (unit=%s scan=%d)"),
+		bScanExact ? TEXT("PASS") : TEXT("FAIL"), TargetIdx, *GetNameSafe(ScanUnit), ScanSoldier);
 	UE_LOG(LogERLegion, Log, TEXT("[BulletHitSelfTest] %s: partial hit wounds only target without random death"),
 		bPartialOk ? TEXT("PASS") : TEXT("FAIL"));
 	UE_LOG(LogERLegion, Log, TEXT("[BulletHitSelfTest] %s: lethal hit kills exact target idx=%d (not front/random)"),
 		bOnlyTargetDied ? TEXT("PASS") : TEXT("FAIL"), TargetIdx);
-	UE_LOG(LogERLegion, Log, TEXT("[BulletHitSelfTest] %s: killed soldier HitProxy disabled immediately"),
-		bCollisionCleared ? TEXT("PASS") : TEXT("FAIL"));
-	return bPartialOk && bOnlyTargetDied && bCollisionCleared;
+	return bScanExact && bPartialOk && bOnlyTargetDied;
 }
 
 void ALegionUnit::CheckAndHandleWiped()

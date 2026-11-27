@@ -756,13 +756,25 @@ void ALegionUnit::ConformToTerrain(float DeltaSeconds)
 	UWorld* World = GetWorld();
 	if (!World) { return; }
 
-	const FVector Loc = GetActorLocation();
-	float GZ = Loc.Z;
-	if (TraceGroundZ(Loc, GZ))
+	// 静止且已收敛的军团跳过 Z 追踪: 地形是静态的, 渐近插值的无限尾迹会让
+	// SetActorLocation 每帧微动 0.001cm, 白白级联刷新全团上百个组件 (实测 ~1.2ms/帧)
+	const bool bNeedLegionZ = !bGroundConverged
+		|| State == ELegionState::Moving
+		|| !KnockbackVelocity.IsNearlyZero(8.0f);
+	if (bNeedLegionZ)
 	{
-		const float NewZ = (DeltaSeconds > 1.0f) ? GZ
-			: FMath::FInterpTo(Loc.Z, GZ, DeltaSeconds, GroundConformSpeed * 1.5f);
-		SetActorLocation(FVector(Loc.X, Loc.Y, NewZ));
+		const FVector Loc = GetActorLocation();
+		float GZ = Loc.Z;
+		if (TraceGroundZ(Loc, GZ))
+		{
+			const float NewZ = (DeltaSeconds > 1.0f || FMath::Abs(GZ - Loc.Z) <= 2.0f) ? GZ
+				: FMath::FInterpTo(Loc.Z, GZ, DeltaSeconds, GroundConformSpeed * 1.5f);
+			if (NewZ != Loc.Z)
+			{
+				SetActorLocation(FVector(Loc.X, Loc.Y, NewZ));
+			}
+			bGroundConverged = (NewZ == GZ);
+		}
 	}
 
 	// 单兵高度主源已统一交由 UpdateSoldiersMicroAI (双线性连续网格 + S.SmoothedRayOffset);

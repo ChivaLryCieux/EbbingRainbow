@@ -125,8 +125,11 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   否则相机瞬移整帧拉花。
 - 弹道模拟在 `ALegionGameMode::SimulateBullets`（子弹数组+扫描命中+地形遮挡），
   士兵逐兵冷却 (`FLegionSoldier::FireTimer`) 自动开火，命中走
-  `ALegionUnit::ApplyBulletHitToSoldier` 逐兵扣血+沿弹道击飞。**士兵交战命中是纯数学胶囊扫描，
-  不依赖物理**；逐兵 `HitProxy` 胶囊仅供玩家 FPS 武器命中，是空跑物理开销的大头（诊断 `-LegionNoHitProxy`）。
+  `ALegionUnit::ApplyBulletHitToSoldier` 逐兵扣血+沿弹道击飞。**所有命中都是纯数学胶囊扫描**：
+  逐兵物理命中代理胶囊已永久废除（2026-12，375 兵空烧 ~3.5ms/帧），玩家投射物每帧沿飞行线段走
+  `LegionGameMode::ScanProjectileSoldierHit`（地形遮挡截断+步进点测），爆炸走
+  `ApplyExplosionToEnemySoldiers`，与士兵子弹同一套胶囊参数 (R40, 轴段+15..+165) 与位置源。
+  `FLegionSoldier::HitProxy` 保留字段但恒为空。
 - **骨骼兵性能标尺（2026-12）**：`-LegionPerf`（全军突击+俯瞰最坏机位采样 10s 帧耗时，
   输出 `[LegionPerf]` 均值/分位 + 手工计时归因）+ `-LegionForceSkeletal`（无视 160 阈值强制骨骼），
   配 `-ExecCmds="stat unit"` 可得 game/render/gpu 三线；方法与基准数据见

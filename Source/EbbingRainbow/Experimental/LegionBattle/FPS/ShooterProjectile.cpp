@@ -4,6 +4,7 @@
 
 #include "Experimental/LegionBattle/LegionTypes.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
+#include "Experimental/LegionBattle/LegionGameMode.h"
 
 #include "Components/SphereComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
@@ -87,6 +88,12 @@ void AShooterProjectile::NotifyHit(class UPrimitiveComponent* MyComp, AActor* Ot
 
 	}
 
+	// BP 事件与销毁收尾 (物理命中与数学扫描命中共用)
+	FinishHit(Hit);
+}
+
+void AShooterProjectile::FinishHit(const FHitResult& Hit)
+{
 	// pass control to BP for any extra effects
 	BP_OnProjectileHit(Hit);
 
@@ -100,6 +107,52 @@ void AShooterProjectile::NotifyHit(class UPrimitiveComponent* MyComp, AActor* Ot
 		// destroy the projectile right away
 		Destroy();
 	}
+}
+
+void AShooterProjectile::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (bHit) { return; }
+
+	// 逐兵物理命中胶囊已废除 (375 兵空烧 ~3.5ms/帧): 沿本帧飞行线段做数学胶囊扫描,
+	// 与士兵子弹同一套胶囊参数/命中结算, 地形遮挡先于士兵判定
+	const FVector Cur = GetActorLocation();
+	if (bPrevPosValid)
+	{
+		ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr);
+		if (GM)
+		{
+			ALegionUnit* HitUnit = nullptr;
+			int32 HitSoldier = INDEX_NONE;
+			FVector HitPos = FVector::ZeroVector;
+			if (GM->ScanProjectileSoldierHit(PrevPosForScan, Cur, ELegionTeam::Player, HitUnit, HitSoldier, HitPos) && HitUnit)
+			{
+				bHit = true;
+				CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				MakeNoise(NoiseLoudness, GetInstigator(), HitPos, NoiseRange, NoiseTag);
+
+				const FVector TravelDir = (Cur - PrevPosForScan).GetSafeNormal();
+				if (bExplodeOnHit)
+				{
+					ExplosionCheck(HitPos);
+				}
+				else
+				{
+					HitUnit->ApplyBulletHitToSoldier(HitSoldier, HitDamage, TravelDir);
+				}
+
+				FHitResult ScanHit;
+				ScanHit.Location = HitPos;
+				ScanHit.ImpactPoint = HitPos;
+				ScanHit.ImpactNormal = -TravelDir;
+				FinishHit(ScanHit);
+				return;
+			}
+		}
+	}
+	PrevPosForScan = Cur;
+	bPrevPosValid = true;
 }
 
 void AShooterProjectile::ExplosionCheck(const FVector& ExplosionCenter)
@@ -141,7 +194,13 @@ void AShooterProjectile::ExplosionCheck(const FVector& ExplosionCenter)
 			// push and/or damage the overlapped actor
 			ProcessHit(CurrentOverlap.GetActor(), CurrentOverlap.GetComponent(), GetActorLocation(), ExplosionDir.GetSafeNormal());
 		}
-			
+
+	}
+
+	// 逐兵物理命中代理已废除: 爆炸对敌兵按半径数学结算 (与子弹扫描同一位置源, 射中谁就打谁)
+	if (ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
+	{
+		GM->ApplyExplosionToEnemySoldiers(ExplosionCenter, ExplosionRadius, HitDamage, ELegionTeam::Player);
 	}
 }
 

@@ -303,6 +303,9 @@ void ALegionUnit::SpawnSkeletalSoldier(FLegionSoldier& S)
 		static const bool bSoldierURO = !FParse::Param(FCommandLine::Get(), TEXT("LegionNoURO"));
 		C->bEnableUpdateRateOptimizations = bSoldierURO;
 	}
+	// 视野外不求值不刷骨骼: 第一人称实战大多数士兵在镜头外, 引擎逐组件骨骼机器成本直接归零;
+	// 命中胶囊挂组件根不受骨骼影响, ragdoll 走物理不受影响, 回视野自动恢复
+	C->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 	C->SetAnimationMode(EAnimationMode::AnimationSingleNode);
 	if (RelaxedBlendSpace && RelaxedBSBinding.bValid && LegionUnitInternal::IsSafeSingleNodeAsset(RelaxedBlendSpace))
 	{
@@ -323,25 +326,10 @@ void ALegionUnit::SpawnSkeletalSoldier(FLegionSoldier& S)
 	}
 	C->RegisterComponent();
 
-	// 子弹命中代理: 胶囊跟随骨骼组件, 只挡 WorldDynamic (手枪弹);
-	// 命中可视士兵才结算, 不再依赖 PickBox 隐形大盒
-	// (-LegionNoHitProxy 仅供性能诊断: 跳过物理胶囊创建, 玩家射击将无命中, 兵团交战不受影响)
-	static const bool bNoHitProxy = FParse::Param(FCommandLine::Get(), TEXT("LegionNoHitProxy"));
-	UCapsuleComponent* Proxy = nullptr;
-	if (!bNoHitProxy)
-	{
-		Proxy = NewObject<UCapsuleComponent>(this, NAME_None, RF_Transient);
-		Proxy->SetupAttachment(C);
-		Proxy->SetCapsuleSize(36.0f, 92.0f);
-		Proxy->SetRelativeLocation(FVector(0.0f, 0.0f, 92.0f));
-		Proxy->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-		Proxy->SetCollisionResponseToAllChannels(ECR_Ignore);
-		Proxy->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
-		Proxy->SetCanEverAffectNavigation(false);
-		// 命中胶囊无需自身 tick: 变换跟随父骨骼组件由挂接系统驱动, 物理查询与 tick 无关
-		Proxy->SetComponentTickEnabled(false);
-		Proxy->RegisterComponent();
-	}
+	// 逐兵物理命中胶囊已永久废除 (2026-12 性能归因: 375 兵空烧 ~3.5ms/帧物理场景同步+级联):
+	// 玩家投射物与爆炸统一走数学胶囊扫描 (LegionGameMode::ScanProjectileSoldierHit /
+	// ApplyExplosionToEnemySoldiers), 与士兵子弹同一套参数与位置源, 命中精度不变。
+	// S.HitProxy 保持空指针, 相关空值守卫代码路径自然失效。
 
 	// FP 模板枪械: 手枪静态网格附加到手部骨骼, 随射击动画一起运动
 	{
@@ -390,7 +378,6 @@ void ALegionUnit::SpawnSkeletalSoldier(FLegionSoldier& S)
 	}
 
 	S.SkelComp = C;
-	S.HitProxy = Proxy;
 }
 
 void ALegionUnit::ApplyAnimStateToSoldiers()
@@ -525,6 +512,31 @@ void ALegionUnit::WriteSkeletalSoldierRepresentation(float DeltaSeconds)
 		}
 	}
 
+	// 距离分带写入降频: 远处士兵的变换写入按 1/2 (50m+) 或 1/3 (120m+) 帧率提交,
+	// 该视距下单步位移只有几个像素, 视觉不可分辨, 写入+级联成本按比例削减;
+	// 士兵按索引相位错开避免同帧齐写, 驻立跳过逻辑不受影响 (写入帧仍做不变检测)
+	int32 WriteStride = 1;
+	{
+		FVector CamLoc = FVector::ZeroVector;
+		bool bHaveCam = false;
+		if (const UWorld* W = GetWorld())
+		{
+			if (const APlayerController* PC = W->GetFirstPlayerController())
+			{
+				if (const APlayerCameraManager* CM = PC->PlayerCameraManager)
+				{
+					CamLoc = CM->GetCameraLocation();
+					bHaveCam = true;
+				}
+			}
+		}
+		if (bHaveCam)
+		{
+			const float DistCm = FVector::Dist(CamLoc, GetActorLocation());
+			WriteStride = (DistCm > 12000.0f) ? 3 : (DistCm > 5000.0f) ? 2 : 1;
+		}
+	}
+
 	const float ActorYaw = GetActorRotation().Yaw;
 	for (int32 i = 0; i < Soldiers.Num(); ++i)
 	{
@@ -533,12 +545,14 @@ void ALegionUnit::WriteSkeletalSoldierRepresentation(float DeltaSeconds)
 
 		if (USkeletalMeshComponent* C = S.SkelComp.Get())
 		{
-			// 单次写入位置+旋转, 避免两次 UpdateComponentToWorld 级联 (命中胶囊/手枪挂在下面);
-			// 驻立士兵变换不变时整帧跳过, 省去物理体更新/渲染变换提交/socket 重解的全部下游成本
+			// 单次写入位置+旋转, 避免两次 UpdateComponentToWorld 级联 (手枪挂在下面);
+			// 驻立士兵变换不变时整帧跳过, 省去渲染变换提交/socket 重解的全部下游成本
 			const float NewYaw = S.CurYaw - ActorYaw - 90.0f;
 			const bool bUnchanged = S.LastRepLoc.Equals(S.LocalOffset, 0.2f)
 				&& FMath::Abs(FMath::FindDeltaAngleDegrees(S.LastRepYaw, NewYaw)) < 0.05f;
-			if (!bUnchanged)
+			const bool bWriteFrame = (WriteStride <= 1) || ((int32(GFrameNumber) + i) % WriteStride) == 0;
+			// 阵亡/垂死士兵不受降频限制: 死亡动画与 ragdoll 触发需要逐帧精确推进
+			if (!bUnchanged && (bWriteFrame || S.DieT >= 0.0f))
 			{
 				C->SetRelativeLocationAndRotation(S.LocalOffset, FRotator(0.0f, NewYaw, 0.0f));
 				S.LastRepLoc = S.LocalOffset;

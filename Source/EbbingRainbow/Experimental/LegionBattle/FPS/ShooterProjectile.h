@@ -89,6 +89,16 @@ protected:
 	/** Gameplay cleanup */
 	virtual void EndPlay(EEndPlayReason::Type EndPlayReason) override;
 
+	/** 每帧数学扫描敌对士兵胶囊 (逐兵物理命中胶囊已废除, 见 LegionGameMode::ScanProjectileSoldierHit) */
+	virtual void Tick(float DeltaTime) override;
+
+	/** 上帧位置 (数学扫描的线段起点) */
+	FVector PrevPosForScan = FVector::ZeroVector;
+	bool bPrevPosValid = false;
+
+	/** 命中后的统一收尾 (噪声/BP 事件/延迟销毁), 物理命中与数学扫描命中共用 */
+	void FinishHit(const FHitResult& Hit);
+
 	/** Handles collision */
 	virtual void NotifyHit(class UPrimitiveComponent* MyComp, AActor* Other, UPrimitiveComponent* OtherComp, bool bSelfMoved, FVector HitLocation, FVector HitNormal, FVector NormalImpulse, const FHitResult& Hit) override;
 

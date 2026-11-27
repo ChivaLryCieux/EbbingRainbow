@@ -426,6 +426,8 @@ private:
 	/** 远距手枪隐藏状态 (带滞回, 仅表现层) */
 	bool bGunsHiddenForDistance = false;
 	float GroundConformTimer = 0.0f;
+	/** 贴地已收敛: 静止军团跳过每帧射线+Z插值+SetActorLocation 级联, 移动/击退时自动重新激活 */
+	bool bGroundConverged = false;
 	int32 GroundTraceCursor = 0;
 	FVector FormationHalfExtent = FVector(300.0f, 300.0f, 0.0f);
 

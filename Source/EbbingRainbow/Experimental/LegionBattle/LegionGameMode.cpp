@@ -607,3 +607,107 @@ void ALegionGameMode::SimulateBullets(float DeltaSeconds)
 		}
 	}
 }
+
+bool ALegionGameMode::ScanProjectileSoldierHit(const FVector& Start, const FVector& End, ELegionTeam ShooterTeam,
+	ALegionUnit*& OutUnit, int32& OutSoldierIndex, FVector& OutHitPos)
+{
+	OutUnit = nullptr;
+	OutSoldierIndex = INDEX_NONE;
+	UWorld* World = GetWorld();
+	if (!World) { return false; }
+
+	// 与士兵子弹同一套胶囊近似与步进参数
+	constexpr float CapsuleRadius = 40.0f;
+	constexpr float AxisLo = 15.0f;
+	constexpr float AxisHi = 165.0f;
+	constexpr float StepCm = 15.0f;
+
+	// 地形遮挡截断: 士兵躲在坡后不应被穿透命中 (投射物物理体随后会自然撞上地形)
+	FVector SegEnd = End;
+	FHitResult TerrainHit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LegionBulletTerrain), false);
+	if (World->LineTraceSingleByChannel(TerrainHit, Start, End, ECC_WorldStatic, Params))
+	{
+		SegEnd = FMath::Lerp(Start, End, FMath::Clamp(TerrainHit.Time, 0.0f, 1.0f));
+	}
+
+	const TArray<TObjectPtr<ALegionUnit>>& Foes =
+		(ShooterTeam == ELegionTeam::Player) ? EnemyLegions : PlayerLegions;
+
+	const float SegLen = FVector::Dist(Start, SegEnd);
+	const int32 Steps = FMath::Max(1, FMath::CeilToInt(SegLen / StepCm));
+	const FVector SegMid = (Start + SegEnd) * 0.5f;
+
+	BulletHitCandidates.Reset();
+	for (ALegionUnit* Foe : Foes)
+	{
+		if (!Foe || Foe->IsWiped()) { continue; }
+		const float RoughR = Foe->GetFormationHalfExtent().GetMax() + SegLen + 200.0f;
+		if (FVector::DistSquared2D(SegMid, Foe->GetActorLocation()) > RoughR * RoughR) { continue; }
+
+		const int32 Count = Foe->GetSoldierCount();
+		for (int32 s = 0; s < Count; ++s)
+		{
+			FVector Feet;
+			if (!Foe->GetAliveSoldierFeet(s, Feet)) { continue; }
+			FLegionBulletHitCandidate& Candidate = BulletHitCandidates.AddDefaulted_GetRef();
+			Candidate.Unit = Foe;
+			Candidate.SoldierIndex = s;
+			Candidate.Feet = Feet;
+		}
+	}
+
+	for (int32 k = 0; k <= Steps; ++k)
+	{
+		const float T = (float)k / (float)Steps;
+		const FVector P = FMath::Lerp(Start, SegEnd, T);
+		for (const FLegionBulletHitCandidate& Candidate : BulletHitCandidates)
+		{
+			if (!Candidate.Unit.IsValid()) { continue; }
+			const FVector& Feet = Candidate.Feet;
+			const float Dz = (P.Z < Feet.Z + AxisLo) ? (Feet.Z + AxisLo - P.Z)
+				: (P.Z > Feet.Z + AxisHi) ? (P.Z - Feet.Z - AxisHi) : 0.0f;
+			const float Dx = P.X - Feet.X;
+			const float Dy = P.Y - Feet.Y;
+			if (Dx * Dx + Dy * Dy + Dz * Dz <= CapsuleRadius * CapsuleRadius)
+			{
+				OutUnit = Candidate.Unit.Get();
+				OutSoldierIndex = Candidate.SoldierIndex;
+				OutHitPos = P;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+int32 ALegionGameMode::ApplyExplosionToEnemySoldiers(const FVector& Center, float Radius, float Damage, ELegionTeam ShooterTeam)
+{
+	// 爆炸对敌兵的数学结算: 取代物理 overlap 命中代理胶囊, 与单发扫描共用位置源
+	const TArray<TObjectPtr<ALegionUnit>>& Foes =
+		(ShooterTeam == ELegionTeam::Player) ? EnemyLegions : PlayerLegions;
+	const float RadiusSq = Radius * Radius;
+	int32 HitCount = 0;
+	for (ALegionUnit* Foe : Foes)
+	{
+		if (!Foe || Foe->IsWiped()) { continue; }
+		const float RoughR = Foe->GetFormationHalfExtent().GetMax() + Radius;
+		if (FVector::DistSquared2D(Center, Foe->GetActorLocation()) > RoughR * RoughR) { continue; }
+
+		const int32 Count = Foe->GetSoldierCount();
+		for (int32 s = 0; s < Count; ++s)
+		{
+			FVector Feet;
+			if (!Foe->GetAliveSoldierFeet(s, Feet)) { continue; }
+			// 胶囊躯干中心近似 (脚底 +90cm)
+			const FVector Chest = Feet + FVector(0.0f, 0.0f, 90.0f);
+			if (FVector::DistSquared(Center, Chest) <= RadiusSq)
+			{
+				const FVector Dir = (Chest - Center).GetSafeNormal();
+				Foe->ApplyBulletHitToSoldier(s, Damage, Dir);
+				++HitCount;
+			}
+		}
+	}
+	return HitCount;
+}
