@@ -16,6 +16,7 @@
 #include "Experimental/LegionBattle/LegionHUDWidget.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
+#include "Experimental/LegionBattle/LegionWeather.h"
 #include "GameFramework/PlayerController.h"
 #include "UI/ERUIStatics.h"
 #include "UI/ERUITheme.h"
@@ -100,6 +101,13 @@ void ALegionHUD::DrawHUD()
 	ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetOwningPlayerController());
 	if (!GM || !PC) { return; }
 
+	// 战终结算画面: 隐藏所有战场 2D/3D 叠层 (雨丝/阵型圈/番号/小地图/准星), 只留冻结的纯粹战场与极简结算字样
+	if (GM->IsBattleOver())
+	{
+		EnemySkyBannerEntries.Reset();
+		return;
+	}
+
 	// 等高线地图视角: 全屏地图接管整个画面
 	if (PC->IsStrategicMapOpen())
 	{
@@ -109,6 +117,43 @@ void ALegionHUD::DrawHUD()
 	}
 
 	EnemySkyBannerEntries.Reset();
+
+	// 0. 轻量气象颗粒层 (骤雨斜线 / 硝烟余烬)
+	{
+		const FLegionWeatherSpec& Weather = FLegionWeatherSystem::GetSpec(GM->GetActiveWeatherPreset());
+		if (Weather.PrecipIntensity > 0.01f && Canvas->SizeX > 0 && Canvas->SizeY > 0)
+		{
+			const float Time = World->GetTimeSeconds();
+			const int32 Count = FMath::RoundToInt((Weather.bPrecipAsh ? 44.0f : 72.0f) * Weather.PrecipIntensity);
+			for (int32 i = 0; i < Count; ++i)
+			{
+				const uint32 H1 = (uint32)(i * 73856093) ^ 0x9E3779B9u;
+				const uint32 H2 = (uint32)(i * 19349663) ^ 0x85EBCA6Bu;
+				const float SeedX = (float)(H1 & 0xFFFF) / 65535.0f;
+				const float SeedY = (float)(H2 & 0xFFFF) / 65535.0f;
+				const float Speed = 0.7f + 0.6f * ((float)((H1 >> 16) & 0xFF) / 255.0f);
+
+				if (Weather.bPrecipAsh)
+				{
+					const float X = FMath::Fmod(SeedX + Time * 0.045f * Speed + 0.03f * FMath::Sin(Time * 1.4f + i), 1.0f) * Canvas->SizeX;
+					const float Y = (1.0f - FMath::Fmod(SeedY + Time * 0.065f * Speed, 1.0f)) * Canvas->SizeY;
+					const float Sz = 2.0f + (i % 2);
+					const FLinearColor Col = (i % 3 == 0)
+						? FLinearColor(0.98f, 0.52f, 0.16f, 0.42f)
+						: FLinearColor(0.24f, 0.22f, 0.21f, 0.34f);
+					DrawRect(Col, X, Y, Sz, Sz);
+				}
+				else
+				{
+					const float X = FMath::Fmod(SeedX - Time * 0.22f * Speed + 10.0f, 1.0f) * Canvas->SizeX;
+					const float Y = FMath::Fmod(SeedY + Time * 1.35f * Speed, 1.0f) * Canvas->SizeY;
+					const float Len = 34.0f + 18.0f * Speed;
+					const FLinearColor RainCol(0.55f, 0.66f, 0.80f, 0.07f);
+					DrawLine(X, Y, X - Len * 0.15f, Y + Len, RainCol, 1.0f);
+				}
+			}
+		}
+	}
 
 	// 1. 远程齐射弹道 / 技能冲击线
 	for (const FLegionTracerBeam& B : GM->GetTracerBeams())
@@ -229,11 +274,14 @@ void ALegionHUD::DrawHUD()
 		}
 	}
 
-	// 6. 左上角黑白等高线小地图 (点击/按 M 进入等高线地图视角)
-	DrawMinimap(GM, PC);
+	if (!GM->IsBattleOver())
+	{
+		// 6. 左上角黑白等高线小地图 (点击/按 M 进入等高线地图视角)
+		DrawMinimap(GM, PC);
 
-	// 7. 第一人称准星 (光标呼出时不画)
-	DrawCrosshair(PC);
+		// 7. 第一人称准星 (光标呼出时不画)
+		DrawCrosshair(PC);
+	}
 }
 
 void ALegionHUD::DrawOrderOverlays(ALegionGameMode* GM, ALegionPlayerController* PC)
@@ -302,6 +350,35 @@ void ALegionHUD::DrawOrderOverlays(ALegionGameMode* GM, ALegionPlayerController*
 			FVector Face = (Last - BeforeLast).GetSafeNormal2D();
 			if (L->HasCustomFacing()) { Face = FRotator(0.0f, L->GetDesiredFacingYaw(), 0.0f).Vector(); }
 			if (!Face.IsNearlyZero()) { Arrow(Last + Face * 260.0f, Last + Face * 900.0f, C, 220.0f, Th + 0.4f); }
+		}
+
+		// 巡逻航线 & 戒备扇面 3D 辅助标示
+		if (L->GetDirective() == ELegionDirective::Patrol && L->GetPatrolWaypoints().Num() >= 2)
+		{
+			const TArray<FVector>& Pts = L->GetPatrolWaypoints();
+			FLinearColor PCCol(0.28f, 0.85f, 0.72f, bSel ? 0.85f : 0.35f);
+			for (int32 p = 0; p < Pts.Num(); ++p)
+			{
+				const FVector WP = Pts[p] + Up;
+				Ring(WP, 160.0f, PCCol, 1.3f);
+				if (p + 1 < Pts.Num())
+				{
+					DrawProjectedLine(WP, Pts[p + 1] + Up, PCCol, 1.3f);
+				}
+			}
+		}
+		else if (L->GetDirective() == ELegionDirective::Guard)
+		{
+			FLinearColor GCol(0.32f, 0.72f, 0.98f, bSel ? 0.85f : 0.38f);
+			const FVector Ctr = L->GetGuardAnchor() + Up;
+			const float BaseY = L->GetFacingYaw();
+			for (int32 s = -3; s < 3; ++s)
+			{
+				const float A0 = FMath::DegreesToRadians(BaseY + s * 10.0f);
+				const float A1 = FMath::DegreesToRadians(BaseY + (s + 1) * 10.0f);
+				DrawProjectedLine(Ctr + FVector(FMath::Cos(A0), FMath::Sin(A0), 0.0f) * 520.0f,
+					Ctr + FVector(FMath::Cos(A1), FMath::Sin(A1), 0.0f) * 520.0f, GCol, 1.8f);
+			}
 		}
 	}
 }
@@ -761,6 +838,49 @@ void ALegionHUD::DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* 
 				DrawText(Tag, C, Last.X + R + 4.0f, Last.Y - 18.0f, Font, 0.85f, false);
 			}
 		}
+
+		// 在等高线地图上叠绘敌我巡逻回路与戒备扇弧
+		auto DrawDirectiveLines = [&](const TArray<TObjectPtr<ALegionUnit>>& List, const FLinearColor& BaseCol)
+		{
+			for (ALegionUnit* L : List)
+			{
+				if (!L || L->IsWiped()) { continue; }
+				FVector2D PL;
+				if (!ToScreen(L->GetActorLocation(), PL)) { continue; }
+				if (L->GetDirective() == ELegionDirective::Patrol && L->GetPatrolWaypoints().Num() >= 2)
+				{
+					FLinearColor C = BaseCol;
+					C.A = 0.52f;
+					const TArray<FVector>& Pts = L->GetPatrolWaypoints();
+					for (int32 p = 0; p + 1 < Pts.Num(); ++p)
+					{
+						FVector2D A, B;
+						if (ToScreen(Pts[p], A) && ToScreen(Pts[p + 1], B))
+						{
+							DrawDashed(A, B, C, 1.3f);
+							DrawRing(B, 5.0f, C, 1.2f);
+						}
+					}
+				}
+				else if (L->GetDirective() == ELegionDirective::Guard)
+				{
+					FLinearColor C = BaseCol;
+					C.A = 0.60f;
+					const float BaseY = L->GetFacingYaw();
+					const float R = 22.0f;
+					for (int32 s = -3; s < 3; ++s)
+					{
+						const float R0 = FMath::DegreesToRadians(BaseY + s * 10.0f);
+						const float R1 = FMath::DegreesToRadians(BaseY + (s + 1) * 10.0f);
+						const FVector2D D0(-FMath::Cos(R0), -FMath::Sin(R0));
+						const FVector2D D1(-FMath::Cos(R1), -FMath::Sin(R1));
+						DrawLine(PL.X + D0.X * R, PL.Y + D0.Y * R, PL.X + D1.X * R, PL.Y + D1.Y * R, C, 1.5f);
+					}
+				}
+			}
+		};
+		DrawDirectiveLines(GM->GetPlayerLegions(), FLinearColor(0.22f, 0.85f, 0.72f, 1.0f));
+		DrawDirectiveLines(GM->GetEnemyLegions(), Hostile);
 	}
 
 	// 番号牌: 大号 Logo + 两行紧凑卡片 + 聚类外扩/迭代排斥防碰撞 + 边缘精准引线
@@ -799,7 +919,26 @@ void ALegionHUD::DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* 
 				It.Name = It.bAlly ? ERGalacticMeta::GetBrigadeName(1) : ERGalacticMeta::GetEnemyBrigadeName(1);
 			}
 			It.Sub = FString::Printf(TEXT("%d / %d 兵"), L->GetAliveCount(), L->GetSoldierCount());
-			if (It.bAlly && PC->IsLegionFollowing(L)) { It.Sub += TEXT(" · 跟随"); }
+			if (It.bAlly && PC->IsLegionFollowing(L))
+			{
+				It.Sub += TEXT(" · 跟随");
+			}
+			else
+			{
+				const ELegionDirective Dir = L->GetDirective();
+				if (L->GetLegionState() == ELegionState::Engaged)
+				{
+					It.Sub += TEXT(" · 交战");
+				}
+				else if (Dir != ELegionDirective::Standby && Dir != ELegionDirective::PlayerOrder)
+				{
+					It.Sub += FString::Printf(TEXT(" · %s"), ERLegionMeta::GetDirectiveName(Dir));
+				}
+				else if (L->GetAlertness() == ELegionAlertness::Alert)
+				{
+					It.Sub += TEXT(" · 警戒");
+				}
+			}
 
 			It.IconSz = It.bSel ? 42.0f : 38.0f;
 			float NameW = 0.0f, SubW = 0.0f;

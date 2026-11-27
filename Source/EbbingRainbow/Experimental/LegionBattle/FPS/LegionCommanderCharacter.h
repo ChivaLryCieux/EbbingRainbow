@@ -263,8 +263,11 @@ protected:
 	/** Returns true if the character already owns a weapon of the given class */
 	AShooterWeapon* FindWeaponOfType(TSubclassOf<AShooterWeapon> WeaponClass) const;
 
-	/** 军团侧开火许可: 地图开着 / 光标呼出 / 瞄准我方兵团时不打 */
+	/** 军团侧开火许可: 地图开着 / 光标呼出 / 结算锁定时不打 */
 	bool CanFireWeapon() const;
+
+	/** 接驳屏或战终结算锁定期间彻底屏蔽第一人称移动/转向/跳跃/疾跑/切枪 */
+	bool IsCommanderInputBlocked() const;
 
 	/** Called when this character's HP is depleted */
 	void Die();

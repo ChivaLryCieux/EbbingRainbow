@@ -113,6 +113,43 @@ bool FLegionTerrainGrid::SampleHeightAndSlope(const FVector& WorldPos, float& Ou
 	return true;
 }
 
+bool FLegionTerrainGrid::SampleHeightBilinear(const FVector& WorldPos, float& OutZ) const
+{
+	if (!IsBuilt()) { return false; }
+
+	const float FX = (WorldPos.X - OriginXY.X) / CellSize - 0.5f;
+	const float FY = (WorldPos.Y - OriginXY.Y) / CellSize - 0.5f;
+	const int32 X0 = FMath::Clamp(FMath::FloorToInt(FX), 0, GridWidth - 1);
+	const int32 Y0 = FMath::Clamp(FMath::FloorToInt(FY), 0, GridHeight - 1);
+	const int32 X1 = FMath::Clamp(X0 + 1, 0, GridWidth - 1);
+	const int32 Y1 = FMath::Clamp(Y0 + 1, 0, GridHeight - 1);
+	const float TX = FMath::Clamp(FX - (float)X0, 0.0f, 1.0f);
+	const float TY = FMath::Clamp(FY - (float)Y0, 0.0f, 1.0f);
+
+	const FCell& C00 = Cells[IndexOf(X0, Y0)];
+	const FCell& C10 = Cells[IndexOf(X1, Y0)];
+	const FCell& C01 = Cells[IndexOf(X0, Y1)];
+	const FCell& C11 = Cells[IndexOf(X1, Y1)];
+
+	float FallbackZ = 0.0f;
+	bool bAnyValid = false;
+	for (const FCell* C : { &C00, &C10, &C01, &C11 })
+	{
+		if (C->bValid) { FallbackZ = C->HeightZ; bAnyValid = true; break; }
+	}
+	if (!bAnyValid) { return false; }
+
+	const float Z00 = C00.bValid ? C00.HeightZ : FallbackZ;
+	const float Z10 = C10.bValid ? C10.HeightZ : FallbackZ;
+	const float Z01 = C01.bValid ? C01.HeightZ : FallbackZ;
+	const float Z11 = C11.bValid ? C11.HeightZ : FallbackZ;
+
+	const float Z0 = FMath::Lerp(Z00, Z10, TX);
+	const float Z1 = FMath::Lerp(Z01, Z11, TX);
+	OutZ = FMath::Lerp(Z0, Z1, TY);
+	return true;
+}
+
 bool FLegionTerrainGrid::IsWalkableWorld(const FVector& WorldPos) const
 {
 	int32 GX = 0, GY = 0;

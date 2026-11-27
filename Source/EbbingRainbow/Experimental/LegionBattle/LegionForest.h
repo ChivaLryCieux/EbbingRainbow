@@ -10,6 +10,14 @@ class FLegionTerrainGrid;
 class UHierarchicalInstancedStaticMeshComponent;
 class UStaticMesh;
 
+/** 沿战线方向的带状清空区 (支持任意交战轴向角) */
+struct FLegionOrientedBand
+{
+	FVector2D Center = FVector2D::ZeroVector;
+	FVector2D Forward = FVector2D(0.0f, 1.0f);
+	float HalfDepth = 2800.0f;
+};
+
 /**
  * 军团战场林地 (战术植被):
  *  - 种子化散布 Fishermans_Cabin 的 SM_Fir_Tree_01..08 (HISM + Nanite, 无碰撞, 不影响三类 WorldStatic 地面射线);
@@ -27,7 +35,7 @@ public:
 
 	/** 清空旧树, 按种子重新散布并写入地形网格; 返回成功种下的树数 */
 	int32 Generate(UWorld* World, FLegionTerrainGrid& Grid, int32 Seed, float DensityScale,
-		const TArray<FBox2D>& ExclusionRects);
+		const TArray<FLegionOrientedBand>& ExclusionBands);
 
 	void ClearTrees();
 

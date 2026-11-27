@@ -2570,6 +2570,8 @@ TSharedPtr<FJsonObject> UBattleAICommandService::BuildLegionSnapshotJson() const
 		Obj->SetNumberField(TEXT("alive_soldiers"), L->GetAliveCount());
 		Obj->SetNumberField(TEXT("max_soldiers"), L->GetSoldierCount());
 		Obj->SetStringField(TEXT("state"), LegionStateToString(L->GetLegionState()));
+		Obj->SetStringField(TEXT("directive"), ERLegionMeta::GetDirectiveName(L->GetDirective()));
+		Obj->SetStringField(TEXT("alertness"), ERLegionMeta::GetAlertnessName(L->GetAlertness()));
 
 		const FVector Loc = L->GetActorLocation();
 		TSharedPtr<FJsonObject> Pos = MakeShared<FJsonObject>();
@@ -2880,6 +2882,30 @@ TArray<TSharedPtr<FJsonValue>> UBattleAICommandService::BuildLegionToolsJson(boo
 	}
 	{
 		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要转入戒备固守的我方部队列表")));
+		Props.Add(TEXT("facing_yaw_deg"), MakeJsonProp(TEXT("number"), TEXT("可选：戒备朝向角度（度）")));
+		AddTool(TEXT("order_guard"),
+			TEXT("令指定我方部队进入戒备固守状态，锚定当前阵地扇面警戒并迎击来犯之敌。"),
+			Props, { TEXT("ally_ids") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要执行防区巡逻的我方部队列表")));
+		Props.Add(TEXT("x"), MakeJsonProp(TEXT("number"), TEXT("可选：巡逻折返点世界坐标 X (cm)")));
+		Props.Add(TEXT("y"), MakeJsonProp(TEXT("number"), TEXT("可选：巡逻折返点世界坐标 Y (cm)")));
+		AddTool(TEXT("order_patrol"),
+			TEXT("令指定我方部队在当前阵地与目标点之间往返巡逻，并在航点驻留观察。"),
+			Props, { TEXT("ally_ids") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
+		Props.Add(TEXT("ally_ids"), MakeStringArrayProp(TEXT("要执行探索侦察的我方部队列表")));
+		AddTool(TEXT("order_recon"),
+			TEXT("令指定我方部队进入自主探索侦察状态，穿插高地/林缘索敌并通报友军。"),
+			Props, { TEXT("ally_ids") });
+	}
+	{
+		TMap<FString, TSharedPtr<FJsonObject>> Props;
 		AddTool(TEXT("get_legion_battle_state"),
 			TEXT("重新获取当前大兵团战场的实时状态 JSON 快照。"),
 			Props, {});
@@ -2928,6 +2954,21 @@ bool UBattleAICommandService::DispatchLegionToolCall(const FString& ToolName, co
 	if (ToolName == TEXT("select_allies"))
 	{
 		OutResultJson = Tool_LegionSelectAllies(Args);
+		return true;
+	}
+	if (ToolName == TEXT("order_guard"))
+	{
+		OutResultJson = Tool_LegionOrderGuard(Args);
+		return true;
+	}
+	if (ToolName == TEXT("order_patrol"))
+	{
+		OutResultJson = Tool_LegionOrderPatrol(Args);
+		return true;
+	}
+	if (ToolName == TEXT("order_recon"))
+	{
+		OutResultJson = Tool_LegionOrderRecon(Args);
 		return true;
 	}
 	return false;
@@ -3257,6 +3298,79 @@ FString UBattleAICommandService::Tool_LegionSelectAllies(const TSharedPtr<FJsonO
 	for (ALegionUnit* L : Allies) { Names.Add(MakeShared<FJsonValueString>(L->GetCallsign())); }
 	Res->SetBoolField(TEXT("ok"), Names.Num() > 0);
 	Res->SetArrayField(TEXT("selected_allies"), Names);
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionOrderGuard(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionPlayerController* PC = GetLegionPC();
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	if (PC) { PC->SetLegionsFollowing(Allies, false); }
+
+	double Facing = 1000.0;
+	if (Args.IsValid()) { Args->TryGetNumberField(TEXT("facing_yaw_deg"), Facing); }
+
+	TArray<TSharedPtr<FJsonValue>> Names;
+	for (ALegionUnit* L : Allies)
+	{
+		L->CommandGuard(L->GetActorLocation(), (float)Facing);
+		Names.Add(MakeShared<FJsonValueString>(L->GetCallsign()));
+	}
+	Res->SetBoolField(TEXT("ok"), Names.Num() > 0);
+	Res->SetArrayField(TEXT("guard_allies"), Names);
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionOrderPatrol(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionPlayerController* PC = GetLegionPC();
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	if (PC) { PC->SetLegionsFollowing(Allies, false); }
+
+	double X = 0.0, Y = 0.0;
+	const bool bHasPt = Args.IsValid() && Args->TryGetNumberField(TEXT("x"), X) && Args->TryGetNumberField(TEXT("y"), Y);
+
+	TArray<TSharedPtr<FJsonValue>> Names;
+	for (int32 i = 0; i < Allies.Num(); ++i)
+	{
+		ALegionUnit* L = Allies[i];
+		const FVector Start = L->GetActorLocation();
+		FVector End = Start + FVector(-L->GetFacingVector().Y, L->GetFacingVector().X, 0.0f) * ((i % 2 == 0 ? 1.0f : -1.0f) * 1600.0f);
+		if (bHasPt)
+		{
+			End = FVector((float)X, (float)Y, Start.Z);
+		}
+		L->CommandPatrol({ Start, End });
+		Names.Add(MakeShared<FJsonValueString>(L->GetCallsign()));
+	}
+	Res->SetBoolField(TEXT("ok"), Names.Num() > 0);
+	Res->SetArrayField(TEXT("patrol_allies"), Names);
+	return JsonObjectToString(Res);
+}
+
+FString UBattleAICommandService::Tool_LegionOrderRecon(const TSharedPtr<FJsonObject>& Args)
+{
+	TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+	ALegionPlayerController* PC = GetLegionPC();
+
+	TArray<ALegionUnit*> Allies;
+	ResolveAllyLegions(Args, Allies);
+	if (PC) { PC->SetLegionsFollowing(Allies, false); }
+
+	TArray<TSharedPtr<FJsonValue>> Names;
+	for (ALegionUnit* L : Allies)
+	{
+		L->CommandRecon();
+		Names.Add(MakeShared<FJsonValueString>(L->GetCallsign()));
+	}
+	Res->SetBoolField(TEXT("ok"), Names.Num() > 0);
+	Res->SetArrayField(TEXT("recon_allies"), Names);
 	return JsonObjectToString(Res);
 }
 

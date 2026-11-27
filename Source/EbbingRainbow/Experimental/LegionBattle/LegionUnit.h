@@ -8,7 +8,9 @@
 #include "LegionUnit.generated.h"
 
 class FLegionTerrainGrid;
+class ALegionGameMode;
 class UAnimationAsset;
+class UBlendSpace;
 class UBoxComponent;
 class UHierarchicalInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
@@ -47,7 +49,13 @@ public:
 
 	void SetTerrainGrid(const FLegionTerrainGrid* InGrid) { TerrainGrid = InGrid; }
 
-	// ---------------- 命令接口 ----------------
+	/** 绑定动画混合空间与放松站姿 (由 GameMode 统一注入, 支持 8 向步法 + 速率混合) */
+	void SetAnimationSuites(UBlendSpace* InRelaxedBS, UBlendSpace* InCombatBS, UAnimationAsset* InRelaxedIdle);
+
+	/** 初始化本兵团确定性随机流 (保证同种子下巡逻/侦察/单兵走位完全可复现) */
+	void SetDeterministicSeed(int32 InSeed);
+
+	// ---------------- 命令与弱 AI 指令接口 ----------------
 
 	/** 移动到目标点 (可附带自定义驻守朝向角度; OptionalFacingYaw > 999 表示自动面向行军方向) */
 	void CommandMoveTo(const FVector& Destination, float OptionalFacingYaw = 1000.0f);
@@ -55,8 +63,29 @@ public:
 	/** 进攻另一个兵团 */
 	void CommandAttack(ALegionUnit* Target);
 
-	/** 停驻当前位置, 清除目标 */
+	/** 停驻当前位置, 清除目标与直属机动命令, 切回休整待命 */
 	void CommandHalt();
+
+	/** 戒备固守: 锚定指定阵地扇面扫视警戒, 迎击近敌但不过度追击 */
+	void CommandGuard(const FVector& AnchorPos, float OptionalFacingYaw = 1000.0f);
+
+	/** 防区巡逻: 沿巡逻航点列表往返巡弋并在航点驻留观察 */
+	void CommandPatrol(const TArray<FVector>& InPoints);
+
+	/** 探索侦察: 自主在战区高地/侧翼/林缘间穿插侦察并向友军通报敌情 */
+	void CommandRecon();
+
+	/** 弱 AI 主动接战 (不覆盖玩家直属命令标记外的战术语义, 支持侧翼包抄) */
+	void CommandAutonomousAssault(ALegionUnit* PreferredTarget = nullptr);
+
+	/** 接收目击或友军广播的敌情通报 */
+	void NotifyEnemyContact(ALegionUnit* SpottedEnemy, const FVector& ContactWorldPos, bool bFromDirectFire = false);
+
+	/** 受击瞬间拉响警戒并记录威胁方位 */
+	void NotifyIncomingFire(const FVector& ThreatWorldPos);
+
+	/** 由 GameMode 在战斗打响后逐帧推进军团弱 AI 决策树 */
+	void UpdateWeakAIDirective(float DeltaSeconds, ALegionGameMode* GM);
 
 	// ---------------- 选中/悬停视觉 ----------------
 
@@ -73,7 +102,21 @@ public:
 	ELegionClass GetArchetype() const { return Archetype; }
 	const FLegionArchetypeStats& GetArchetypeStats() const { return ArchetypeStats; }
 	ELegionState GetLegionState() const { return State; }
+	ELegionDirective GetDirective() const { return Directive; }
+	ELegionAlertness GetAlertness() const { return Alertness; }
+	float GetAlertLevel() const { return AlertLevel; }
+	const TArray<FVector>& GetPatrolWaypoints() const { return PatrolWaypoints; }
+	FVector GetGuardAnchor() const { return GuardAnchor; }
 	ALegionUnit* GetAttackTarget() const { return AttackTarget.Get(); }
+
+	/** 统计团内存活士兵各微观状态分布 (用于 HUD 诊断与自动化弱 AI 自检) */
+	void GetSoldierStateDistribution(TMap<ELegionSoldierState, int32>& OutCounts, int32& OutMovingCount, float& OutYawSpreadDeg) const;
+
+	/** 重置多帧运动稳定性遥测窗口 */
+	void ResetMotionTelemetry();
+
+	/** 评估多帧运动稳定性 (跳动/抖动/方向抽搐是否在阈值内) */
+	bool EvaluateMotionStability(FString& OutSummary) const;
 
 	// ---- 当前命令 (供地图 / HUD 绘制路线、终点与朝向箭头) ----
 	bool HasMoveOrder() const { return bHasMoveDestination && !bWiped; }
@@ -195,10 +238,20 @@ protected:
 	virtual void BeginPlay() override;
 
 private:
+	/** HISM 表现层在一支兵团内保持不变的网格归一化与兵种装备局部变换 */
+	struct FLegionInstancedTransformParams
+	{
+		FTransform BodyLocal = FTransform::Identity;
+		FTransform GearLocal = FTransform::Identity;
+		float ActorYaw = 0.0f;
+	};
+
 	void RebuildFormation();
+	FLegionInstancedTransformParams BuildInstancedTransformParams() const;
 	void ComputeSoldierTransforms(const FLegionSoldier& S, float TimeSeconds,
-		FTransform& OutBody, FTransform& OutHead) const;
+		const FLegionInstancedTransformParams& Params, FTransform& OutBody, FTransform& OutHead) const;
 	void WriteAllSoldierTransforms(float TimeSeconds);
+	void WriteSkeletalSoldierRepresentation(float DeltaSeconds);
 	void UpdateFrameVisual();
 	void UpdateOrderVisuals(float TimeSeconds);
 	void ConformToTerrain(float DeltaSeconds);
@@ -207,6 +260,16 @@ private:
 	void FireRangedVolley(ALegionUnit* Target);
 	void ApplyPeerSeparation(float DeltaSeconds);
 
+	void MoveToInternal(const FVector& Destination, float OptionalFacingYaw, ELegionDirective KeepDirective);
+	FVector PickNextReconPoint(const ALegionGameMode* GM);
+	void UpdateAlertness(float DeltaSeconds, ALegionGameMode* GM);
+	void UpdateSoldiersMicroAI(float DeltaSeconds, float Now, ALegionGameMode* GM);
+	void DriveSoldierAnimation(FLegionSoldier& S, int32 SoldierIndex, float DeltaSeconds);
+	bool IsFriendlyBlockingFireLine(int32 SoldierIndex, const FVector2D& AimDir2D, float CheckDist, float& OutClearSideSign) const;
+	bool PickConflictFreeStepOffset(int32 SoldierIndex, const FVector2D& HomeWorldXY, float MinStepDist, float MaxRadius,
+		const FVector2D& PreferredDir, float DirSpreadRad, FVector2D& OutOffset);
+	int32 PickSoldierCombatTarget(FLegionSoldier& S, int32 SoldierIndex, ALegionUnit* Foe, bool bForceReselect, FVector& OutTargetFeet);
+
 	void SpawnSkeletalSoldier(FLegionSoldier& S);
 	void ApplyAnimStateToSoldiers();
 	UAnimationAsset* PickAnimForState(ELegionState InState, int32 SoldierIndex) const;
@@ -214,6 +277,18 @@ private:
 	int32 PickCasualtyIndex(const FVector& FromPos) const;
 	int32 FindSoldierIndexByHit(const UPrimitiveComponent* HitComp, int32 HitItem, const FVector& HitLocation) const;
 	void CheckAndHandleWiped();
+
+	struct FLegionBlendSpaceBinding
+	{
+		bool bValid = false;
+		int32 SpeedAxis = 1; // 0=X, 1=Y
+		int32 DirAxis = 0;   // 0=X, 1=Y
+		float MinSpeed = 0.0f;
+		float MaxSpeed = 500.0f;
+		float MinDir = -180.0f;
+		float MaxDir = 180.0f;
+	};
+	static FLegionBlendSpaceBinding InspectBlendSpace(const UBlendSpace* BS);
 
 	// ---------------- 组件 ----------------
 	UPROPERTY(VisibleAnywhere, Category = "Components")
@@ -252,6 +327,36 @@ private:
 	ELegionClass Archetype = ELegionClass::Shieldbearer;
 	FLegionArchetypeStats ArchetypeStats;
 	ELegionState State = ELegionState::Holding;
+
+	// ---------------- 军团弱 AI 战术层 ----------------
+	ELegionDirective Directive = ELegionDirective::Standby;
+	ELegionAlertness Alertness = ELegionAlertness::Relaxed;
+	float AlertLevel = 0.0f;
+	float AlertDecayCooldown = 0.0f;
+	float DirectiveDecisionTimer = 0.0f;
+	float DirectiveHoldTimer = 0.0f;
+	float DirectiveSpeedMul = 1.0f;
+
+	FVector GuardAnchor = FVector::ZeroVector;
+	float GuardBaseYaw = 90.0f;
+	float GuardScanPhase = 0.0f;
+
+	TArray<FVector> PatrolWaypoints;
+	int32 PatrolCursor = 0;
+	int32 PatrolDirection = 1;
+	float PatrolDwellTimer = 0.0f;
+
+	FVector ReconGoal = FVector::ZeroVector;
+	float ReconDwellTimer = 0.0f;
+	bool bHasReconGoal = false;
+
+	FVector LastKnownThreatPos = FVector::ZeroVector;
+	float ThreatMemoryTimer = 0.0f;
+	float ContactBroadcastCooldown = 0.0f;
+	float FlankCommitTimer = 0.0f;
+	FVector FlankWaypoint = FVector::ZeroVector;
+
+	FRandomStream UnitRng;
 
 	int32 CampaignLegionId = INDEX_NONE;
 	FString Callsign;
@@ -294,7 +399,15 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimationAsset> AnimIdle;
 	UPROPERTY(Transient)
+	TObjectPtr<UAnimationAsset> AnimRelaxedIdle;
+	UPROPERTY(Transient)
 	TObjectPtr<UAnimationAsset> AnimMove;
+	UPROPERTY(Transient)
+	TObjectPtr<UBlendSpace> RelaxedBlendSpace;
+	UPROPERTY(Transient)
+	TObjectPtr<UBlendSpace> CombatBlendSpace;
+	FLegionBlendSpaceBinding RelaxedBSBinding;
+	FLegionBlendSpaceBinding CombatBSBinding;
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UAnimationAsset>> AnimAttackPool;
 	UPROPERTY(Transient)
@@ -310,7 +423,10 @@ private:
 	bool bSelected = false;
 	bool bHovered = false;
 	bool bSoldierTransformsDirty = true;
+	/** 远距手枪隐藏状态 (带滞回, 仅表现层) */
+	bool bGunsHiddenForDistance = false;
 	float GroundConformTimer = 0.0f;
+	int32 GroundTraceCursor = 0;
 	FVector FormationHalfExtent = FVector(300.0f, 300.0f, 0.0f);
 
 	UPROPERTY(Transient)

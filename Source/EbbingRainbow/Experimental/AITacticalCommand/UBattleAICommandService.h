@@ -173,6 +173,9 @@ private:
 	FString Tool_LegionOrderHalt(const TSharedPtr<FJsonObject>& Args);
 	FString Tool_LegionOrderFollowCommander(const TSharedPtr<FJsonObject>& Args);
 	FString Tool_LegionSelectAllies(const TSharedPtr<FJsonObject>& Args);
+	FString Tool_LegionOrderGuard(const TSharedPtr<FJsonObject>& Args);
+	FString Tool_LegionOrderPatrol(const TSharedPtr<FJsonObject>& Args);
+	FString Tool_LegionOrderRecon(const TSharedPtr<FJsonObject>& Args);
 
 	/** 同步工具实现 */
 	FString Tool_GetBattleState();

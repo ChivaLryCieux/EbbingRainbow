@@ -23,6 +23,9 @@ public:
 	/** 查询世界坐标 (X, Y) 处地表高度与坡度; 越界返回 false */
 	bool SampleHeightAndSlope(const FVector& WorldPos, float& OutZ, float& OutSlopeDeg) const;
 
+	/** 双线性插值查询世界坐标 (X, Y) 处连续地表高度 (消除 250cm 栅格台阶跳变) */
+	bool SampleHeightBilinear(const FVector& WorldPos, float& OutZ) const;
+
 	/** 判断世界坐标处是否可通行 */
 	bool IsWalkableWorld(const FVector& WorldPos) const;
 

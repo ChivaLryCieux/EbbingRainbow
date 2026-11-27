@@ -25,6 +25,12 @@ namespace
 			|| Archetype == ELegionClass::Vanguard || Archetype == ELegionClass::Marksman;
 	}
 
+	bool IsSupportedTacticalProfile(ELegionTacticalProfile Profile)
+	{
+		return Profile == ELegionTacticalProfile::Balanced || Profile == ELegionTacticalProfile::HoldHighGround
+			|| Profile == ELegionTacticalProfile::AssaultHighGround || Profile == ELegionTacticalProfile::ValleyChokepoint
+			|| Profile == ELegionTacticalProfile::OpenManeuver;
+	}
 
 	bool HasCampaignDebugOverride()
 	{
@@ -251,45 +257,34 @@ void UGalacticCampaignSubsystem::GenerateContracts()
 		const TCHAR* Title;
 		const TCHAR* Briefing;
 		int32 Danger;
+		ELegionTacticalProfile Profile;
 	};
 
 	static const FContractTemplate Templates[] = {
-		{
-			EFactionId::Empire, EFactionId::Rebels,
+		{ EFactionId::Empire, EFactionId::Rebels,
 			TEXT("「铁幕肃清」边境高地防线清剿"),
 			TEXT("自由叛军占据了裂隙制高点并部署多支伏击群。帝国军部雇佣虹膜基金会接管前线战术神经，彻底粉碎叛军攻势。"),
-			2
-		},
-		{
-			EFactionId::Rebels, EFactionId::Empire,
+			2, ELegionTacticalProfile::AssaultHighGround },
+		{ EFactionId::Rebels, EFactionId::Empire,
 			TEXT("「断虹行动」帝国重装纵队伏击"),
 			TEXT("帝国第7重盾先遣队正穿越山谷补给线。叛军同盟委托基金会指挥突击集群切入侧背，阻止其完成合围。"),
-			3
-		},
-		{
-			EFactionId::Dominion, EFactionId::Rebels,
+			3, ELegionTacticalProfile::ValleyChokepoint },
+		{ EFactionId::Dominion, EFactionId::Rebels,
 			TEXT("「晶脉守望」矿区高台阻击战"),
 			TEXT("外环叛军空降突击队企图夺取自治领白矮星精炼枢纽。守住高地并击溃来袭增援波次。"),
-			2
-		},
-		{
-			EFactionId::Empire, EFactionId::Dominion,
+			2, ELegionTacticalProfile::HoldHighGround },
+		{ EFactionId::Empire, EFactionId::Dominion,
 			TEXT("「轨道征税」自治领防区强行突破"),
 			TEXT("自治领拒绝履行星环税赋条约。帝国授权基金会以高强度多波次攻势压垮其长戟与远程联防线。"),
-			4
-		},
-		{
-			EFactionId::Dominion, EFactionId::Empire,
+			4, ELegionTacticalProfile::AssaultHighGround },
+		{ EFactionId::Dominion, EFactionId::Empire,
 			TEXT("「自由航道」中继站反包围作战"),
 			TEXT("帝国舰队封锁了霜桥中继站外围平台。自治领愿以高额科研酬金聘请基金会远程调度兵团突围。"),
-			3
-		},
-		{
-			EFactionId::Rebels, EFactionId::Dominion,
+			3, ELegionTacticalProfile::OpenManeuver },
+		{ EFactionId::Rebels, EFactionId::Dominion,
 			TEXT("「星火夺取」自治领前哨突袭"),
 			TEXT("叛军急需自治领前哨的神经电容阵列。利用地形遮蔽接近其远程阵地并全歼守备兵团。"),
-			1
-		}
+			1, ELegionTacticalProfile::ValleyChokepoint }
 	};
 
 	const EFactionId Employers[3] = { EFactionId::Empire, EFactionId::Dominion, EFactionId::Rebels };
@@ -311,6 +306,7 @@ void UGalacticCampaignSubsystem::GenerateContracts()
 		C.Briefing = Tpl.Briefing;
 		C.TargetSectorId = (Slot * 2 + Rng.RandRange(0, 1)) % FMath::Max(1, Sectors.Num());
 		C.TerrainSeed = CampaignSeed + CycleIndex * 97 + Slot * 313 + ContractRefreshNonce * 1009;
+		C.TacticalProfile = Tpl.Profile;
 		C.DangerRating = FMath::Clamp(Tpl.Danger + (CycleIndex > 3 ? 1 : 0), 1, 5);
 		C.RewardCredits = 360 + C.DangerRating * 190 + Rng.RandRange(0, 80);
 		C.ControlShift = 4.5f + C.DangerRating * 2.0f;
@@ -807,6 +803,7 @@ bool UGalacticCampaignSubsystem::IsValidSnapshot(const UGalacticCampaignSaveGame
 		if (Contract.ContractId <= 0 || !FindSector(Contract.TargetSectorId)
 			|| !IsSupportedFaction(Contract.Employer) || !IsSupportedFaction(Contract.EnemyFaction)
 			|| Contract.Employer == Contract.EnemyFaction
+			|| !IsSupportedTacticalProfile(Contract.TacticalProfile)
 			|| Contract.DangerRating < 1 || Contract.DangerRating > 5
 			|| Contract.RewardCredits < 0
 			|| !FMath::IsFinite(Contract.ControlShift) || Contract.ControlShift < 0.0f || Contract.ControlShift > 100.0f

@@ -141,6 +141,17 @@ struct FEnemyWaveLegionSpec
 	float LaneBias = 0.0f;
 };
 
+/** 阵营军事委托地形战术倾向 (驱动开放世界候选战区条件筛选) */
+UENUM(BlueprintType)
+enum class ELegionTacticalProfile : uint8
+{
+	Balanced          UMETA(DisplayName = "均衡野战"),
+	HoldHighGround    UMETA(DisplayName = "高地固守"),
+	AssaultHighGround UMETA(DisplayName = "仰攻夺高"),
+	ValleyChokepoint  UMETA(DisplayName = "峡谷伏击"),
+	OpenManeuver      UMETA(DisplayName = "开阔机动")
+};
+
 /** 阵营军事委托合同 */
 USTRUCT(BlueprintType)
 struct FGalacticContract
@@ -167,6 +178,9 @@ struct FGalacticContract
 
 	UPROPERTY(BlueprintReadOnly, Category = "Campaign")
 	int32 TerrainSeed = 1001;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign")
+	ELegionTacticalProfile TacticalProfile = ELegionTacticalProfile::Balanced;
 
 	/** 威胁星级 (1..5) */
 	UPROPERTY(BlueprintReadOnly, Category = "Campaign")
@@ -266,6 +280,18 @@ namespace ERGalacticMeta
 		return (N >= 0 && N <= 10) ? FString(Digits[N]) : FString::FromInt(N);
 	}
 
+	inline FString GetTacticalProfileName(ELegionTacticalProfile P)
+	{
+		switch (P)
+		{
+		case ELegionTacticalProfile::HoldHighGround:    return TEXT("高地固守");
+		case ELegionTacticalProfile::AssaultHighGround: return TEXT("仰攻夺高");
+		case ELegionTacticalProfile::ValleyChokepoint:  return TEXT("峡谷伏击");
+		case ELegionTacticalProfile::OpenManeuver:      return TEXT("开阔机动");
+		default:                                        return TEXT("均衡野战");
+		}
+	}
+
 	inline FLinearColor GetFactionColor(EFactionId Faction)
 	{
 		switch (Faction)
@@ -331,6 +357,24 @@ namespace ERGalacticMeta
 	}
 
 	/** 部队占位 Logo 纹理路径 (暂用技能图标占位: 我方蓝色 / 敌方红色) */
+	/** 势力 Logo 纹理资产路径 (源图 Content/UI/Textures/Source/Factions, 导入脚本 Scripts/import_faction_logos.py) */
+	inline const TCHAR* GetFactionLogoAssetPath(EFactionId Faction)
+	{
+		switch (Faction)
+		{
+		case EFactionId::Empire:   return TEXT("/Game/UI/Textures/T_UI_Faction_Empire.T_UI_Faction_Empire");
+		case EFactionId::Rebels:   return TEXT("/Game/UI/Textures/T_UI_Faction_Rebels.T_UI_Faction_Rebels");
+		case EFactionId::Dominion: return TEXT("/Game/UI/Textures/T_UI_Faction_Dominion.T_UI_Faction_Dominion");
+		}
+		return nullptr;
+	}
+
+	/** 虹膜基金会 Logo (玩家阵营, 不属于 EFactionId 委托阵营枚举) */
+	inline const TCHAR* GetIrisLogoAssetPath()
+	{
+		return TEXT("/Game/UI/Textures/T_UI_Faction_Iris.T_UI_Faction_Iris");
+	}
+
 	inline const TCHAR* GetClassLogoAssetPath(ELegionClass C, bool bAlly)
 	{
 		if (bAlly)

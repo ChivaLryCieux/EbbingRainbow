@@ -4,6 +4,7 @@
 
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/TextBlock.h"
@@ -162,6 +163,20 @@ namespace ERUI
 		Brush.OutlineSettings.Width = OutlineWidth;
 		Brush.OutlineSettings.Color = FSlateColor(Outline);
 		return Brush;
+	}
+
+	UImage* MakeLogoImage(UUserWidget* Owner, UTexture2D* Tex, float Height)
+	{
+		if (!Owner || !Owner->WidgetTree || !Tex) { return nullptr; }
+		UImage* Img = Owner->WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		const float TexW = FMath::Max(1.0f, (float)Tex->GetSizeX());
+		const float TexH = FMath::Max(1.0f, (float)Tex->GetSizeY());
+		FSlateBrush Brush;
+		Brush.SetResourceObject(Tex);
+		Brush.ImageSize = FVector2D(Height * TexW / TexH, Height);
+		Brush.DrawAs = ESlateBrushDrawType::Image;
+		Img->SetBrush(Brush);
+		return Img;
 	}
 
 	UTextBlock* MakeText(UUserWidget* Owner, const FText& Text, EERTypeScale Scale,

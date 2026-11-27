@@ -32,12 +32,17 @@ class EBBINGRAINBOW_API ULegionHUDWidget : public UUserWidget
 
 public:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	/** 等高线地图视角开关时显隐底部部队卡片与左上「接入 AI」终端 (地图上已直接显示番号与 Logo) */
 	void SetStrategicMapMode(bool bMapOpen);
 
 	UERAICommandPanel* GetAICommandPanel() const { return AICommandPanel.Get(); }
+
+	bool IsResultOverlayVisible() const;
+	bool IsReturnHallButtonReady() const;
+	void ClickReturnHallForTest() { OnReturnHallClicked(); }
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -47,6 +52,7 @@ private:
 	void RefreshStatus();
 	void RefreshLegionBar();
 	void RefreshPlateHover();
+	void HandleBattleEnded(bool bPlayerWon);
 	void ShowResult(bool bPlayerWon);
 
 	void BuildLegionBar(int32 Count);
@@ -63,15 +69,18 @@ private:
 
 	UFUNCTION() void OnReturnHallClicked();
 
+	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> TitleRow;
+	UPROPERTY(Transient) TObjectPtr<UVerticalBox> StatusCol;
+	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> FactionLogoRow;
+
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> TitleText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> StatusAllyText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> StatusEnemyText;
 
-	UPROPERTY(Transient) TObjectPtr<UBorder> ResultBox;
+	UPROPERTY(Transient) TObjectPtr<UBorder> ResultOverlay;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> ResultText;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> ResultSummaryText;
-	UPROPERTY(Transient) TObjectPtr<UERActionButton> ReturnHallButton;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> ResultSubText;
+	UPROPERTY(Transient) TObjectPtr<UButton> ReturnHallButton;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> ReturnHallLabel;
 
 	UPROPERTY(Transient) TObjectPtr<UCanvasPanel> RootPanel;
 	UPROPERTY(Transient) TObjectPtr<UERAICommandPanel> AICommandPanel;
@@ -91,4 +100,6 @@ private:
 	int32 CachedEnemyAlive = -1;
 	int32 CachedPendingWaves = -1;
 	bool bResultShown = false;
+	bool bReturningToHall = false;
+	FDelegateHandle BattleEndHandle;
 };

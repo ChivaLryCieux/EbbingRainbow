@@ -45,8 +45,8 @@
 * **`UGalacticCampaignSubsystem`**（`GameInstanceSubsystem` 跨关卡持久化）：
   * **三大阵营**：泰拉帝国（`Empire`）、边缘自治领（`Dominion`）、自由叛军（`Rebels`），维护各自银河控制率（归一化和 100%）、基金会声望与 6 个星区归属；
   * **常备兵团编制 (`FManagedLegionData`)**：统一采用旅级中文番号（`第一旅`、`第二旅`、`第三旅`、`第四旅`…）与兵种占位 Logo，记录每支兵团兵种、战损剩余人数、`SyncLevel`（1~5 级虹膜 AI 同步加成）；战后需消耗经费补充伤亡兵员；
-  * **动态合同 (`FGalacticContract`)**：每周期生成覆盖三方势力的委托，含敌方多兵种及延迟空降增援波次。
-  * **原生战役存档 (`UGalacticCampaignSaveGame`)**：经费使用「银河币」，战役资金、兵团编制、声望/控制率、当前合同与最近战果在每次成功变更后自动写入 UE 原生 `.sav` 双槽轮换快照；桌面版位于项目 `Saved/SaveGames/ER_GalacticCampaign_{A,B}.sav`（UE 标准 Saved 目录）。首版不提供手动存档位或“新战役”覆盖 UI；关闭窗口并重进后继续同一战役，战中退出回到出击前，PIE 调试不读写正式档。损坏槽位自动回退可用备份并保留原文件，未迁移任何旧格式或 JSON 存档。
+  * **动态合同 (`FGalacticContract`)**：每周期生成覆盖三方势力的委托，含敌方多兵种、延迟空降增援波次及地形战术倾向 `ELegionTacticalProfile`（均衡野战 / 高地固守 / 仰攻夺高 / 峡谷伏击 / 开阔机动），刷新加密频道同步推进 `ContractRefreshNonce` 派生新地形种子；卡片同步显示任务地点、战术倾向与酬金。
+  * **原生战役存档 (`UGalacticCampaignSaveGame`)**：经费使用「银河币」，战役资金、兵团编制、声望/控制率、当前合同与最近战果在每次成功变更后自动写入 UE 原生 `.sav` 双槽轮换快照；桌面版位于项目 `Saved/SaveGames/ER_GalacticCampaign_{A,B}.sav`（UE 标准 Saved 目录）。首版不提供手动存档位或“新战役”覆盖 UI；关闭窗口并重进后继续同一战役，损坏槽位自动回退可用备份并保留原文件，未迁移任何旧格式或 JSON 存档。
 * **大厅入口 (`ERHallHUD` / `HallHUD`)**：
   * 主标题碑植入核心口号 **「我们面向全银河提供军事指挥服务」**；
   * 左部标题下方纵向排列四枚「白底墨字彩条」主控按钮：`01 兵团整备`、`02 银河委托`、`03 银河局势`、`04 设置`；四者打开同一全屏终端 (`UERGalaCommandPanel`) 的对应页签，终端内不设导航，`返回大厅` 回到主面板；
@@ -63,9 +63,17 @@
   * 放弃方格矩阵与刚性 3D 框线，改用**黄金角向日葵采样 + 扰动 + 4 轮最小间距排斥松弛**形成自然散落战团；
   * 旋转时兵团外框不整体甩动，改为每名士兵沿各自原地独立平滑转向 (`S.CurYaw`)；
   * 敌我双方统一采用 `SKM_Manny_Simple` 骨骼网格体、FP 射击模板手枪动画（`MF_Pistol_Idle_ADS` 瞄准站姿 / `MF_Pistol_Jog_Fwd` 低携冲锋 / `MM_Death_*`）与 Ragdoll 物理击飞，右手 `hand_r` 骨骼恒等附加 `SM_Pistol` 手枪网格，通过动态材质 `"Paint Tint"` 区分阵营色。（注：`MM_Pistol_Fire` 等开火动画为 additive 叠加层，单节点实例无法播放，交战视觉由 ADS 瞄准站姿+弹道曳光承担。）
+* **士兵表现层技术选型铁律（2026-12 定案：表现力优先，规模服从表现）**：
+  * **禁用 HISM/ISM 作为战斗士兵表现**：静态网格实例在原理上无法播放骨骼动画、BlendSpace 与 Ragdoll，产出的是动作僵硬统一的僵尸兵团，已亲眼否决；普通 HISM 能做到的只有逐实例变换与少量材质 custom data，不是"生动士兵"。人数超过承载上限时必须在**策划层限制编制规模**，不得在技术层静默退化为实例化表现；
+  * **每兵一个 `USkeletalMeshComponent` 是唯一正式表现路径**：所有优化预算投入骨骼路径本身——屏幕外/远距离动画降频跳帧（URO 思路）、变换批量写入与脏标记、骨骼 LOD 裁剪、关闭多余组件 tick 与物理、远距离隐藏手枪网格；
+  * **规模上限由实测帧预算导出，不是设计目标**：以固定种子逐档（50/100/200/300/400 骨骼兵）测量帧耗时得出 60fps 上限，再反推编制表；参照物本身即为证据——《绝境北地》全场仅几十到一百余人、生动感来自动画质量×反馈密度，《骑马与砍杀》用纯骨骼网格+距离 LOD/跳帧支撑数百人，两者均未使用任何实例化替身技术；
+  * **ISKM（`UInstancedSkinnedMeshComponent`，UE 5.8 原生）是唯一保留的规模升级研究通道**：逐实例动画 track 支持独立动作/相位/速率/BlendSpace 输入，是唯一能同时满足"大规模+真骨骼变形"的方向；但 5.8 刚落地、无 AnimBP、官方自述稳定性未知，只做**限时独立原型**（验收：逐兵独立相位、阵营染色、挂枪 socket、逐实例命中、死亡动画、CPU/GPU 帧耗时），不通过则永久接受骨骼路径人数上限，绝不迁就；
+  * **VAT（顶点动画纹理）明确否决**：近景 artifacts、无动作混合过渡、无精确 socket、无 Ragdoll，与"每兵经得起看"根本冲突；唯一保留用途是永不进入战斗的远景氛围装饰（行军剪影等），属美术点缀而非战斗单位；
+  * **玩法策划必须与技术/表现相协调**：编制规模、同屏人数、战役节奏以实测表现力为硬约束——先以 16 人小队"生动度原型"定死质量标准（走跑过渡混合、受击顿挫、死亡多样性、动作相位错开不齐步走），再按帧预算反推最大编制；表现力做不到的规模，宁可不做；
+  * **优化验收顺序**：先修骨骼回归 → 写性能标尺场景测上限 → 按上限定编制设计 → 动画生动度原型 → ISKM 限时原型（可选）。
 * **轻量化地形寻路与黑白等高线小地图 (`LegionTerrainGrid.*` / `LegionHUD.*`)**：
-  * `FLegionTerrainGrid` 开局采样地形生成 2D 坡度网格（`250 cm` 栅格），Grid A* + 视线拉直自动绕开 `>38°` 陡崖，并提供高低差伤害加成；
-  * 运行时由高度场双线性合成黑白等高线图（`256` 小地图 / `1536` 全图 / `3072` 放大细节三档纹理，烘焙多线程并按分辨率放粗线宽；林地区域带斜纹暗影），严格对齐 `Yaw=90°` 方位；点击小地图或按 `M` 进入**等高线地图视角**（见下「3C」）。
+  * `FLegionTerrainGrid` 开局以当前战区中心 `DeployCenter` 采样地形生成 `2D` 坡度网格（`250 cm` 栅格，局部战区默认 `320m × 320m` / `128×128` 格），Grid A* + 视线拉直自动绕开 `>38°` 陡崖，并提供高低差伤害加成；
+  * 运行时由高度场双线性合成黑白等高线图（`256` 小地图 / `1536` 全图 / `3072` 放大细节三档纹理，烘焙多线程并按分辨率放粗线宽；林地区域带斜纹暗影），始终保持正北（`+Y`）朝上；点击小地图或按 `M` 进入**等高线地图视角**（见下「3C」）。
 * **3C：FP 模板第一人称指挥官 + 等高线地图双视角 (`FPS/LegionCommanderCharacter.*` / `LegionPlayerController.*`)**：
   * **战场视角（默认）**：玩家是一名第一人称指挥官（UE FP 模板射击栈 `ALegionCommanderCharacter`：手臂+手枪，`Variant_Shooter` 蓝图栈经 `TP_FirstPerson` 重定向挂载；Enhanced Input 驱动 WASD/视角/开火），WASD 移动、鼠标转向、`Shift` 疾跑、`空格` 跳跃；**左键纯射击**（仅地图开着/光标呼出时不打，打中自己人无效）、**右键全权指挥**（点我方兵团选中/再点取消，`Ctrl` 增减选；点地面机动，按住拖出阵型朝向，`F` 令兵团列队跟随）；按住 `Alt` 临时呼出光标点 HUD 或小地图；
   * **敌军通天 Logo 标杆与抬头集火防误触**：敌方不再在头顶贴地显示低空番号牌，而是自地面竖起连续朱红通天标杆直插天空（`6000 cm`），顶端高悬兵种占位 Logo 与番号血条；敌方地面拣选盒 `PickBox` 忽略 `ECC_Visibility`，水平视线右键下达地面机动时不会误触敌人，下达集火需**抬头瞄准空中 Logo 再右键**；
@@ -75,7 +83,13 @@
   * **等高线地图视角重构与防碰撞排版**：按住 `Alt` 点左上小地图或按 `M` 进入，战场**自动暂停**并自动隐藏底部四张兵团卡；「返回战场」按钮与缩放/暂停提示移至**右上角**；左上角挂载**「接入 AI」**自然语言指挥入口（见下文「实验性模块」）；地图上敌我番号升级为大尺寸 Logo（`38px` / 选中 `42px`）+ 双行血条卡，并采用三阶段防碰撞求解器（簇状径向扇形预展 + 28 轮 AABB 排斥与 UI 禁区避让 + 零重叠螺旋兜底 + 边缘引线），避免密集交战时标牌重叠；
   * **命令反馈**：机动命令画出沿寻路路径的虚线、终点靶标圈与到达朝向箭头，集火命令画指向目标的箭头线与红色准星圈，战场第一人称与地图视角均有对应投影；
   * **自检与离线截图**：控制台 `ERMapSelfTest`（地图缩放/选团/集火/机动/返回）、`ERSkyBannerSelfTest`（平视防误触/抬头通天 Logo 拣选集火），命令行 `-SkyShot` / `-MapShot` 及 `Scripts/legion_shot.ps1` 支持离线自动验收。
-* **林地 (`LegionForest.*`)**：种子化散布 `Fishermans_Cabin` 的 `SM_Fir_Tree_01~08`（Nanite、无碰撞），噪声成林、避开陡坡与部署带；树冠写入寻路网格——密林格封锁寻路、疏林格给远程掩体（齐射 ×0.88 / ×0.75）；种子取合同 `TerrainSeed`，`-ForestSeed=N` 覆盖、`-NoForest` 关闭，种完自动校验三条车道仍连通。
+* **林地 (`LegionForest.*`)**：种子化散布 `Fishermans_Cabin` 的 `SM_Fir_Tree_01~08`（Nanite、无碰撞），噪声成林、避开陡坡与按交战朝向旋转的部署带（`FLegionOrientedBand`）；树冠写入寻路网格——密林格封锁寻路、疏林格给远程掩体（齐射 ×0.88 / ×0.75）；种子取当前战场种子，`-ForestSeed=N` 覆盖、`-NoForest` 关闭，种完自动校验三条车道仍连通。
+* **开放世界局部随机战区与条件抽选 (`LegionGameMode` · `FLegionSpawnZone`)**：
+  * 在 `Lvl_Legion`（`1008m × 1008m` 首颗行星）内置经离线扫描验证的 **8 个空间分离候选战区**（`东北缓谷` / `西翼盆地` / `北境台地` / `东南廊道` / `中央鞍部` / `东麓制高点` / `西北仰攻坡` / `西南深谷`，各带 `WalkableRatio`、`ReliefSpanCm`、`PlayerHighGroundDeltaCm` 与 `BattleAxisYawDeg`）；
+  * 接取委托时依据 `TacticalProfile`、星区 `ConflictIntensity` 与 `DangerRating` 评分筛选 Top-3 候选池再按 `TerrainSeed` 确定性抽选；独立演武每次进场（或按 `R` 重开）随机换点；双方战线、延迟空降点、指挥官朝向、林地清空带与 `-LegionShot` 航拍机位围绕 `(DeployCenter, BattleAxisYawDeg)` 整体旋转；支持 `-LegionZone=0..7`、`-LegionSeed=N`、`-LegionProfile=0..4` 命令行覆盖。
+* **动态气象与光影系统 (`LegionWeather.*`)**：
+  * 内置 **6 套气象预设**（`清冽晨曦` / `烈阳正午` / `残阳暮色` / `山岚浓雾` / `阴云骤雨` / `战火硝烟`），按星区、冲突烈度与危险星级加权抽取（`-LegionWeather=0..5` 可强制指定）；
+  * 运行时将关卡 `DirectionalLight` / `SkyLight` 切换为 `Movable` 并重新捕获天光（`RecaptureSky`），太阳方位围绕战线侧光旋转以雕琢山脊明暗；同步调控 `ExponentialHeightFog`、`PostProcessVolume` 饱和度与泛光、`ALandscapeProxy` 动态材质参数（若启用），并在暴雨/硝烟下由 `ALegionHUD` 绘制轻量屏幕雨丝或飘散余烬。
 * **PBR 受光地形材质 (`Scripts/legion_make_terrain_material.py` → `M_LegionTopo`)**：
   * 切换为 `MSM_DEFAULT_LIT` 接收低角度主光立体明暗与士兵投射阴影，并使用 `fwidth()` 屏幕导数绘制恒定像素宽度的抗锯齿等高线与 25m 参考网格。
 
@@ -389,45 +403,62 @@ $env:PYTHONPATH = "D:\SteerAgents\client\src"
 
 ## 🗺️ 未来规划 (Roadmap)
 
-### 大兵团银河战役（当前主线 · 近期规划）
+### 大兵团银河战役（当前主线 · 近期进展与规划）
 
-- [ ] **三星球开放世界 + 局部战区随机出生系统**（详见下文《场景技术路径》）：告别单一固定战场，保留原生 `ALandscape` + `MWLandscapeAutoMaterial` + `LGT_MWAM_Grass` 美术生态，通过 3 个开放世界星球、战区生成点离线预扫描、银河局势条件抽选、动态天气与复用旧有 WFC 建筑生成实现肉鸽级重玩体验。
+- [x] **首颗行星局部随机战区出生与局势条件抽选**：已在 `Lvl_Legion` 落地 8 个空间分离候选战区、任意交战轴向旋转（`FLegionOrientedBand` + `GetBattleBasis`），并接入委托 `TacticalProfile` + 星区 `ConflictIntensity` + `DangerRating` 评分筛选。
+- [x] **动态天气与气象光照系统（首版）**：已落地 `FLegionWeatherSystem` 6 套预设、星区/烈度加权抽选、侧光太阳动态调谐、`ExponentialHeightFog` 雾效及 `ALegionHUD` 雨丝/余烬层。
+- [ ] **局部战区边界视觉提示**：沿 `DeployCenter ± 160m` 四周补充克制的地面边界标识或 HUD 越界警示（目前角色与兵团坐标钳制已生效）。
+- [ ] **三星球开放世界扩容与编辑器离线扫描器 (`ULegionArenaZoneCatalog`)**：制作另外两颗 `2km~4km`（`2017×2017` ~ `4033×4033`）Gaea 开放世界母图并将扫描打标固化为 `#if WITH_EDITOR` 资产生成工具。
+- [ ] **复用 3D WFC 生成战区战术建筑 & 气象 Niagara 升级**：在平缓节点接入小尺度 `AWFC3DArenaHost` 掩体工事，并将 HUD 降水/余烬升级为世界空间 Niagara 粒子。
+
+#### 军团 C++ 优化路线
+
+以不改变战斗行为为前提。当前已完成地形寻路、部署与调试代码拆分；以下为后续计划，架构边界和采样方法见 [军团 C++ 架构说明](Docs/LegionSourceArchitecture.md)。
+
+> **2026-12 方向修正**：按上文「士兵表现层技术选型铁律」，HISM 已禁用于战斗士兵表现，原第 1 条（HISM 变换更新优化）随之废止——骨骼路径成为唯一优化对象。已完成的 HISM 不变量 hoisting 保留在代码中不再演进，后续视骨骼路径实测决定是否删除整条实例化路径。
+
+1. ~~优先优化实例化士兵（HISM）的变换更新~~（已废止，见上方方向修正）。
+2. **拆分单兵模拟与表现写入**（已完成首版）：骨骼组件写入与 `DriveSoldierAnimation` 已移入 `WriteSkeletalSoldierRepresentation` 统一表现阶段。后续优化骨骼路径：远距离/屏幕外士兵动画降频或跳过求值（位置仍按模拟插值，不改变战斗结果）、骨骼 LOD、关闭多余组件 tick。
+3. **建立骨骼兵性能标尺**：固定种子逐档（50/100/200/300/400 兵）测帧耗时，得出的 60fps 上限即编制设计硬约束；标尺场景同时作为回归基准。
+4. **更大规模交火证明有收益后，再考虑空间索引**：原 384 兵样本中友军射界检查与弹道模拟分别约 **0.09** 和 **0.08 ms/帧**，在编制收缩后优先级进一步降低；若引入索引，保留原有候选和命中顺序。
+5. **单独测量进场耗时**：评估延后部署期的 `3072×3072` 战略图细节纹理烘焙，生成前用现有低一档纹理兜底。冷启动的资产注册表扫描与地图烘焙分别计时，不把启动等待计入战斗帧耗时。
+
+**验收**：用相同种子、兵力和交战场景做前后对照，再开渲染检查移动、交火和死亡表现。无渲染数据只用于定位 CPU 开销，不代表实际渲染帧率或已取得的提速。
 
 #### 🌍 场景技术路径：开放世界随机局部战区出生（3 星球 / 3 开放世界）
 
 > **核心设计原则**：不在运行时强行程序化重塑 `ALandscape`（UE 5.8 原生 `Landscape` 高度图与碰撞在打包后只读，运行时自建网格又难以媲美 `MWLandscapeAutoMaterial` 与原生草丛质感），而是打造 **「少量高完成度开放世界母图 × 参数化局部战区切片 × 银河局势条件抽选」** —— 既保住远景群山、自动植被混合与 `ULegionDeployScreen::PrioritizeGrassCreation` 的流送性能，又让每次接取委托都像降落在全新战场。
 
 1. **三星球 / 三开放世界母图规划（1 关卡 = 1 星球地貌生态）**
-   - 用 Gaea 制作 3 张大尺度原生 `ALandscape` 世界（建议 `2017×2017` ~ `4033×4033`，单场战斗仅截取其中 `230m × 230m` 局部战区，四周 360° 天然环绕连绵远景群山）：
-     - **星球一 · 温带高山草甸/针叶林**（延续当前 `Lvl_Legion` / `IslandExample` 风格）；
+   - 用 Gaea 制作 3 张大尺度原生 `ALandscape` 世界（实测现有 `1km×1km` 约可容纳 8 个半重叠战区，后续星球建议直接采用 `2017×2017` ~ `4033×4033` 即 `2km~4km`，单场截取 `320m × 320m` 局部战区，四周天然环绕连绵远景群山）：
+     - **星球一 · 温带高山草甸/针叶林**（当前 `Lvl_Legion` / `IslandExample` 风格，已跑通 8 点位局部随机）；
      - **星球二 · 寒带雪峰/苍白裂隙**（复用 `MTL_MWAM_Landscape_MountainRangeExample`）；
      - **星球三 · 荒漠矿带/戈壁台地**（复用 `MTL_MWAM_Landscape_DesertExample`）。
    - `UGalacticCampaignSubsystem::AcceptAndDeployContract` 按合同的 `TargetSectorId` / 星球生态路由 `OpenLevel` 至对应开放世界，6 大星区可共享并按各自氛围配置区分昼夜与雾效。
 
 2. **战区生成点预生成（编辑器离线扫描与战术打标）**
-   - 避免运行时盲随机坐标把部队刷在悬崖或死路中，在 `#if WITH_EDITOR` 下编写战区扫描器：以固定步长（如 `150m`）网格遍历每张开放世界，对所有候选 `(DeployCenter, BattleAxisYaw)`（4/8 方位）按与 `FLegionTerrainGrid` 一致的规则采样评估，并生成轻量资产 `ULegionArenaZoneCatalog`：
-     - **硬性准入校验**：我方/敌方部署带与延迟空降带的坡度合乎可通行阈值，且三条纵向战线车道经 `FindPath` 校验连通，自动淘汰绝壁/孤岛死点；
-     - **量化战术特征标签**：自动计算每个候选战区的 `WalkableRatio`（开阔度）、`ReliefSpan`（垂直高差）、`ChokepointScore`（中线山谷/山脊阻隔度）、`HighGroundBias`（攻防单向高地差）与 `MeanAltitude`（海拔/雪线占比）。
+   - 避免运行时盲随机坐标把部队刷在悬崖或死路中，通过离线扫描遍历开放世界，对所有候选 `(DeployCenter, BattleAxisYaw)`（8 方位）按与 `FLegionTerrainGrid` 一致的规则采样评估，后续固化为 `#if WITH_EDITOR` 工具生成 `ULegionArenaZoneCatalog` 资产：
+     - **硬性准入校验**：我方/敌方部署带与延迟空降带的坡度合乎可通行阈值，且三条纵向战线车道经坡度/连通校验，自动淘汰绝壁/孤岛死点；
+     - **量化战术特征标签**：自动计算每个候选战区的 `WalkableRatio`（开阔度）、`ReliefSpanCm`（垂直高差）、`PlayerHighGroundDeltaCm`（攻防单向高地差）等指标。
 
-3. **银河局势与委托参数条件抽选（种子可复现）**
-   - `ALegionGameMode::StartPlay()` 依据当前 `FGalacticContract` 与星区 `FGalacticSector` 动态构造筛选条件：
-     - **星区冲突烈度 (`ConflictIntensity`) / 危险星级 (`DangerRating`)**：高烈度/高星级优先匹配 `ReliefSpan` 大、`ChokepointScore` 高的崎岖山脊/隘口战区；低星级倾向 `WalkableRatio > 80%` 的开阔丘陵；
-     - **委托战术倾向（守备阻击 vs 强攻突袭）**：筛选具显著 `HighGroundBias` 的战区，并将 `BattleAxisYaw` 定向至“我方占高地”或“敌方居高临下”的对应朝向；
-     - **确定性抽选**：在满足条件的候选池中，由 `FRandomStream(Contract.TerrainSeed)` 抽取最终的 `(DeployCenter, BattleAxisYaw)`，保证同一委托同种子可复现。
+3. **银河局势与委托参数条件抽选（已实现首版）**
+   - `ALegionGameMode::StartPlay()` 依据当前 `FGalacticContract` 与星区 `FGalacticSector` 动态评分筛选：
+     - **委托战术倾向 (`ELegionTacticalProfile`)**：高地固守 / 仰攻夺高 / 峡谷伏击 / 开阔机动 / 均衡野战分别加权对应高差与开阔度区间；
+     - **星区冲突烈度 (`ConflictIntensity`) / 危险星级 (`DangerRating`)**：高烈度/高星级优先拉高崎岖高差战区权重；
+     - **确定性抽选**：取评分 **Top-3 候选池** 后由 `FRandomStream(Contract.TerrainSeed)` 抽取最终 `(DeployCenter, BattleAxisYawDeg)`，兼顾战术意图与种子可复现。
 
-4. **战线轴向参数化与局部边界兼容**
-   - 解除 `ALegionGameMode` 中 `DeployCenter` 取整张地形中心、战线固定 `-Y/+Y` 与相机固定 `InitialYawDeg = 90°` 的限制：用 `BattleAxisYaw` 构造局部 `(Forward, Right)` 基底来布置我方/敌方战线、延迟空降点、指挥官朝向、`ALegionForest` 的部署清空区及三车道连通性校验。
-   - **战略图映射零改造**：`FLegionTerrainGrid`、`WorldToMinimapUV`、`BuildMinimapPixels` 及 AI 战术终端保持“正北（+Y）朝上”不变，只随 `DeployCenter` 移动采样窗口；`ALegionUnit` 与 `ALegionCommanderCharacter` 已有的 `DeployCenter ± EffectiveBattlefieldHalfExtent` 边界钳制继续生效，并可沿战区边缘补充可视化战术边界指示。
+4. **战线轴向参数化与局部边界兼容（已实现首版）**
+   - 已解除 `ALegionGameMode` 中 `DeployCenter` 取整张地形中心、战线固定 `-Y/+Y` 与相机固定 `InitialYawDeg = 90°` 的限制：用 `BattleAxisYawDeg` 构造局部 `(Forward, Right)` 基底布置我方/敌方战线、延迟空降点、指挥官朝向、`ALegionForest` 的 `FLegionOrientedBand` 清空区及三车道连通性校验。
+   - **战略图映射零改造**：`FLegionTerrainGrid`、`WorldToMinimapUV`、`BuildMinimapPixels` 及 AI 战术终端保持“正北（+Y）朝上”不变，只随 `DeployCenter` 移动采样窗口；后续沿战区边缘补充可视化战术边界指示。
 
-5. **动态天气与气象光照系统（星球生态 × 局势联动）**
-   - 按星球生态、星区 `ConflictIntensity` 与 `TerrainSeed` 动态配置气象预设（晴朗斜阳、薄雾清晨、暴雨雷云、寒潮暴雪、沙尘暴、焦土余烬）：
-     - **光照与雾效**：程序化调节 `DirectionalLight`（太阳仰角、方位角与冷暖色温，塑造不同长度的兵团投影）与 `ExponentialHeightFog`（雾密度、高度衰减与散射色）；
-     - **Niagara 气象粒子**：轻量相机跟随式天气粒子（雨丝、风雪、沙尘或战火余烬），营造第一人称指挥官临场沉浸感；
-     - **地表材质响应**：通过 `ALandscapeProxy::SetLandscapeMaterialScalarParameterValue` 联动 `MWLandscapeAutoMaterial`（如雨天地面湿润反光、寒潮降雪线下移），后续也可将能见度/风雪接入远程弹道射程或视野修正。
+5. **动态天气与气象光照系统（已实现首版，待补全 Niagara 粒子）**
+   - 按星球生态、星区 `ConflictIntensity`、`DangerRating` 与 `TerrainSeed` 加权抽取 6 套气象预设（`清冽晨曦`、`烈阳正午`、`残阳暮色`、`山岚浓雾`、`阴云骤雨`、`战火硝烟`）：
+     - **光照与雾效**：程序化调节 `DirectionalLight`（围绕战线侧光旋转以雕琢山脊阴影）、`SkyLight`（`RecaptureSky`）、`ExponentialHeightFog`（雾密度、高度衰减与散射色）与 `PostProcessVolume`；
+     - **降水与地表响应**：当前通过 `ALegionHUD` 绘制轻量雨丝/余烬与 `ALandscapeProxy::SetLandscapeMaterialScalarParameterValue` 联动（后续升级为相机跟随 Niagara 粒子并接入射程/视野规则）。
 
 6. **复用 3D WFC 生成战区战术建筑与林地掩体（天然物理遮挡与寻路融合）**
    - **WFC 建筑模块复用**：复用项目既有的 3D WFC 框架（`AWFC3DArenaHost` / `WFC3DSolver` / `WFCKit` 与 `Futuristic` 材质套件），在非部署区的平缓高台或交通节点处以小规模 `Scale`（如 `3×3`~`6×6` 格）按 `TerrainSeed` 随机坍缩生成**前哨碉堡、矿区精炼塔、中继站遗迹、残垣工事**（底部加设贴合地形坡度的基座裙边防浮空），风格与规模受星区类型和工业化程度控制；
-   - **自然植被与掩体**：同步叠加 **`ALegionForest` 种子化林地** 与 **巨石掩体群（`SM_MWAM_StoneA~D` HISM）**；
+   - **自然植被与掩体**：同步叠加 **`ALegionForest` 种子化林地**（已实现）与 **巨石掩体群（`SM_MWAM_StoneA~D` HISM）**；
    - **玩法管线零割裂**：只要在 `FLegionTerrainGrid::Build()` 之前生成 `ECC_WorldStatic` 的 WFC 建筑碰撞，2D 坡度/障碍寻路网格、等高线战略图以及 `ALegionGameMode::SimulateBullets` 的弹道射线遮挡都会**自动识别这些建筑墙体作为真实掩体与绕行障碍**。
 
 ---

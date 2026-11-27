@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Experimental/AITacticalCommand/ERAICommandPanel.h"
 #include "Blueprint/WidgetTree.h"
@@ -90,7 +90,7 @@ UERAICommandPanel* UERAICommandPanel::InstallOnLegionMapHUD(UUserWidget* OwnerHU
 		UCanvasPanelSlot* BtnSlot = RootCanvas->AddChildToCanvas(ToggleBtn);
 		BtnSlot->SetAnchors(FAnchors(1.0f, 0.0f));
 		BtnSlot->SetAlignment(FVector2D(1.0f, 0.0f));
-		BtnSlot->SetPosition(FVector2D(-ScreenMargin, 28.0f));
+		BtnSlot->SetPosition(FVector2D(-ScreenMargin, 100.0f)); // 顶部 24~58 留给势力 Logo 横排 (LegionHUDWidget)
 		BtnSlot->SetAutoSize(true);
 		BtnSlot->SetZOrder(25);
 	}
@@ -104,7 +104,7 @@ UERAICommandPanel* UERAICommandPanel::InstallOnLegionMapHUD(UUserWidget* OwnerHU
 		UCanvasPanelSlot* PanelSlot = RootCanvas->AddChildToCanvas(Panel);
 		PanelSlot->SetAnchors(FAnchors(1.0f, 0.0f));
 		PanelSlot->SetAlignment(FVector2D(1.0f, 0.0f));
-		PanelSlot->SetPosition(FVector2D(-ScreenMargin, 82.0f));
+		PanelSlot->SetPosition(FVector2D(-ScreenMargin, 154.0f));
 		PanelSlot->SetAutoSize(true);
 		PanelSlot->SetZOrder(35);
 	}
@@ -167,7 +167,7 @@ UERAICommandPanel* UERAICommandPanel::InstallOnBattleHUD(UUserWidget* OwnerHUD, 
 		UCanvasPanelSlot* BtnSlot = RootCanvas->AddChildToCanvas(ToggleBtn);
 		BtnSlot->SetAnchors(FAnchors(1.0f, 0.0f));
 		BtnSlot->SetAlignment(FVector2D(1.0f, 0.0f));
-		BtnSlot->SetPosition(FVector2D(-ScreenMargin, 28.0f));
+		BtnSlot->SetPosition(FVector2D(-ScreenMargin, 100.0f)); // 顶部 24~58 留给势力 Logo 横排 (LegionHUDWidget)
 		BtnSlot->SetAutoSize(true);
 		BtnSlot->SetZOrder(20);
 	}
@@ -180,7 +180,7 @@ UERAICommandPanel* UERAICommandPanel::InstallOnBattleHUD(UUserWidget* OwnerHUD, 
 		UCanvasPanelSlot* PanelSlot = RootCanvas->AddChildToCanvas(Panel);
 		PanelSlot->SetAnchors(FAnchors(1.0f, 0.0f));
 		PanelSlot->SetAlignment(FVector2D(1.0f, 0.0f));
-		PanelSlot->SetPosition(FVector2D(-ScreenMargin, 82.0f));
+		PanelSlot->SetPosition(FVector2D(-ScreenMargin, 154.0f));
 		PanelSlot->SetAutoSize(true);
 		PanelSlot->SetZOrder(30);
 	}

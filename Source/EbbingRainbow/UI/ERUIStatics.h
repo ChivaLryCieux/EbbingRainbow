@@ -8,6 +8,7 @@
 #include "UI/ERUITheme.h"
 
 class UERTechFrame;
+class UImage;
 class UOverlay;
 class UTexture2D;
 class UTextBlock;
@@ -64,6 +65,9 @@ namespace ERUI
 	/** 圆角玻璃底画刷 (面板/胶囊/芯片共用同一套描边语义) */
 	FSlateBrush RoundedBrush(float Radius, FLinearColor Fill,
 		float OutlineWidth = 0.0f, FLinearColor Outline = FLinearColor::Transparent);
+
+	/** 建一张按宽度纵横比自适应的 Logo 图 (高度驱动, 透明底 PNG 直接成像, 无底片) */
+	UImage* MakeLogoImage(UUserWidget* Owner, UTexture2D* Tex, float Height);
 
 	/** 建一个已调好字体/颜色的文本块 (默认 SelfHitTestInvisible) */
 	UTextBlock* MakeText(UUserWidget* Owner, const FText& Text, EERTypeScale Scale,

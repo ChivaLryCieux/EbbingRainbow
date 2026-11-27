@@ -61,7 +61,7 @@ void ULegionHUDWidget::Build()
 
 	// ---- 左上: 虹彩竖条 + 委托/战场标题 ----
 	{
-		UHorizontalBox* TitleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TitleRow"));
+		TitleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TitleRow"));
 
 		UERPrismBar* Prism = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("Prism"));
 		Prism->bVertical = true;
@@ -81,7 +81,7 @@ void ULegionHUDWidget::Build()
 
 	// ---- 左下: 双方编制存活 (白底墨字卡片, 同兵团牌风格) ----
 	{
-		UVerticalBox* StatusCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("StatusCol"));
+		StatusCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("StatusCol"));
 
 		ERUI::FBoneCard AllyCard = ERUI::MakeBoneCard(this, T->AllyMark, false, FMargin(14.0f, 7.0f));
 		StatusAllyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
@@ -108,39 +108,103 @@ void ULegionHUDWidget::Build()
 			FVector2D(T->ScreenMargin, 0.0f));
 	}
 
-	// ---- 中央结算面板 ----
+	// ---- 极简战终结算层 (《控制共振》式建筑排版: 仅硕大纯白「胜利 / 失联」+ 下方一行小字「点击返回大厅」) ----
 	{
-		ResultBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ResultBox"));
-		ResultBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.010f, 0.014f, 0.94f), 1.5f, T->Accent));
-		ResultBox->SetBrushColor(FLinearColor::White);
-		ResultBox->SetPadding(FMargin(56.0f, 38.0f));
-		ResultBox->SetVisibility(ESlateVisibility::Collapsed);
+		ResultOverlay = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ResultOverlay"));
+		ResultOverlay->SetBrush(ERUI::WhiteBrush());
+		ResultOverlay->SetBrushColor(FLinearColor(0.004f, 0.005f, 0.008f, 0.56f));
+		ResultOverlay->SetHorizontalAlignment(HAlign_Center);
+		ResultOverlay->SetVerticalAlignment(VAlign_Center);
+		ResultOverlay->SetVisibility(ESlateVisibility::Collapsed);
 
-		UVerticalBox* ResCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		ResultBox->SetContent(ResCol);
+		UVerticalBox* ResCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ResultCol"));
+		ResultOverlay->SetContent(ResCol);
 
-		ResultText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Hero, T->Bone);
-		ResultText->SetFont(ERUI::FontBold(84, 240));
+		ResultText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Hero, FLinearColor(0.98f, 0.98f, 0.98f, 1.0f), true);
+		ResultText->SetFont(ERUI::FontBold(180, 320));
 		ResultText->SetJustification(ETextJustify::Center);
-		ResCol->AddChildToVerticalBox(ResultText);
+		ResultText->SetShadowOffset(FVector2D(0.0f, 6.0f));
+		ResultText->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.45f));
+		if (UVerticalBoxSlot* TitleSlot = ResCol->AddChildToVerticalBox(ResultText))
+		{
+			TitleSlot->SetHorizontalAlignment(HAlign_Center);
+		}
 
-		ResultSummaryText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, T->BoneSecondary);
-		ResultSummaryText->SetFont(ERUI::FontRegular(14, 60));
-		ResultSummaryText->SetJustification(ETextJustify::Center);
-		ResCol->AddChildToVerticalBox(ResultSummaryText)->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 22.0f));
+		ReturnHallButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("ReturnHallButton"));
+		{
+			const FSlateBrush Tr = ERUI::TransparentBrush();
+			FButtonStyle BS;
+			BS.SetNormal(Tr);
+			BS.SetHovered(Tr);
+			BS.SetPressed(Tr);
+			BS.SetDisabled(Tr);
+			BS.SetNormalPadding(FMargin(28.0f, 12.0f));
+			BS.SetPressedPadding(FMargin(28.0f, 12.0f));
+			ReturnHallButton->SetStyle(BS);
+			ReturnHallButton->SetCursor(EMouseCursor::Hand);
+			ReturnHallButton->OnClicked.AddDynamic(this, &ULegionHUDWidget::OnReturnHallClicked);
+		}
 
-		ReturnHallButton = UERActionButton::Make(this, INVTEXT("返回虹膜基金会大厅"), 30, true);
-		ReturnHallButton->SetMinSize(520.0f, 0.0f);
-		ReturnHallButton->OnActionClicked.AddDynamic(this, &ULegionHUDWidget::OnReturnHallClicked);
-		ResCol->AddChildToVerticalBox(ReturnHallButton);
+		ReturnHallLabel = ERUI::MakeText(this, INVTEXT("点击返回大厅"), EERTypeScale::Body,
+			FLinearColor(0.97f, 0.97f, 0.97f, 0.78f), true);
+		ReturnHallLabel->SetFont(ERUI::FontRegular(20, 240));
+		ReturnHallLabel->SetJustification(ETextJustify::Center);
+		ReturnHallButton->SetContent(ReturnHallLabel);
 
-		ResultSubText = ERUI::MakeText(this, INVTEXT("也可按 R 键就地重新部署沙盘"),
-			EERTypeScale::Micro, T->BoneTertiary, false);
-		ResultSubText->SetFont(ERUI::FontBold(15, 120));
-		ResultSubText->SetJustification(ETextJustify::Center);
-		ResCol->AddChildToVerticalBox(ResultSubText)->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 0.0f));
+		if (UVerticalBoxSlot* BtnSlot = ResCol->AddChildToVerticalBox(ReturnHallButton))
+		{
+			BtnSlot->SetHorizontalAlignment(HAlign_Center);
+			BtnSlot->SetPadding(FMargin(0.0f, 24.0f, 0.0f, 0.0f));
+		}
 
-		Anchor(ResultBox, Root, FAnchors(0.5f, 0.5f), FVector2D(0.5f, 0.5f), FVector2D::ZeroVector);
+		UCanvasPanelSlot* OverlaySlot = Root->AddChildToCanvas(ResultOverlay);
+		OverlaySlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+		OverlaySlot->SetOffsets(FMargin(0.0f));
+		OverlaySlot->SetZOrder(100);
+	}
+
+	// ---- 右上角势力 Logo 横排 (「接入 AI」按钮之上): 从右至左 = 虹膜 + 雇主 + 敌对,
+	//      纯 logo 无底片, 纵横比自适应; 无合同时只留虹膜与叛军 (演武默认对手) ----
+	{
+		FactionLogoRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("FactionLogoRow"));
+
+		EFactionId EnemyFaction = EFactionId::Rebels;
+		bool bHasEmployer = false;
+		EFactionId EmployerFaction = EFactionId::Empire;
+		if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+		{
+			if (Campaign->HasActiveContract())
+			{
+				const FGalacticContract& Contract = Campaign->GetActiveContract();
+				EnemyFaction = Contract.EnemyFaction;
+				EmployerFaction = Contract.Employer;
+				bHasEmployer = true;
+			}
+		}
+
+		// UMG 横排从左往右布局, 锚点对齐右缘: 先加最左侧 (敌对), 虹膜最后 => 停在最右
+		auto AddLogo = [&](const TCHAR* Path)
+		{
+			if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, Path))
+			{
+				if (UImage* Img = ERUI::MakeLogoImage(this, Tex, 64.0f))
+				{
+					UHorizontalBoxSlot* S = FactionLogoRow->AddChildToHorizontalBox(Img);
+					S->SetPadding(FMargin(14.0f, 0.0f, 0.0f, 0.0f));
+					S->SetVerticalAlignment(VAlign_Center);
+				}
+			}
+		};
+		AddLogo(ERGalacticMeta::GetFactionLogoAssetPath(EnemyFaction));
+		if (bHasEmployer) { AddLogo(ERGalacticMeta::GetFactionLogoAssetPath(EmployerFaction)); }
+		AddLogo(ERGalacticMeta::GetIrisLogoAssetPath());
+
+		UCanvasPanelSlot* LogoSlot = Root->AddChildToCanvas(FactionLogoRow);
+		LogoSlot->SetAnchors(FAnchors(1.0f, 0.0f));
+		LogoSlot->SetAlignment(FVector2D(1.0f, 0.0f));
+		LogoSlot->SetPosition(FVector2D(-T->ScreenMargin, 24.0f));
+		LogoSlot->SetAutoSize(true);
+		LogoSlot->SetZOrder(24);
 	}
 
 	// ---- 右上角「接入 AI」自然语言指挥终端: 战场/地图双视角常驻
@@ -164,19 +228,68 @@ void ULegionHUDWidget::NativeConstruct()
 	// 左上角固定显示任务星球名 —— 当前「端点星」为占位, 后续应由委托/星区数据驱动
 	if (TitleText) { TitleText->SetText(INVTEXT("端点星")); }
 	RefreshStatus();
+
+	if (UWorld* World = GetWorld())
+	{
+		if (ALegionGameMode* GM = Cast<ALegionGameMode>(World->GetAuthGameMode()))
+		{
+			if (!BattleEndHandle.IsValid())
+			{
+				BattleEndHandle = GM->OnLegionBattleEnd.AddUObject(this, &ULegionHUDWidget::HandleBattleEnded);
+			}
+			if (GM->IsBattleOver() && !bResultShown)
+			{
+				HandleBattleEnded(GM->DidPlayerWin());
+			}
+		}
+	}
+}
+
+void ULegionHUDWidget::NativeDestruct()
+{
+	if (BattleEndHandle.IsValid())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (ALegionGameMode* GM = Cast<ALegionGameMode>(World->GetAuthGameMode()))
+			{
+				GM->OnLegionBattleEnd.Remove(BattleEndHandle);
+			}
+		}
+		BattleEndHandle.Reset();
+	}
+	Super::NativeDestruct();
 }
 
 void ULegionHUDWidget::SetStrategicMapMode(bool bMapOpen)
 {
 	if (LegionBar)
 	{
-		LegionBar->SetVisibility(bMapOpen ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+		LegionBar->SetVisibility((bMapOpen || bResultShown) ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
 	}
 }
 
 void ULegionHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	UWorld* World = GetWorld();
+	ALegionGameMode* GM = World ? Cast<ALegionGameMode>(World->GetAuthGameMode()) : nullptr;
+	if (GM && GM->IsBattleOver() && !bResultShown)
+	{
+		HandleBattleEnded(GM->DidPlayerWin());
+	}
+
+	if (bResultShown)
+	{
+		if (ReturnHallLabel && ReturnHallButton)
+		{
+			const bool bHov = ReturnHallButton->IsHovered() && !bReturningToHall;
+			ReturnHallLabel->SetColorAndOpacity(FSlateColor(
+				FLinearColor(0.98f, 0.98f, 0.98f, bHov ? 1.0f : 0.72f)));
+		}
+		return;
+	}
 
 	if (ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetOwningPlayer()))
 	{
@@ -190,14 +303,6 @@ void ULegionHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime
 	PollTimer = 0.2f;
 	RefreshStatus();
 	RefreshLegionBar();
-
-	UWorld* World = GetWorld();
-	ALegionGameMode* GM = World ? Cast<ALegionGameMode>(World->GetAuthGameMode()) : nullptr;
-	if (GM && GM->IsBattleOver() && !bResultShown)
-	{
-		bResultShown = true;
-		ShowResult(GM->DidPlayerWin());
-	}
 }
 
 void ULegionHUDWidget::RefreshStatus()
@@ -391,11 +496,35 @@ void ULegionHUDWidget::SelectPlate(int32 Index)
 	}
 }
 
+bool ULegionHUDWidget::IsResultOverlayVisible() const
+{
+	return ResultOverlay && ResultOverlay->GetVisibility() == ESlateVisibility::Visible;
+}
+
+bool ULegionHUDWidget::IsReturnHallButtonReady() const
+{
+	return ReturnHallButton && ReturnHallButton->IsVisible() && !bReturningToHall;
+}
+
+void ULegionHUDWidget::HandleBattleEnded(bool bPlayerWon)
+{
+	if (bResultShown) { return; }
+	bResultShown = true;
+	ShowResult(bPlayerWon);
+}
+
 void ULegionHUDWidget::OnReturnHallClicked()
 {
+	if (bReturningToHall) { return; }
+	bReturningToHall = true;
+	if (ReturnHallButton)
+	{
+		ReturnHallButton->SetIsEnabled(false);
+	}
+
 	if (UWorld* World = GetWorld())
 	{
-		UGameplayStatics::SetGamePaused(this, false);
+		UGameplayStatics::SetGamePaused(World, false);
 		UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
 		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")));
 	}
@@ -403,40 +532,40 @@ void ULegionHUDWidget::OnReturnHallClicked()
 
 void ULegionHUDWidget::ShowResult(bool bPlayerWon)
 {
-	const UERUITheme* T = ERUI::Theme();
-	ResultText->SetText(bPlayerWon ? INVTEXT("胜  利") : INVTEXT("败  北"));
-	ResultText->SetColorAndOpacity(FSlateColor(bPlayerWon ? T->Bone : T->DangerColor));
+	// 仅保留硕大纯白「胜利 / 失联」+ 下方「点击返回大厅」, 清空其余全部 HUD 元素
+	if (TitleRow)       { TitleRow->SetVisibility(ESlateVisibility::Collapsed); }
+	if (StatusCol)      { StatusCol->SetVisibility(ESlateVisibility::Collapsed); }
+	if (FactionLogoRow) { FactionLogoRow->SetVisibility(ESlateVisibility::Collapsed); }
+	if (LegionBar)      { LegionBar->SetVisibility(ESlateVisibility::Collapsed); }
+	if (AICommandPanel) { AICommandPanel->SetHostVisible(false); }
 
-	UWorld* World = GetWorld();
-	ALegionGameMode* GM = World ? Cast<ALegionGameMode>(World->GetAuthGameMode()) : nullptr;
-	FString Summary = TEXT("演武结束");
-	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this);
-		Campaign && GM && GM->IsCampaignBattle())
+	if (ResultText)
 	{
-		const FLegionBattleOutcome& Out = Campaign->GetLastOutcome();
-		if (Out.bValid && Out.bFromContract)
-		{
-			Summary = FString::Printf(
-				TEXT("委托: %s\n基金经费 +%d 银河币  |  我方阵亡 %d 人  |  歼敌 %d 人\n%s 星区控制率 %+.1f%%"),
-				*Out.ContractTitle,
-				Out.CreditsEarned,
-				Out.PlayerCasualties,
-				Out.EnemyEliminated,
-				*ERGalacticMeta::GetFactionName(Out.Employer),
-				Out.ControlShiftApplied);
-		}
-		if (Campaign->GetSaveStatus() == EGalacticCampaignSaveStatus::WriteFailed)
-		{
-			Summary += TEXT("\n进度未保存 · 返回大厅后可重试");
-		}
+		ResultText->SetText(bPlayerWon ? INVTEXT("胜利") : INVTEXT("失联"));
+		ResultText->SetColorAndOpacity(FSlateColor(FLinearColor(0.98f, 0.98f, 0.98f, 1.0f)));
 	}
-	if (ResultSummaryText)
+	if (ReturnHallButton)
 	{
-		ResultSummaryText->SetText(FText::FromString(Summary));
+		ReturnHallButton->SetIsEnabled(true);
+	}
+	if (ReturnHallLabel)
+	{
+		if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+		{
+			ReturnHallLabel->SetText(Campaign->GetSaveStatus() == EGalacticCampaignSaveStatus::WriteFailed
+				? INVTEXT("进度未保存 · 返回大厅后可重试")
+				: INVTEXT("点击返回大厅"));
+		}
+		ReturnHallLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.98f, 0.98f, 0.98f, 0.72f)));
+	}
+	if (ResultOverlay)
+	{
+		ResultOverlay->SetVisibility(ESlateVisibility::Visible);
 	}
 
-	if (ResultBox)
+	// 兜底确保玩家控制器进入战终纯 UI 模式 (鼠标可见 + 第一人称操控切断)
+	if (ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetOwningPlayer()))
 	{
-		ResultBox->SetVisibility(ESlateVisibility::Visible);
+		PC->EnterBattleOverMode();
 	}
 }

@@ -125,7 +125,14 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   否则相机瞬移整帧拉花。
 - 弹道模拟在 `ALegionGameMode::SimulateBullets`（子弹数组+扫描命中+地形遮挡），
   士兵逐兵冷却 (`FLegionSoldier::FireTimer`) 自动开火，命中走
-  `ALegionUnit::ApplyBulletHitToSoldier` 逐兵扣血+沿弹道击飞。
+  `ALegionUnit::ApplyBulletHitToSoldier` 逐兵扣血+沿弹道击飞。**士兵交战命中是纯数学胶囊扫描，
+  不依赖物理**；逐兵 `HitProxy` 胶囊仅供玩家 FPS 武器命中，是空跑物理开销的大头（诊断 `-LegionNoHitProxy`）。
+- **骨骼兵性能标尺（2026-12）**：`-LegionPerf`（全军突击+俯瞰最坏机位采样 10s 帧耗时，
+  输出 `[LegionPerf]` 均值/分位 + 手工计时归因）+ `-LegionForceSkeletal`（无视 160 阈值强制骨骼），
+  配 `-ExecCmds="stat unit"` 可得 game/render/gpu 三线；方法与基准数据见
+  `Docs/LegionSourceArchitecture.md` 末尾。诊断开关：`-nullrhi` / `-LegionNoHitProxy` /
+  `-LegionGunCullDist=cm` / `-LegionNoURO`。**结论：单兵骨骼组件的引擎逐帧固定税是规模天花板主因，
+  游戏逻辑只占小头；URO 对开销几乎无影响（求值本就被跳过/并行化）。**
 - 静等资源加载用 `UERAssetCatalog::LoadAsset`（同步 TryLoad + 弱引用缓存），
   但静态网格渲染数据仍会流送延迟（"Waiting on static mesh being ready"），
   开局几秒内枪形可能不可见属正常。

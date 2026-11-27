@@ -42,7 +42,7 @@ void ALegionForest::ClearTrees()
 }
 
 int32 ALegionForest::Generate(UWorld* World, FLegionTerrainGrid& Grid, int32 Seed, float DensityScale,
-	const TArray<FBox2D>& ExclusionRects)
+	const TArray<FLegionOrientedBand>& ExclusionBands)
 {
 	ClearTrees();
 	Grid.ResetTrees();
@@ -101,9 +101,10 @@ int32 ALegionForest::Generate(UWorld* World, FLegionTerrainGrid& Grid, int32 See
 
 			const FVector2D P2(X, Y);
 			bool bExcluded = false;
-			for (const FBox2D& R : ExclusionRects)
+			for (const FLegionOrientedBand& Band : ExclusionBands)
 			{
-				if (R.IsInside(P2)) { bExcluded = true; break; }
+				const float Along = FVector2D::DotProduct(P2 - Band.Center, Band.Forward);
+				if (FMath::Abs(Along) <= Band.HalfDepth) { bExcluded = true; break; }
 			}
 			if (bExcluded) { continue; }
 

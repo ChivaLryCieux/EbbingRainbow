@@ -104,6 +104,10 @@ public:
 	UFUNCTION(Exec)
 	void ERSkyBannerSelfTest();
 
+	/** 控制台自检: 验证兵团弱 AI 与单兵自治微状态机 */
+	UFUNCTION(Exec)
+	void ERLegionAISelfTest();
+
 	/** 自检主体; bCloseAtEnd=false 时保持地图打开 (便于截图), 之后调用 FinishMapSelfTest */
 	void RunMapSelfTest(bool bCloseAtEnd);
 	void FinishMapSelfTest();
@@ -175,6 +179,9 @@ protected:
 	void OnKeyX();
 	void OnKeyG();
 	void OnKeyF();
+	void OnKeyGuard();
+	void OnKeyPatrol();
+	void OnKeyRecon();
 	void OnKeyRestart();
 	void OnEscape();
 	void OnKeyMapToggle();
@@ -192,6 +199,10 @@ public:
 	 *  加载屏撤屏时解锁并恢复 战场/地图 双视角自己的输入模式逻辑 */
 	void SetDeploymentInputLocked(bool bLocked);
 	bool IsDeploymentInputLocked() const { return bDeploymentInputLocked; }
+
+	/** 战斗胜利/失败结算期间彻底切断第一人称与战术操控, 唤出鼠标光标并切为纯 UI 模式 */
+	void EnterBattleOverMode();
+	bool IsBattleOverInputLocked() const { return bBattleOverInputLocked; }
 
 protected:
 
@@ -221,6 +232,7 @@ private:
 	bool bMapOpen = false;
 	bool bAltCursor = false;
 	bool bDeploymentInputLocked = false;
+	bool bBattleOverInputLocked = false;
 	FLegionMapView MapView;
 	ELegionTimeMode PrevTimeMode = ELegionTimeMode::Normal;
 

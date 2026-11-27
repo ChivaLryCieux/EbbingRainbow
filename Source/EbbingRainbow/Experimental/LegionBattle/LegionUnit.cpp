@@ -6,8 +6,11 @@
 #include "Core/ERCollisionChannels.h"
 #include "Core/ERLog.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
+#include "Legion/LegionPerf.h"
 #include "Legion/Terrain/LegionTerrainGrid.h"
 
+#include "Animation/AnimSingleNodeInstance.h"
+#include "Animation/BlendSpace.h"
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
@@ -20,22 +23,6 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "UObject/ConstructorHelpers.h"
-
-namespace LegionUnitInternal
-{
-	/** 目标身高 -> 网格缩放/抬升 (让任意网格底盘贴 z=0 且等高) */
-	static float NormalizeMesh(const UStaticMesh* Mesh, float TargetHeight, float& OutLift)
-	{
-		OutLift = 0.0f;
-		if (!Mesh) { return 1.0f; }
-		const FBox B = Mesh->GetBoundingBox();
-		const float Z = B.GetSize().Z;
-		if (Z < KINDA_SMALL_NUMBER) { return 1.0f; }
-		const float S = TargetHeight / Z;
-		OutLift = -B.Min.Z * S;
-		return S;
-	}
-}
 
 ALegionUnit::ALegionUnit()
 {
@@ -105,12 +92,18 @@ ALegionUnit::ALegionUnit()
 		SoldierHISM->SetMaterial(0, BasicMat.Object);
 		ExtraHISM->SetMaterial(0, BasicMat.Object);
 	}
+	UnitRng.Initialize(1337);
 }
 
 void ALegionUnit::BeginPlay()
 {
 	Super::BeginPlay();
 	UpdateFrameVisual();
+}
+
+void ALegionUnit::SetDeterministicSeed(int32 InSeed)
+{
+	UnitRng.Initialize(InSeed == 0 ? 1337 : InSeed);
 }
 
 void ALegionUnit::InitLegion(ELegionTeam InTeam, ELegionClass InArchetype, int32 InSoldierCount,
@@ -146,6 +139,11 @@ void ALegionUnit::InitLegion(ELegionTeam InTeam, ELegionClass InArchetype, int32
 	SoldierXYScale = ArchetypeStats.BodyXYScale;
 	FacingYaw = FMath::UnwindDegrees(InInitialFacingYaw);
 	DesiredFacingYaw = FacingYaw;
+
+	// 默认确定性种子 (可由 GameMode::SpawnLegion 用 ActiveMatchSeed 覆盖)
+	const int32 DefaultSeed = (InCampaignLegionId != INDEX_NONE ? InCampaignLegionId : 17) * 73856093
+		^ GetTypeHash(Callsign) ^ ((int32)InTeam * 19349663) ^ ((int32)InArchetype * 83492791);
+	UnitRng.Initialize(DefaultSeed == 0 ? 1337 : DefaultSeed);
 
 	TargetSoldierCount = FMath::Max(1, InSoldierCount);
 	bSkeletalSoldiers = (InSkeletalBody != nullptr);
@@ -184,6 +182,25 @@ void ALegionUnit::InitLegion(ELegionTeam InTeam, ELegionClass InArchetype, int32
 	AliveCount = Soldiers.Num();
 	bWiped = false;
 	State = ELegionState::Holding;
+	Directive = ELegionDirective::Standby;
+	Alertness = ELegionAlertness::Relaxed;
+	AlertLevel = 0.0f;
+	AlertDecayCooldown = 0.0f;
+	DirectiveDecisionTimer = 0.0f;
+	DirectiveHoldTimer = 0.0f;
+	DirectiveSpeedMul = 1.0f;
+	GuardAnchor = GetActorLocation();
+	GuardBaseYaw = FacingYaw;
+	GuardScanPhase = UnitRng.FRandRange(0.0f, 6.28318f);
+	PatrolWaypoints.Reset();
+	PatrolCursor = 0;
+	PatrolDirection = 1;
+	PatrolDwellTimer = 0.0f;
+	bHasReconGoal = false;
+	ReconDwellTimer = 0.0f;
+	ThreatMemoryTimer = 0.0f;
+	ContactBroadcastCooldown = 0.0f;
+	FlankCommitTimer = 0.0f;
 	AttackTarget = nullptr;
 	bHasMoveDestination = false;
 	bHasCustomFacing = false;
@@ -283,15 +300,77 @@ void ALegionUnit::RebuildFormation()
 	}
 
 	Soldiers.Reserve(N);
+	const FVector LegionLoc = GetActorLocation();
+	const FLegionInstancedTransformParams InstancedParams = BuildInstancedTransformParams();
 	for (int32 Idx = 0; Idx < N; ++Idx)
 	{
 		FLegionSoldier S;
 		S.HomeOffset = Offsets[Idx];
+		S.LocalOffset = Offsets[Idx];
+		// 槽位不随军团扫视整体旋转, 防止扇面警戒变成旋转木马
+		const FVector InitWorld = LegionLoc + Offsets[Idx];
+		S.WorldPosXY = FVector2D(InitWorld.X, InitWorld.Y);
+		S.WorldVelXY = FVector2D::ZeroVector;
+		S.TacticalOffsetXY = FVector2D::ZeroVector;
+		S.MoveGoalOffsetXY = FVector2D::ZeroVector;
+
+		float InitZ = LegionLoc.Z;
+		if (TraceGroundZ(InitWorld, InitZ))
+		{
+			S.WorldZ = InitZ;
+			float GridZ = InitZ;
+			if (TerrainGrid && TerrainGrid->IsBuilt() && TerrainGrid->SampleHeightBilinear(InitWorld, GridZ))
+			{
+				S.RayGroundOffset = FMath::Clamp(InitZ - GridZ, -120.0f, 120.0f);
+				S.SmoothedRayOffset = S.RayGroundOffset;
+			}
+		}
+		else if (TerrainGrid && TerrainGrid->IsBuilt() && TerrainGrid->SampleHeightBilinear(InitWorld, InitZ))
+		{
+			S.WorldZ = InitZ;
+		}
+		else
+		{
+			S.WorldZ = LegionLoc.Z;
+		}
+		S.GroundZ = S.WorldZ - LegionLoc.Z;
+		S.LocalOffset.Z = S.GroundZ;
+		S.bWorldZInitialized = true;
+
 		S.HP = (float)FMath::Max(1, SoldierHP);
 		S.DeathImpulseDir = FVector::ZeroVector;
 		S.Phase = (float)((Idx * 37 + (int32)Team * 11) % 97) / 97.0f * 6.28318f;
-		S.JitterYaw = (Hash01(Idx, 3, (int32)Team, (int32)Archetype) - 0.5f) * 2.0f * (SoldierYawJitterDeg + 8.0f);
-		S.CurYaw = FacingYaw;
+		S.JitterYaw = (Hash01(Idx, 3, (int32)Team, (int32)Archetype) - 0.5f) * 2.0f * (SoldierYawJitterDeg + 14.0f);
+		S.CurYaw = FMath::UnwindDegrees(FacingYaw + S.JitterYaw * 0.65f);
+		S.StepFacingYaw = S.CurYaw;
+
+		// 个体确定性性格与噪声参数: 同团内同时有人好动漫步、有人沉稳驻足
+		const float HRest = Hash01(Idx, 11, (int32)Team, (int32)Archetype);
+		const float HAgg  = Hash01(Idx, 13, (int32)Team, (int32)Archetype);
+		const float HRate = Hash01(Idx, 17, (int32)Team, (int32)Archetype);
+		S.NoiseSeedX = Hash01(Idx, 19, (int32)Team, (int32)Archetype) * 197.0f + 11.3f;
+		S.NoiseSeedY = Hash01(Idx, 23, (int32)Team, (int32)Archetype) * 211.0f + 37.9f;
+		S.TraitRestlessness = 0.55f + 0.95f * HRest;
+		S.TraitAggression   = 0.65f + 0.75f * HAgg;
+		S.TraitPlayRate     = 0.92f + 0.16f * HRate;
+
+		// 初始开局拆成异步的待机/漫步双态 (漫步者选定明确、无碰撞的短途落脚点)
+		const bool bStartWander = (Hash01(Idx, 29, (int32)Team, (int32)Archetype) > 0.62f);
+		S.SoldierState = bStartWander ? ELegionSoldierState::RelaxedWander : ELegionSoldierState::RelaxedIdle;
+		S.PerceivedAlertness = ELegionAlertness::Relaxed;
+		S.StateTimer = 1.6f + 3.8f * Hash01(Idx, 31, (int32)Team, (int32)Archetype);
+		S.GlanceTimer = 1.8f + 3.6f * Hash01(Idx, 37, (int32)Team, (int32)Archetype);
+		S.GlanceYawOffset = (Hash01(Idx, 41, (int32)Team, (int32)Archetype) - 0.5f) * 44.0f;
+		S.FireTimer = 0.25f + 1.4f * Hash01(Idx, 43, (int32)Team, (int32)Archetype);
+		S.BurstShotsLeft = 3 + (int32)(Hash01(Idx, 47, (int32)Team, (int32)Archetype) * 4.0f);
+		if (bStartWander)
+		{
+			const float Ang = Hash01(Idx, 53, (int32)Team, 0) * 6.28318f;
+			const float Dist = 75.0f + 55.0f * Hash01(Idx, 59, (int32)Team, 0);
+			S.MoveGoalOffsetXY = FVector2D(FMath::Cos(Ang) * Dist, FMath::Sin(Ang) * Dist);
+			S.TacticalOffsetXY = S.MoveGoalOffsetXY;
+			S.StepFacingYaw = FMath::RadiansToDegrees(Ang);
+		}
 
 		if (bSkeletalSoldiers && SkeletalBodyMesh)
 		{
@@ -300,7 +379,7 @@ void ALegionUnit::RebuildFormation()
 		else
 		{
 			FTransform BodyXf, HeadXf;
-			ComputeSoldierTransforms(S, 0.0f, BodyXf, HeadXf);
+			ComputeSoldierTransforms(S, 0.0f, InstancedParams, BodyXf, HeadXf);
 			S.InstanceIndex = SoldierHISM->AddInstance(BodyXf, false);
 			if (ExtraHISM->GetStaticMesh())
 			{
@@ -324,471 +403,21 @@ void ALegionUnit::RebuildFormation()
 		*Callsign, *ERGalacticMeta::GetClassCode(Archetype), (int32)Team, N, MaxAbsX, MaxAbsY);
 }
 
-// ---------------- 命令 ----------------
-
-void ALegionUnit::CommandMoveTo(const FVector& Destination, float OptionalFacingYaw)
-{
-	if (bWiped) { return; }
-
-	FVector CleanDest = Destination;
-	if (TerrainGrid && TerrainGrid->IsBuilt())
-	{
-		CleanDest = TerrainGrid->ClampToWalkable(Destination);
-		TerrainGrid->FindPath(GetActorLocation(), CleanDest, Waypoints);
-	}
-	else
-	{
-		Waypoints.Reset();
-		Waypoints.Add(CleanDest);
-	}
-	WaypointIndex = 0;
-
-	MoveDestination = CleanDest;
-	bHasMoveDestination = true;
-	AttackTarget = nullptr;
-	bHasCustomFacing = (OptionalFacingYaw < 999.0f);
-	if (bHasCustomFacing)
-	{
-		DesiredFacingYaw = FMath::UnwindDegrees(OptionalFacingYaw);
-	}
-	State = ELegionState::Moving;
-}
-
-void ALegionUnit::CommandAttack(ALegionUnit* Target)
-{
-	if (bWiped || !Target || Target == this || Target->IsWiped()) { return; }
-	AttackTarget = Target;
-	bHasMoveDestination = false;
-	bHasCustomFacing = false;
-	RepathTimer = 0.0f; // 立即触发一次路径计算
-	Waypoints.Reset();
-	State = ELegionState::Moving;
-
-	// 敌方或空闲兵团受到近距离威胁时才自卫反击 (不抢占玩家现有显式移动指令)
-	if (!Target->GetAttackTarget() && Target->GetLegionState() == ELegionState::Holding)
-	{
-		if (FVector::DistSquared2D(GetActorLocation(), Target->GetActorLocation()) <=
-			FMath::Square(Target->GetEffectiveEngageRange(this) + 400.0f))
-		{
-			Target->CommandAttack(this);
-		}
-	}
-}
-
-void ALegionUnit::CommandHalt()
-{
-	bHasMoveDestination = false;
-	bHasCustomFacing = false;
-	AttackTarget = nullptr;
-	Waypoints.Reset();
-	if (!bWiped) { State = ELegionState::Holding; }
-}
-
-float ALegionUnit::GetEffectiveEngageRange(const ALegionUnit* Target) const
-{
-	float R = EngageRange;
-	if (ArchetypeStats.bRanged && Target)
-	{
-		const float DZ = GetActorLocation().Z - Target->GetActorLocation().Z;
-		// 高地射程延展: 每高 1 米 +45cm, 最多 +750cm / -250cm
-		R += FMath::Clamp((DZ / 100.0f) * 45.0f, -250.0f, 750.0f);
-	}
-	return FMath::Max(160.0f, R);
-}
-
-// ---------------- 选中/悬停 ----------------
-
-void ALegionUnit::SetSelected(bool bInSelected)
-{
-	if (bSelected == bInSelected) { return; }
-	bSelected = bInSelected;
-	UpdateFrameVisual();
-}
-
-void ALegionUnit::SetHovered(bool bInHovered)
-{
-	if (bHovered == bInHovered) { return; }
-	bHovered = bInHovered;
-	UpdateFrameVisual();
-}
-
-void ALegionUnit::UpdateFrameVisual()
-{
-	if (!FrameMID && FrameTop)
-	{
-		FrameMID = FrameTop->CreateAndSetMaterialInstanceDynamic(0);
-		if (FrameBottom) { FrameBottom->SetMaterial(0, FrameMID); }
-		if (FrameLeft)   { FrameLeft->SetMaterial(0, FrameMID); }
-		if (FrameRight)  { FrameRight->SetMaterial(0, FrameMID); }
-	}
-	if (!FrontBarMID && FrontShieldBar)
-	{
-		FrontBarMID = FrontShieldBar->CreateAndSetMaterialInstanceDynamic(0);
-	}
-
-	const FLinearColor TeamCol = (Team == ELegionTeam::Player) ? AllyColor : EnemyColor;
-	if (FrameMID)
-	{
-		FLinearColor C = TeamCol;
-		float Gain = bHovered ? 1.45f : 0.70f;
-		if (bSelected) { C = SelectedColor; Gain = 1.75f; }
-		if (bWiped)    { Gain = 0.08f; }
-		FrameMID->SetVectorParameterValue(TEXT("Color"), C * Gain);
-	}
-	if (FrontBarMID)
-	{
-		const float FGain = bWiped ? 0.08f : (bSelected ? 2.1f : 1.15f);
-		FrontBarMID->SetVectorParameterValue(TEXT("Color"), (bSelected ? SelectedColor : TeamCol) * FGain);
-	}
-}
-
-// ---------------- 结算 ----------------
-
-int32 ALegionUnit::ApplyDamage(float DamageAmount, ALegionUnit* InInstigator, bool bRangedHit)
-{
-	if (bWiped || DamageAmount <= 0.0f) { return 0; }
-	if (InInstigator) { LastAttacker = InInstigator; }
-
-	float FinalDamage = DamageAmount;
-
-	// 1. 正面方向格挡与侧背破防
-	if (InInstigator)
-	{
-		const FVector ToAttacker = (InInstigator->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-		const FVector Fwd = GetFacingVector();
-		const float Dot = FVector::DotProduct(Fwd, ToAttacker);
-
-		const float Block = ArchetypeStats.FrontalBlockRatio;
-		if (Dot > 0.35f && Block > 0.0f)
-		{
-			// 远程被盾牌克制效果更强
-			const float EffectiveBlock = bRangedHit ? FMath::Min(0.92f, Block * 1.15f) : Block;
-			FinalDamage *= (1.0f - EffectiveBlock);
-		}
-		else if (Dot < -0.25f)
-		{
-			// 侧翼/背刺惩罚
-			FinalDamage *= 1.30f;
-		}
-	}
-
-	const int32 PrevAlive = AliveCount;
-	const FVector FromPos = InInstigator ? InInstigator->GetActorLocation()
-		: GetActorLocation() + GetActorQuat().RotateVector(FVector::ForwardVector) * 100.0f;
-
-	float Remaining = FinalDamage;
-	while (Remaining > KINDA_SMALL_NUMBER && AliveCount > 0)
-	{
-		const int32 Victim = PickCasualtyIndex(FromPos);
-		if (Victim == INDEX_NONE) { break; }
-
-		FLegionSoldier& S = Soldiers[Victim];
-		const float Applied = FMath::Min(S.HP, Remaining);
-		S.HP = FMath::Max(0.0f, S.HP - Applied);
-		LegionHP = FMath::Max(0.0f, LegionHP - Applied);
-		Remaining -= Applied;
-
-		if (S.HP <= KINDA_SMALL_NUMBER)
-		{
-			S.HP = 0.0f;
-			S.DeathImpulseDir = FVector::ZeroVector;
-			AliveCount = FMath::Max(0, AliveCount - 1);
-			StartDying(Victim);
-		}
-	}
-
-	CheckAndHandleWiped();
-	return PrevAlive - AliveCount;
-}
-
-int32 ALegionUnit::ApplySoldierProjectileHit(const UPrimitiveComponent* HitComp, int32 HitItem,
-	const FVector& HitLocation, const FVector& HitDirection, float DamageAmount)
-{
-	if (bWiped || DamageAmount <= 0.0f) { return 0; }
-
-	const int32 Victim = FindSoldierIndexByHit(HitComp, HitItem, HitLocation);
-	if (Victim == INDEX_NONE || !Soldiers.IsValidIndex(Victim) || !Soldiers[Victim].bAlive)
-	{
-		return 0;
-	}
-
-	FLegionSoldier& S = Soldiers[Victim];
-	const float Applied = FMath::Min(S.HP, DamageAmount);
-	S.HP = FMath::Max(0.0f, S.HP - Applied);
-	LegionHP = FMath::Max(0.0f, LegionHP - Applied);
-
-	int32 Killed = 0;
-	if (S.HP <= KINDA_SMALL_NUMBER)
-	{
-		S.HP = 0.0f;
-		S.DeathImpulseDir = HitDirection.GetSafeNormal2D();
-		AliveCount = FMath::Max(0, AliveCount - 1);
-		StartDying(Victim);
-		Killed = 1;
-		CheckAndHandleWiped();
-	}
-	return Killed;
-}
-
-bool ALegionUnit::RunExactHitSelfTest()
-{
-	// 选最后一个存活士兵 (非前排), 模拟子弹命中其 HitProxy 胶囊
-	int32 TargetIdx = INDEX_NONE;
-	for (int32 i = Soldiers.Num() - 1; i >= 0; --i)
-	{
-		if (Soldiers[i].bAlive && Soldiers[i].HitProxy.IsValid())
-		{
-			TargetIdx = i;
-			break;
-		}
-	}
-	if (TargetIdx == INDEX_NONE) { return false; }
-
-	const int32 AliveBefore = AliveCount;
-	UCapsuleComponent* Proxy = Soldiers[TargetIdx].HitProxy.Get();
-	const FVector HitLoc = Proxy->GetComponentLocation();
-
-	// 第一枪未致命: 仅扣目标个体血量, 全团无人死亡
-	const float PartialDmg = FMath::Max(1.0f, Soldiers[TargetIdx].HP * 0.4f);
-	const int32 Killed1 = ApplySoldierProjectileHit(Proxy, INDEX_NONE, HitLoc, FVector(0.0f, 1.0f, 0.0f), PartialDmg);
-	const bool bPartialOk = (Killed1 == 0 && Soldiers[TargetIdx].bAlive && AliveCount == AliveBefore);
-
-	// 第二枪致命: 仅 TargetIdx 阵亡, 其余士兵全部存活, 且 TargetIdx 碰撞立刻关闭
-	const float LethalDmg = Soldiers[TargetIdx].HP + 10.0f;
-	const int32 Killed2 = ApplySoldierProjectileHit(Proxy, INDEX_NONE, HitLoc, FVector(0.0f, 1.0f, 0.0f), LethalDmg);
-	bool bOnlyTargetDied = (Killed2 == 1 && !Soldiers[TargetIdx].bAlive && AliveCount == AliveBefore - 1);
-	for (int32 i = 0; i < Soldiers.Num(); ++i)
-	{
-		if (i != TargetIdx && !Soldiers[i].bAlive) { bOnlyTargetDied = false; break; }
-	}
-	const bool bCollisionCleared = (Proxy->GetCollisionEnabled() == ECollisionEnabled::NoCollision);
-
-	UE_LOG(LogERLegion, Log, TEXT("[BulletHitSelfTest] %s: partial hit wounds only target without random death"),
-		bPartialOk ? TEXT("PASS") : TEXT("FAIL"));
-	UE_LOG(LogERLegion, Log, TEXT("[BulletHitSelfTest] %s: lethal hit kills exact target idx=%d (not front/random)"),
-		bOnlyTargetDied ? TEXT("PASS") : TEXT("FAIL"), TargetIdx);
-	UE_LOG(LogERLegion, Log, TEXT("[BulletHitSelfTest] %s: killed soldier HitProxy disabled immediately"),
-		bCollisionCleared ? TEXT("PASS") : TEXT("FAIL"));
-	return bPartialOk && bOnlyTargetDied && bCollisionCleared;
-}
-
-void ALegionUnit::CheckAndHandleWiped()
-{
-	if (AliveCount <= 0 && !bWiped)
-	{
-		bWiped = true;
-		LegionHP = 0.0f;
-		State = ELegionState::Wiped;
-		bHasMoveDestination = false;
-		AttackTarget = nullptr;
-		Waypoints.Reset();
-		UpdateFrameVisual();
-		OnLegionWiped.Broadcast(this);
-		UE_LOG(LogERLegion, Log, TEXT("[Legion] %s wiped"), *Callsign);
-	}
-}
-
-int32 ALegionUnit::FindSoldierIndexByHit(const UPrimitiveComponent* HitComp, int32 HitItem, const FVector& HitLocation) const
-{
-	// 1. 骨骼士兵模式: 精确匹配被子弹击中的个体胶囊代理 / 骨骼组件
-	if (HitComp)
-	{
-		for (int32 i = 0; i < Soldiers.Num(); ++i)
-		{
-			if (!Soldiers[i].bAlive) { continue; }
-			if (Soldiers[i].HitProxy.Get() == HitComp || Soldiers[i].SkelComp.Get() == HitComp)
-			{
-				return i;
-			}
-		}
-
-		// 2. HISM 模式: 按命中的实例索引精确匹配个体
-		if (HitItem != INDEX_NONE)
-		{
-			if (HitComp == SoldierHISM)
-			{
-				for (int32 i = 0; i < Soldiers.Num(); ++i)
-				{
-					if (Soldiers[i].bAlive && Soldiers[i].InstanceIndex == HitItem) { return i; }
-				}
-			}
-			else if (HitComp == ExtraHISM)
-			{
-				for (int32 i = 0; i < Soldiers.Num(); ++i)
-				{
-					if (Soldiers[i].bAlive && Soldiers[i].ExtraIndex == HitItem) { return i; }
-				}
-			}
-		}
-	}
-
-	// 3. 兜底 (如范围爆炸重叠等无具体个体组件时): 选取距命中点最近的存活士兵
-	const FVector MyLoc = GetActorLocation();
-	const FQuat MyQuat = GetActorQuat();
-	int32 Best = INDEX_NONE;
-	float BestDistSq = MAX_FLT;
-	for (int32 i = 0; i < Soldiers.Num(); ++i)
-	{
-		const FLegionSoldier& S = Soldiers[i];
-		if (!S.bAlive) { continue; }
-		const FVector SPos = S.SkelComp.IsValid()
-			? S.SkelComp->GetComponentLocation() + FVector(0.0f, 0.0f, 92.0f)
-			: MyLoc + MyQuat.RotateVector(S.HomeOffset + FVector(0.0f, 0.0f, S.GroundZ + 92.0f));
-		const float D2 = FVector::DistSquared(SPos, HitLocation);
-		if (D2 < BestDistSq)
-		{
-			BestDistSq = D2;
-			Best = i;
-		}
-	}
-	return Best;
-}
-
-void ALegionUnit::ApplyKnockback(const FVector& WorldImpulse)
-{
-	if (bWiped) { return; }
-	const float WeightMul = (Archetype == ELegionClass::Shieldbearer) ? 0.5f : 1.0f;
-	KnockbackVelocity += FVector(WorldImpulse.X, WorldImpulse.Y, 0.0f) * WeightMul;
-}
-
-int32 ALegionUnit::PickCasualtyIndex(const FVector& FromPos) const
-{
-	const FVector DirL = GetActorQuat().UnrotateVector(FromPos - GetActorLocation()).GetSafeNormal2D();
-	int32 Best = INDEX_NONE;
-	float BestD = -MAX_FLT;
-	for (int32 i = 0; i < Soldiers.Num(); ++i)
-	{
-		if (!Soldiers[i].bAlive) { continue; }
-		const float D = Soldiers[i].HomeOffset.X * DirL.X + Soldiers[i].HomeOffset.Y * DirL.Y;
-		if (D > BestD)
-		{
-			BestD = D;
-			Best = i;
-		}
-	}
-	return Best;
-}
-
-void ALegionUnit::StartDying(int32 SoldierIndex)
-{
-	FLegionSoldier& S = Soldiers[SoldierIndex];
-	S.bAlive = false;
-	S.HP = 0.0f;
-	S.DieT = 0.0f;
-	bSoldierTransformsDirty = true;
-
-	// 阵亡瞬间立即关闭命中胶囊, 避免后续子弹继续打到倒地尸体
-	if (UCapsuleComponent* P = S.HitProxy.Get())
-	{
-		P->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	}
-
-	if (bSkeletalSoldiers)
-	{
-		if (USkeletalMeshComponent* C = S.SkelComp.Get())
-		{
-			if (AnimDeathPool.Num() > 0)
-			{
-				C->PlayAnimation(AnimDeathPool[SoldierIndex % AnimDeathPool.Num()], false);
-				C->SetPosition(0.0f, false);
-			}
-			C->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
-		}
-	}
-}
-
-void ALegionUnit::FireRangedVolley(ALegionUnit* Target)
-{
-	if (!Target || Target->IsWiped() || AliveCount <= 0) { return; }
-
-	const float ElevMul = FLegionTerrainGrid::ComputeElevationMultiplier(GetActorLocation().Z, Target->GetActorLocation().Z);
-	// 林地掩体: 目标站在树冠下时承受的远程火力缩水
-	const float CoverMul = (Target->TerrainGrid && Target->TerrainGrid->IsBuilt())
-		? Target->TerrainGrid->GetRangedCoverMultiplier(Target->GetActorLocation()) : 1.0f;
-	const float VolleyDamage = (float)AliveCount * DamagePerSoldierPerSecond * ArchetypeStats.VolleyInterval * ElevMul * CoverMul;
-
-	Target->ApplyDamage(VolleyDamage, this, true);
-	if (ArchetypeStats.KnockbackImpulse > 0.0f)
-	{
-		const FVector Dir = (Target->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-		Target->ApplyKnockback(Dir * ArchetypeStats.KnockbackImpulse);
-	}
-
-	if (ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
-	{
-		const FLinearColor BeamCol = (Team == ELegionTeam::Player)
-			? FLinearColor(0.15f, 0.78f, 1.0f, 0.95f)
-			: FLinearColor(1.0f, 0.22f, 0.12f, 0.95f);
-
-		const int32 BeamCount = FMath::Clamp(AliveCount / 3, 2, 7);
-		const FQuat MyQ = GetActorQuat();
-		const FQuat TgtQ = Target->GetActorQuat();
-		for (int32 b = 0; b < BeamCount; ++b)
-		{
-			const float OffY = ((float)b / FMath::Max(1, BeamCount - 1) - 0.5f) * FormationHalfExtent.Y * 1.4f;
-			const FVector SPos = GetActorLocation() + MyQ.RotateVector(FVector(40.0f, OffY, 125.0f));
-			const FVector EPos = Target->GetActorLocation() + TgtQ.RotateVector(FVector(0.0f, -OffY * 0.7f, 95.0f));
-			GM->AddTracerBeam(SPos, EPos, BeamCol, 0.28f);
-		}
-	}
-}
-
-void ALegionUnit::ApplyPeerSeparation(float DeltaSeconds)
-{
-	ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr);
-	if (!GM) { return; }
-
-	FVector Push = FVector::ZeroVector;
-	const float MinSep = 680.0f;
-	const float MinSepSq = MinSep * MinSep;
-	const FVector MyLoc = GetActorLocation();
-
-	auto Accumulate = [&](const TArray<TObjectPtr<ALegionUnit>>& List)
-	{
-		for (ALegionUnit* Other : List)
-		{
-			if (!Other || Other == this || Other->IsWiped()) { continue; }
-			const FVector Diff = MyLoc - Other->GetActorLocation();
-			const float D2 = Diff.SizeSquared2D();
-			if (D2 > 1.0f && D2 < MinSepSq)
-			{
-				const float D = FMath::Sqrt(D2);
-				const float Strength = (1.0f - D / MinSep);
-				// 同队保持更干净的队列间隔, 异队交战允许稍微贴近
-				const float Mul = (Other->GetTeam() == Team) ? 380.0f : 140.0f;
-				Push += Diff.GetSafeNormal2D() * (Strength * Mul);
-			}
-		}
-	};
-	Accumulate(GM->GetPlayerLegions());
-	Accumulate(GM->GetEnemyLegions());
-
-	if (!Push.IsNearlyZero())
-	{
-		FVector Next = MyLoc + Push * DeltaSeconds;
-		const float HalfE = GM->GetBattlefieldHalfExtent();
-		const FVector Center = GM->GetDeployCenter();
-		Next.X = FMath::Clamp(Next.X, Center.X - HalfE, Center.X + HalfE);
-		Next.Y = FMath::Clamp(Next.Y, Center.Y - HalfE, Center.Y + HalfE);
-		if (!TerrainGrid || !TerrainGrid->IsBuilt() || TerrainGrid->IsWalkableWorld(Next))
-		{
-			SetActorLocation(Next);
-		}
-	}
-}
-
-// ---------------- Tick ----------------
-
 void ALegionUnit::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	LegionPerf::FScope PerfScope(LegionPerf::Get().UnitTickMs);
 
 	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	bool bNeedTransforms = bSoldierTransformsDirty;
+	ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr);
 
 	if (!bWiped)
 	{
-		// 处理击退惯性位移 + 陡坡跌落惩戒
+		// 1. 军团弱 AI 决策树与态势感知 (仅在开战后推进)
+		{ LegionPerf::FScope S_(LegionPerf::Get().DirectiveMs); UpdateWeakAIDirective(DeltaSeconds, GM); }
+
+		// 2. 处理击退惯性位移 + 陡坡跌落惩戒
 		if (!KnockbackVelocity.IsNearlyZero(8.0f))
 		{
 			const FVector Next = GetActorLocation() + KnockbackVelocity * DeltaSeconds;
@@ -800,16 +429,15 @@ void ALegionUnit::Tick(float DeltaSeconds)
 				float Z = 0.0f, Slope = 0.0f;
 				if (!TerrainGrid->SampleHeightAndSlope(Next, Z, Slope) || Slope > 44.0f)
 				{
-					// 被推下悬崖/绝壁造成震荡伤亡并反弹停住
 					ApplyDamage((float)SoldierHP * 1.5f * DeltaSeconds * 10.0f, LastAttacker.Get(), false);
 					KnockbackVelocity = FVector::ZeroVector;
 				}
 			}
 		}
 
-		ConformToTerrain(DeltaSeconds);
+		{ LegionPerf::FScope S_(LegionPerf::Get().TerrainConformMs); ConformToTerrain(DeltaSeconds); }
 
-		// ---- 目标获取与路径追踪 ----
+		// 3. 目标获取与路径追踪 (带射程滞回 + 突击刃兵侧翼绕行航点)
 		FVector ImmediateGoal = FVector::ZeroVector;
 		bool bHasGoal = false;
 		bool bAttackGoal = false;
@@ -826,28 +454,30 @@ void ALegionUnit::Tick(float DeltaSeconds)
 			{
 				bAttackGoal = true;
 				bHasGoal = true;
-				const FVector TargetLoc = Target->GetActorLocation();
-				const float DistToEnemy = FVector::Dist2D(GetActorLocation(), TargetLoc);
+				const FVector NavDest = (FlankCommitTimer > 0.0f && !FlankWaypoint.IsNearlyZero())
+					? FlankWaypoint : Target->GetActorLocation();
+				const float DistToEnemy = FVector::Dist2D(GetActorLocation(), Target->GetActorLocation());
 				const float EffRange = GetEffectiveEngageRange(Target);
+				const float StopRange = (State == ELegionState::Engaged) ? (EffRange * 0.96f) : (EffRange * 0.85f);
 
-				if (DistToEnemy <= EffRange)
+				if (DistToEnemy <= StopRange)
 				{
-					ImmediateGoal = TargetLoc;
+					ImmediateGoal = Target->GetActorLocation();
+					FlankCommitTimer = 0.0f;
 				}
 				else
 				{
-					// 追踪移动敌军时周期重算绕山路径
 					RepathTimer -= DeltaSeconds;
 					if (RepathTimer <= 0.0f || Waypoints.Num() == 0)
 					{
 						RepathTimer = 0.45f;
 						if (TerrainGrid && TerrainGrid->IsBuilt())
 						{
-							TerrainGrid->FindPath(GetActorLocation(), TargetLoc, Waypoints);
+							TerrainGrid->FindPath(GetActorLocation(), NavDest, Waypoints);
 						}
 						else
 						{
-							Waypoints = { TargetLoc };
+							Waypoints = { NavDest };
 						}
 						WaypointIndex = 0;
 					}
@@ -859,10 +489,14 @@ void ALegionUnit::Tick(float DeltaSeconds)
 							++WaypointIndex;
 							ImmediateGoal = Waypoints[WaypointIndex];
 						}
+						if (FlankCommitTimer > 0.0f && FVector::Dist2D(GetActorLocation(), FlankWaypoint) <= 320.0f)
+						{
+							FlankCommitTimer = 0.0f;
+						}
 					}
 					else
 					{
-						ImmediateGoal = TargetLoc;
+						ImmediateGoal = NavDest;
 					}
 				}
 			}
@@ -889,7 +523,10 @@ void ALegionUnit::Tick(float DeltaSeconds)
 		{
 			const FVector FinalDest = bAttackGoal ? AttackTarget->GetActorLocation() : MoveDestination;
 			const float DistFinal = FVector::Dist2D(GetActorLocation(), FinalDest);
-			const float EffRange = bAttackGoal ? GetEffectiveEngageRange(AttackTarget.Get()) : 90.0f;
+			const float RawRange = bAttackGoal ? GetEffectiveEngageRange(AttackTarget.Get()) : 95.0f;
+			const float EffRange = bAttackGoal
+				? ((State == ELegionState::Engaged) ? RawRange * 0.96f : RawRange * 0.85f)
+				: RawRange;
 			const bool bInRange = (DistFinal <= EffRange);
 
 			if (bInRange)
@@ -910,8 +547,9 @@ void ALegionUnit::Tick(float DeltaSeconds)
 			{
 				State = ELegionState::Moving;
 				const FVector ToWp = ImmediateGoal - GetActorLocation();
-				const FVector Step = ToWp.GetSafeNormal2D() * MoveSpeed * DeltaSeconds;
-				SetActorLocation(GetActorLocation() + Step);
+				const float CurMoveSpeed = MoveSpeed * FMath::Clamp(DirectiveSpeedMul, 0.45f, 1.25f);
+				const FVector Step = ToWp.GetSafeNormal2D() * CurMoveSpeed * DeltaSeconds;
+				{ LegionPerf::FScope S_(LegionPerf::Get().ActorMoveMs); SetActorLocation(GetActorLocation() + Step); }
 				if (!ToWp.IsNearlyZero(10.0f))
 				{
 					const float MoveYaw = ToWp.Rotation().Yaw;
@@ -924,146 +562,23 @@ void ALegionUnit::Tick(float DeltaSeconds)
 			}
 		}
 
-		// 兵团互斥防重叠
+		// 4. 兵团互斥防重叠
 		ApplyPeerSeparation(DeltaSeconds);
 
-		// 编队矩形框本身不整体旋转; 仅逻辑朝向 FacingYaw 收敛, 并由每个士兵各自独立转向
+		// 5. 军团逻辑朝向平滑收敛
+		if (State == ELegionState::Holding || State == ELegionState::Engaged)
 		{
-			if (State == ELegionState::Holding || State == ELegionState::Engaged)
-			{
-				FacingYaw = FMath::FixedTurn(FacingYaw, DesiredFacingYaw, FormationTurnSpeed * DeltaSeconds);
-			}
-
-			const float ActorYaw = GetActorRotation().Yaw;
-			const FQuat ActorQuat = GetActorQuat();
-			bool bAnySoldierTurned = false;
-			for (int32 i = 0; i < Soldiers.Num(); ++i)
-			{
-				FLegionSoldier& S = Soldiers[i];
-				if (!S.bAlive) { continue; }
-				float Want = (State == ELegionState::Holding && bHasCustomFacing) ? DesiredFacingYaw : FacingYaw;
-				if (bAttackGoal && AttackTarget.IsValid())
-				{
-					const FVector SPos = GetActorLocation() + ActorQuat.RotateVector(S.HomeOffset);
-					Want = (AttackTarget->GetActorLocation() - SPos).Rotation().Yaw;
-				}
-				const float PrevYaw = S.CurYaw;
-				const float Rate = TurnSpeed * DeltaSeconds * (0.8f + 0.4f * FMath::Frac(S.Phase));
-				S.CurYaw = FMath::FixedTurn(S.CurYaw, Want, Rate);
-				if (FMath::Abs(FMath::FindDeltaAngleDegrees(PrevYaw, S.CurYaw)) > 0.05f)
-				{
-					bAnySoldierTurned = true;
-				}
-				if (bSkeletalSoldiers)
-				{
-					if (USkeletalMeshComponent* C = S.SkelComp.Get())
-					{
-						C->SetRelativeRotation(FRotator(0.0f, S.CurYaw - ActorYaw - 90.0f + S.JitterYaw, 0.0f));
-
-						// 开火动画播完: 回落到当前状态循环动画
-						if (S.FireAnimEndTime > 0.0f && GetWorld()->GetTimeSeconds() >= S.FireAnimEndTime)
-						{
-							S.FireAnimEndTime = -1.0f;
-							if (UAnimationAsset* A = PickAnimForState(State, i))
-							{
-								C->PlayAnimation(A, true);
-							}
-						}
-					}
-				}
-			}
-			if (bAnySoldierTurned && !bSkeletalSoldiers)
-			{
-				bNeedTransforms = true;
-			}
+			FacingYaw = FMath::FixedTurn(FacingYaw, DesiredFacingYaw, FormationTurnSpeed * DeltaSeconds);
 		}
 
-		// ---- 真实弹道自动开火 (2026-12 改造) ----
-		// 不再有按秒/按齐射的数值结算: 任意状态下敌兵团进入射程, 存活士兵即按各自
-		// Cadence 独立开火, 子弹实体飞行, 命中与否完全由几何决定 (绝境北地式实时模拟)。
-		if (!bWiped && AliveCount > 0)
-		{
-			ALegionGameMode* GM = Cast<ALegionGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr);
-			if (GM && GM->IsBattleStarted())
-			{
-				FireScanTimer -= DeltaSeconds;
-				if (FireScanTimer <= 0.0f)
-				{
-					FireScanTimer = 0.35f;
-					CachedFireTarget = nullptr;
-					const TArray<TObjectPtr<ALegionUnit>>& Foes =
-						(Team == ELegionTeam::Player) ? GM->GetEnemyLegions() : GM->GetPlayerLegions();
-					float BestD2 = FMath::Square(ArchetypeStats.EngageRange);
-					for (ALegionUnit* F : Foes)
-					{
-						if (!F || F->IsWiped()) { continue; }
-						const float D2 = FVector::DistSquared2D(GetActorLocation(), F->GetActorLocation());
-						if (D2 < BestD2) { BestD2 = D2; CachedFireTarget = F; }
-					}
-				}
-
-				ALegionUnit* Foe = CachedFireTarget.Get();
-				if (Foe && Foe->IsWiped()) { Foe = nullptr; CachedFireTarget = nullptr; }
-				if (Foe)
-				{
-					const float FireNow = GetWorld()->GetTimeSeconds();
-					const float Cadence = FMath::Max(0.5f, ArchetypeStats.VolleyInterval);
-					constexpr float BulletSpeed = 5200.0f;
-					for (int32 i = 0; i < Soldiers.Num(); ++i)
-					{
-						FLegionSoldier& S = Soldiers[i];
-						if (!S.bAlive) { continue; }
-						S.FireTimer -= DeltaSeconds;
-						if (S.FireTimer > 0.0f) { continue; }
-						S.FireTimer = Cadence * FMath::RandRange(0.7f, 1.3f);
-
-						const int32 Victim = Foe->PickRandomAliveSoldier();
-						if (Victim == INDEX_NONE) { break; }
-						FVector VictimFeet, MuzzleFeet;
-						if (!Foe->GetAliveSoldierFeet(Victim, VictimFeet) || !GetAliveSoldierFeet(i, MuzzleFeet)) { continue; }
-
-						// 枪口: 胸口高度 + 朝目标方向略前伸; 瞄准点: 目标胸腹部
-						const FVector ToVictim = (VictimFeet - MuzzleFeet).GetSafeNormal2D();
-						const FVector MuzzlePos = MuzzleFeet + FVector(0.0f, 0.0f, 138.0f) + ToVictim * 45.0f;
-						const FVector AimPos = VictimFeet + FVector(0.0f, 0.0f, 118.0f);
-						FVector Dir = (AimPos - MuzzlePos).GetSafeNormal();
-						if (Dir.IsNearlyZero()) { continue; }
-
-						// 散布锥: 基础抖动 + 己/敌机动惩罚 —— 射不准是常态, 命中才扣血
-						float HalfAngleDeg = 1.5f;
-						if (State == ELegionState::Moving) { HalfAngleDeg += 0.9f; }
-						if (Foe->GetLegionState() == ELegionState::Moving) { HalfAngleDeg += 1.4f; }
-						Dir = FMath::VRandCone(Dir, FMath::DegreesToRadians(HalfAngleDeg));
-
-						GM->SpawnBullet(MuzzlePos, Dir * BulletSpeed, this);
-
-						// 开火动画 (骨骼士兵): 单发播放后回落到状态动画
-						if (bSkeletalSoldiers && AnimAttackPool.Num() > 0)
-						{
-							if (USkeletalMeshComponent* C = S.SkelComp.Get())
-							{
-								C->PlayAnimation(AnimAttackPool[0].Get(), false);
-								C->SetPosition(0.0f, false);
-								S.FireAnimEndTime = FireNow + 0.55f;
-							}
-						}
-					}
-				}
-			}
-		}
-
-		if (State == ELegionState::Engaged)
-		{
-			bNeedTransforms = true;
-		}
-		else if (State == ELegionState::Moving)
-		{
-			bNeedTransforms = true;
-		}
+		// 6. 单兵自治微状态机 + 世界空间噪声走位 + 抢射界 + 2D BlendSpace + 真实弹道开火
+		UpdateSoldiersMicroAI(DeltaSeconds, Now, GM);
+		bNeedTransforms = true;
 	}
 
 	// ---- 阵亡推进 ----
 	bool bAnyDying = false;
+	{ LegionPerf::FScope DeathScope_(LegionPerf::Get().DeathLoopMs);
 	for (int32 i = 0; i < Soldiers.Num(); ++i)
 	{
 		FLegionSoldier& S = Soldiers[i];
@@ -1089,459 +604,104 @@ void ALegionUnit::Tick(float DeltaSeconds)
 			}
 		}
 	}
+	} // DeathScope_
 	bNeedTransforms |= bAnyDying;
-
-	if (State != AppliedAnimState)
-	{
-		AppliedAnimState = State;
-		ApplyAnimStateToSoldiers();
-	}
 
 	UpdateOrderVisuals(Now);
 
 	if (bNeedTransforms)
 	{
-		WriteAllSoldierTransforms(Now);
-		bSoldierTransformsDirty = bAnyDying;
-	}
-}
-
-void ALegionUnit::UpdateOrderVisuals(float TimeSeconds)
-{
-	if (!OrderVisualMID && OrderLine)
-	{
-		OrderVisualMID = OrderLine->CreateAndSetMaterialInstanceDynamic(0);
-		if (MoveMarker) { MoveMarker->SetMaterial(0, OrderVisualMID); }
-		if (OrderVisualMID)
-		{
-			const FLinearColor C = (Team == ELegionTeam::Player) ? SelectedColor : EnemyColor;
-			OrderVisualMID->SetVectorParameterValue(TEXT("Color"), C * 1.4f);
-		}
-	}
-
-	if (OrderLine)
-	{
-		ALegionUnit* Target = AttackTarget.Get();
-		if (Target && !bWiped && !Target->IsWiped())
-		{
-			const FVector A = GetActorLocation();
-			const FVector B = Target->GetActorLocation();
-			const float Len = FMath::Max(10.0f, FVector::Dist2D(A, B));
-			const float LZ = (A.Z + B.Z) * 0.5f + 42.0f;
-			OrderLine->SetWorldLocation(FVector((A.X + B.X) * 0.5f, (A.Y + B.Y) * 0.5f, LZ));
-			OrderLine->SetWorldRotation(FRotator(0.0f, (B - A).Rotation().Yaw, 0.0f));
-			OrderLine->SetWorldScale3D(FVector(Len / 100.0f, 0.08f, 0.08f));
-			OrderLine->SetVisibility(true);
-		}
-		else
-		{
-			OrderLine->SetVisibility(false);
-		}
-	}
-
-	if (MoveMarker)
-	{
-		if (bHasMoveDestination && !bWiped)
-		{
-			const float Pulse = 1.0f + 0.12f * FMath::Sin(TimeSeconds * 6.0f);
-			float MZ = MoveDestination.Z;
-			TraceGroundZ(MoveDestination, MZ);
-			MoveMarker->SetWorldLocation(FVector(MoveDestination.X, MoveDestination.Y, MZ + 18.0f));
-			MoveMarker->SetWorldRotation(FRotator(0.0f, bHasCustomFacing ? DesiredFacingYaw : 45.0f, 0.0f));
-			MoveMarker->SetWorldScale3D(FVector(1.8f, 1.8f, 0.12f) * Pulse);
-			MoveMarker->SetVisibility(true);
-		}
-		else
-		{
-			MoveMarker->SetVisibility(false);
-		}
-	}
-}
-
-void ALegionUnit::ConformToTerrain(float DeltaSeconds)
-{
-	UWorld* World = GetWorld();
-	if (!World) { return; }
-
-	const FVector Loc = GetActorLocation();
-	float GZ;
-	if (TraceGroundZ(Loc, GZ))
-	{
-		const float NewZ = (DeltaSeconds > 1.0f) ? GZ
-			: FMath::FInterpTo(Loc.Z, GZ, DeltaSeconds, GroundConformSpeed * 1.5f);
-		SetActorLocation(FVector(Loc.X, Loc.Y, NewZ));
-	}
-
-	GroundConformTimer -= DeltaSeconds;
-	if (GroundConformTimer > 0.0f) { return; }
-	GroundConformTimer = GroundConformInterval;
-
-	const FQuat Q = GetActorQuat();
-	const FVector SelfLoc = GetActorLocation();
-	bool bChanged = false;
-	for (FLegionSoldier& S : Soldiers)
-	{
-		if (!S.bAlive) { continue; }
-		const FVector WPos = SelfLoc + Q.RotateVector(S.HomeOffset);
-		float SZ;
-		const float Target = TraceGroundZ(WPos, SZ) ? (SZ - SelfLoc.Z) : 0.0f;
-		const float NewG = (DeltaSeconds > 1.0f) ? Target
-			: FMath::FInterpTo(S.GroundZ, Target, GroundConformInterval, GroundConformSpeed);
-		if (FMath::Abs(NewG - S.GroundZ) > 0.5f) { bChanged = true; }
-		S.GroundZ = NewG;
 		if (bSkeletalSoldiers)
 		{
-			if (USkeletalMeshComponent* C = S.SkelComp.Get())
-			{
-				C->SetRelativeLocation(S.HomeOffset + FVector(0.0f, 0.0f, S.GroundZ));
-			}
-		}
-	}
-	if (bChanged) { bSoldierTransformsDirty = true; }
-}
-
-bool ALegionUnit::TraceGroundZ(const FVector& XY, float& OutZ) const
-{
-	FHitResult Hit;
-	FCollisionObjectQueryParams ObjParams;
-	ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
-	FCollisionQueryParams P(SCENE_QUERY_STAT(LegionGround), false, this);
-	const FVector A(XY.X, XY.Y, GroundTraceHeight);
-	const FVector B(XY.X, XY.Y, -GroundTraceHeight);
-	if (GetWorld() && GetWorld()->LineTraceSingleByObjectType(Hit, A, B, ObjParams, P))
-	{
-		OutZ = Hit.Location.Z;
-		return true;
-	}
-	return false;
-}
-
-void ALegionUnit::SpawnSkeletalSoldier(FLegionSoldier& S)
-{
-	USkeletalMeshComponent* C = NewObject<USkeletalMeshComponent>(this, NAME_None, RF_Transient);
-	C->SetupAttachment(PickBox);
-	C->SetSkeletalMeshAsset(SkeletalBodyMesh);
-	C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	C->SetCanEverAffectNavigation(false);
-	C->SetComponentTickEnabled(true);
-	C->SetRelativeLocationAndRotation(S.HomeOffset,
-		FRotator(0.0f, S.CurYaw - GetActorRotation().Yaw - 90.0f + S.JitterYaw, 0.0f));
-	const float OrganicScale = 0.93f + 0.14f * FMath::Frac(S.Phase * 2.13f);
-	C->SetRelativeScale3D(FVector(OrganicScale));
-	if (SoldierBodyMaterial)
-	{
-		for (int32 i = 0; i < C->GetNumMaterials(); ++i)
-		{
-			C->SetMaterial(i, SoldierBodyMaterial);
-		}
-	}
-	else if (SkeletalTint.R >= 0.0f)
-	{
-		// 保留 SKM_Manny_Simple 原生材质槽, 经 MID 的 "Paint Tint" 参数统一染出敌我阵营色
-		for (int32 i = 0; i < C->GetNumMaterials(); ++i)
-		{
-			if (UMaterialInstanceDynamic* MID = C->CreateAndSetMaterialInstanceDynamic(i))
-			{
-				MID->SetVectorParameterValue(TEXT("Paint Tint"), SkeletalTint);
-				MID->SetVectorParameterValue(TEXT("Tint"), SkeletalTint);
-				MID->SetVectorParameterValue(TEXT("Color"), SkeletalTint);
-			}
-		}
-	}
-	C->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-	if (AnimIdle)
-	{
-		C->SetAnimation(AnimIdle);
-	}
-	C->SetPosition(S.Phase * 0.61f, false);
-	C->Play(true);
-	C->RegisterComponent();
-
-	// 子弹命中代理: 胶囊跟随骨骼组件, 只挡 WorldDynamic (手枪弹);
-	// 命中可视士兵才结算, 不再依赖 PickBox 隐形大盒
-	UCapsuleComponent* Proxy = NewObject<UCapsuleComponent>(this, NAME_None, RF_Transient);
-	Proxy->SetupAttachment(C);
-	Proxy->SetCapsuleSize(36.0f, 92.0f);
-	Proxy->SetRelativeLocation(FVector(0.0f, 0.0f, 92.0f));
-	Proxy->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	Proxy->SetCollisionResponseToAllChannels(ECR_Ignore);
-	Proxy->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
-	Proxy->SetCanEverAffectNavigation(false);
-	Proxy->RegisterComponent();
-
-	// FP 模板枪械: 手枪静态网格附加到手部骨骼, 随射击动画一起运动
-	{
-		static TWeakObjectPtr<UStaticMesh> CachedPistolMesh;
-		UStaticMesh* PistolMesh = CachedPistolMesh.Get();
-		if (!PistolMesh)
-		{
-			if (UERAssetCatalog* Catalog = UERAssetCatalog::Get(this))
-			{
-				PistolMesh = Catalog->LoadAsset<UStaticMesh>(TEXT("/Game/Weapons/Pistol/Meshes/SM_Pistol.SM_Pistol"));
-				CachedPistolMesh = PistolMesh;
-			}
-		}
-		if (PistolMesh)
-		{
-			UStaticMeshComponent* Gun = NewObject<UStaticMeshComponent>(this, NAME_None, RF_Transient);
-			Gun->SetupAttachment(C, TEXT("hand_r"));
-			Gun->SetStaticMesh(PistolMesh);
-			Gun->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			Gun->SetCanEverAffectNavigation(false);
-			Gun->RegisterComponent();
-
-			static bool bLoggedGunProbe = false;
-			if (!bLoggedGunProbe)
-			{
-				bLoggedGunProbe = true;
-				const int32 BoneIdx = C->GetBoneIndex(TEXT("hand_r"));
-				UE_LOG(LogERLegion, Log, TEXT("[Legion][GunProbe] mesh=%s bone hand_r idx=%d gunpos=%s attachparent=%s"),
-					PistolMesh ? TEXT("ok") : TEXT("null"), BoneIdx,
-					*Gun->GetComponentLocation().ToCompactString(),
-					Gun->GetAttachParent() ? *Gun->GetAttachParent()->GetName() : TEXT("null"));
-			}
+			WriteSkeletalSoldierRepresentation(DeltaSeconds);
 		}
 		else
 		{
-			static bool bLoggedGunFail = false;
-			if (!bLoggedGunFail)
-			{
-				bLoggedGunFail = true;
-				UE_LOG(LogERLegion, Warning, TEXT("[Legion][GunProbe] pistol mesh load FAILED"));
-			}
+			WriteAllSoldierTransforms(Now);
+			bSoldierTransformsDirty = bAnyDying;
 		}
 	}
-
-	S.SkelComp = C;
-	S.HitProxy = Proxy;
 }
 
-void ALegionUnit::ApplyAnimStateToSoldiers()
+void ALegionUnit::ResetMotionTelemetry()
 {
-	if (!bSkeletalSoldiers) { return; }
-	for (int32 i = 0; i < Soldiers.Num(); ++i)
+	for (FLegionSoldier& S : Soldiers)
 	{
-		FLegionSoldier& S = Soldiers[i];
-		USkeletalMeshComponent* C = S.SkelComp.Get();
-		if (!C || !S.bAlive) { continue; }
-		if (UAnimationAsset* A = PickAnimForState(State, i))
+		S.MaxFrameJumpZ = 0.0f;
+		S.MaxFrameJumpAnimDir = 0.0f;
+		S.ZFlipCount = 0;
+		S.YawFlipCount = 0;
+		S.PrevDeltaZ = 0.0f;
+		S.PrevDeltaYaw = 0.0f;
+		S.PrevTelZ = S.WorldZ;
+		S.PrevTelYaw = S.CurYaw;
+		S.PrevTelAnimDir = S.SmoothedAnimDir;
+		S.bTelPrimed = false;
+	}
+}
+
+bool ALegionUnit::EvaluateMotionStability(FString& OutSummary) const
+{
+	float MaxJumpZ = 0.0f;
+	float MaxJumpAnimDir = 0.0f;
+	int32 MaxZFlips = 0;
+	int32 MaxYawFlips = 0;
+	int32 PlantedChecked = 0;
+	int32 PlantedZeroVel = 0;
+
+	for (const FLegionSoldier& S : Soldiers)
+	{
+		if (!S.bAlive) { continue; }
+		MaxJumpZ = FMath::Max(MaxJumpZ, S.MaxFrameJumpZ);
+		MaxJumpAnimDir = FMath::Max(MaxJumpAnimDir, S.MaxFrameJumpAnimDir);
+		MaxZFlips = FMath::Max(MaxZFlips, S.ZFlipCount);
+		MaxYawFlips = FMath::Max(MaxYawFlips, S.YawFlipCount);
+
+		const bool bPlanted = (S.SoldierState == ELegionSoldierState::RelaxedIdle
+			|| S.SoldierState == ELegionSoldierState::AlertScan
+			|| S.SoldierState == ELegionSoldierState::CombatAimFire);
+		if (bPlanted)
 		{
-			C->PlayAnimation(A, true);
-			C->SetPosition(S.Phase * 1.37f, false);
+			++PlantedChecked;
+			if (S.WorldVelXY.Size() < 14.0f) { ++PlantedZeroVel; }
 		}
 	}
+
+	const bool bOk = (MaxJumpZ < 4.5f) && (MaxZFlips <= 3) && (MaxYawFlips <= 3) && (MaxJumpAnimDir < 30.0f);
+	OutSummary = FString::Printf(TEXT("maxJumpZ=%.2fcm maxZFlips=%d maxYawFlips=%d maxAnimDirJump=%.1fdeg plantedZero=%d/%d"),
+		MaxJumpZ, MaxZFlips, MaxYawFlips, MaxJumpAnimDir, PlantedZeroVel, PlantedChecked);
+	return bOk;
 }
 
-UAnimationAsset* ALegionUnit::PickAnimForState(ELegionState InState, int32 SoldierIndex) const
+void ALegionUnit::GetSoldierStateDistribution(TMap<ELegionSoldierState, int32>& OutCounts, int32& OutMovingCount, float& OutYawSpreadDeg) const
 {
-	switch (InState)
+	OutCounts.Reset();
+	OutMovingCount = 0;
+	OutYawSpreadDeg = 0.0f;
+	float MinDelta = 180.0f;
+	float MaxDelta = -180.0f;
+	int32 AliveSeen = 0;
+
+	for (const FLegionSoldier& S : Soldiers)
 	{
-	case ELegionState::Moving:
-		return AnimMove ? AnimMove.Get() : AnimIdle.Get();
-	case ELegionState::Engaged:
-		if (AnimAttackPool.Num() > 0)
+		if (!S.bAlive) { continue; }
+		OutCounts.FindOrAdd(S.SoldierState) += 1;
+		if (S.WorldVelXY.SizeSquared() > 400.0f
+			|| S.SoldierState == ELegionSoldierState::RelaxedWander
+			|| S.SoldierState == ELegionSoldierState::AlertPatrolStep
+			|| S.SoldierState == ELegionSoldierState::SeekingFireLine
+			|| S.SoldierState == ELegionSoldierState::CombatSkirmish
+			|| S.SoldierState == ELegionSoldierState::FormationMarch)
 		{
-			return AnimAttackPool[SoldierIndex % AnimAttackPool.Num()].Get();
+			++OutMovingCount;
 		}
-		return AnimIdle ? AnimIdle.Get() : AnimMove.Get();
-	case ELegionState::Holding:
-	default:
-		return AnimIdle ? AnimIdle.Get() : AnimMove.Get();
+		const float Delta = FMath::FindDeltaAngleDegrees(FacingYaw, S.CurYaw);
+		MinDelta = FMath::Min(MinDelta, Delta);
+		MaxDelta = FMath::Max(MaxDelta, Delta);
+		++AliveSeen;
 	}
-}
-
-void ALegionUnit::EnableSoldierRagdoll(USkeletalMeshComponent* C, int32 SoldierIndex)
-{
-	if (!C || C->IsSimulatingPhysics()) { return; }
-
-	if (USkeletalMesh* Mesh = C->GetSkeletalMeshAsset())
+	if (AliveSeen > 1)
 	{
-		if (!Mesh->GetPhysicsAsset())
-		{
-			if (!RagdollPhysicsAsset)
-			{
-				if (UERAssetCatalog* Catalog = UERAssetCatalog::Get(this))
-				{
-					RagdollPhysicsAsset = Catalog->LoadAsset<UPhysicsAsset>(
-						TEXT("/Game/Characters/Mannequins/Rigs/PA_Mannequin.PA_Mannequin"));
-				}
-			}
-			if (RagdollPhysicsAsset)
-			{
-				C->SetPhysicsAsset(RagdollPhysicsAsset);
-			}
-		}
+		OutYawSpreadDeg = MaxDelta - MinDelta;
 	}
-
-	C->bBlendPhysics = true;
-	C->SetCollisionProfileName(TEXT("Ragdoll"));
-	C->SetSimulatePhysics(true);
-
-	FVector Launch(1.0f, 0.0f, 0.0f);
-	if (Soldiers.IsValidIndex(SoldierIndex) && !Soldiers[SoldierIndex].DeathImpulseDir.IsNearlyZero())
-	{
-		Launch = Soldiers[SoldierIndex].DeathImpulseDir.GetSafeNormal2D();
-	}
-	else if (const ALegionUnit* Attacker = LastAttacker.Get())
-	{
-		Launch = (C->GetComponentLocation() - Attacker->GetActorLocation()).GetSafeNormal2D();
-		if (Launch.IsNearlyZero()) { Launch = FVector(1.0f, 0.0f, 0.0f); }
-	}
-	const float Phase = Soldiers.IsValidIndex(SoldierIndex) ? Soldiers[SoldierIndex].Phase : 0.0f;
-	const float Side = FMath::Sin(Phase * 3.1f) * 0.45f;
-	Launch = (Launch + FVector(0.0f, Side, 0.35f)).GetSafeNormal();
-	C->AddImpulse(Launch * 560.0f, NAME_None, true);
-}
-
-void ALegionUnit::WriteAllSoldierTransforms(float TimeSeconds)
-{
-	if (bSkeletalSoldiers) { return; }
-	TRACE_CPUPROFILER_EVENT_SCOPE(ER_Legion_InstancedTransforms);
-	bool bWroteBody = false;
-	bool bWroteHead = false;
-	for (int32 i = 0; i < Soldiers.Num(); ++i)
-	{
-		FLegionSoldier& S = Soldiers[i];
-		FTransform BodyXf, HeadXf;
-		ComputeSoldierTransforms(S, TimeSeconds, BodyXf, HeadXf);
-		if (S.InstanceIndex != INDEX_NONE)
-		{
-			SoldierHISM->UpdateInstanceTransform(S.InstanceIndex, BodyXf, false, false, true);
-			bWroteBody = true;
-		}
-		if (S.ExtraIndex != INDEX_NONE)
-		{
-			ExtraHISM->UpdateInstanceTransform(S.ExtraIndex, HeadXf, false, false, true);
-			bWroteHead = true;
-		}
-	}
-	if (bWroteBody) { SoldierHISM->MarkRenderStateDirty(); }
-	if (bWroteHead) { ExtraHISM->MarkRenderStateDirty(); }
-}
-
-void ALegionUnit::ComputeSoldierTransforms(const FLegionSoldier& S, float TimeSeconds,
-	FTransform& OutBody, FTransform& OutHead) const
-{
-	FVector Offset = S.HomeOffset + FVector(0.0f, 0.0f, S.GroundZ);
-	FVector Shrink = FVector(1.0f);
-	const float BaseYaw = S.CurYaw - GetActorRotation().Yaw + S.JitterYaw;
-	FRotator Rot = FRotator(0.0f, BaseYaw, 0.0f);
-
-	if (S.DieT >= 0.0f)
-	{
-		const float T = S.DieT;
-		const float K = FMath::Max(0.001f, (1.0f - T) * (1.0f - T));
-		Rot = FRotator(85.0f * T, BaseYaw, 0.0f);
-		Offset.Z -= 46.0f * T;
-		Shrink = FVector(K);
-	}
-	else if (State == ELegionState::Moving)
-	{
-		const float W = TimeSeconds * 7.2f + S.Phase;
-		Offset.Z += FMath::Abs(FMath::Sin(W)) * MarchBobAmplitude;
-		Offset.X += FMath::Sin(W) * 6.0f;
-		Rot = FRotator(FMath::Sin(W) * 6.0f, BaseYaw, 0.0f);
-	}
-	else if (State == ELegionState::Engaged)
-	{
-		const float W = TimeSeconds * 9.5f + S.Phase;
-		FVector DirL = FVector::ForwardVector;
-		if (const ALegionUnit* T = AttackTarget.Get())
-		{
-			DirL = GetActorQuat().UnrotateVector(T->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-		}
-		const float MaxR = FMath::Max(1.0f, FMath::Max(FormationHalfExtent.X, FormationHalfExtent.Y) - 120.0f);
-		const float Frontness = FMath::Clamp(
-			(S.HomeOffset.X * DirL.X + S.HomeOffset.Y * DirL.Y) / MaxR, 0.0f, 1.0f);
-		Offset += DirL * (FMath::Max(0.0f, FMath::Sin(W)) * EngageLungeAmplitude * (0.4f + 0.6f * Frontness));
-		Offset.Z += FMath::Abs(FMath::Sin(W * 0.5f)) * MarchBobAmplitude * 0.5f;
-		Rot = FRotator(FMath::Sin(W) * 8.0f, BaseYaw, FMath::Sin(W * 0.7f) * 14.0f);
-	}
-
-	const float SoldierHeight = 165.0f * SoldierScale;
-	float LiftB = 0.0f;
-	const float SB = LegionUnitInternal::NormalizeMesh(SoldierHISM->GetStaticMesh(), SoldierHeight, LiftB);
-
-	// 附属层按兵种塑造明显剪影差异 (盾墙 / 长戟 / 刀锋 / 狙击枪)
-	FVector GearOffset(48.0f, 0.0f, 95.0f);
-	FVector GearScale(0.18f, 0.65f, 1.0f);
-	FRotator GearRot = FRotator::ZeroRotator;
-	if (Archetype == ELegionClass::Shieldbearer)
-	{
-		GearOffset = FVector(52.0f, 10.0f, 88.0f);
-		GearScale = FVector(0.14f, 0.85f, 1.25f); // 宽大防暴盾牌
-	}
-	else if (Archetype == ELegionClass::Pikeman)
-	{
-		GearOffset = FVector(68.0f, 22.0f, 120.0f);
-		GearScale = FVector(1.85f, 0.08f, 0.08f); // 前伸长戟
-		GearRot = FRotator(-18.0f, 0.0f, 0.0f);
-	}
-	else if (Archetype == ELegionClass::Vanguard)
-	{
-		GearOffset = FVector(45.0f, -20.0f, 102.0f);
-		GearScale = FVector(0.75f, 0.10f, 0.14f); // 突击战刃
-		GearRot = FRotator(12.0f, -15.0f, 0.0f);
-	}
-	else if (Archetype == ELegionClass::Marksman)
-	{
-		GearOffset = FVector(56.0f, 8.0f, 112.0f);
-		GearScale = FVector(1.05f, 0.10f, 0.12f); // 长管步枪
-	}
-
-	const FTransform SoldierFrame(Rot, Offset, Shrink);
-	OutBody = SoldierFrame * FTransform(FRotator::ZeroRotator, FVector(0.0f, 0.0f, LiftB),
-		FVector(SB * SoldierXYScale, SB * SoldierXYScale, SB));
-	OutHead = SoldierFrame * FTransform(GearRot, GearOffset * SoldierScale, GearScale * SoldierScale);
-}
-
-int32 ALegionUnit::ApplyBulletHitToSoldier(int32 SoldierIndex, float DamageAmount, const FVector& HitDirection)
-{
-	if (bWiped || DamageAmount <= 0.0f) { return 0; }
-	if (!Soldiers.IsValidIndex(SoldierIndex) || !Soldiers[SoldierIndex].bAlive) { return 0; }
-
-	FLegionSoldier& S = Soldiers[SoldierIndex];
-	const float Applied = FMath::Min(S.HP, DamageAmount);
-	S.HP = FMath::Max(0.0f, S.HP - Applied);
-	LegionHP = FMath::Max(0.0f, LegionHP - Applied);
-
-	int32 Killed = 0;
-	if (S.HP <= KINDA_SMALL_NUMBER)
-	{
-		S.HP = 0.0f;
-		S.DeathImpulseDir = HitDirection.GetSafeNormal2D();
-		AliveCount = FMath::Max(0, AliveCount - 1);
-		StartDying(SoldierIndex);
-		Killed = 1;
-		CheckAndHandleWiped();
-	}
-	return Killed;
-}
-
-bool ALegionUnit::GetAliveSoldierFeet(int32 SoldierIndex, FVector& OutFeet) const
-{
-	if (!Soldiers.IsValidIndex(SoldierIndex) || !Soldiers[SoldierIndex].bAlive) { return false; }
-	const FLegionSoldier& S = Soldiers[SoldierIndex];
-	if (USkeletalMeshComponent* C = S.SkelComp.Get())
-	{
-		OutFeet = C->GetComponentLocation();
-		return true;
-	}
-	// HISM 退化路径: 编队槽位经 Actor 变换近似 (无逐兵组件)
-	OutFeet = GetActorTransform().TransformPosition(S.HomeOffset + FVector(0.0f, 0.0f, S.GroundZ));
-	return true;
-}
-
-int32 ALegionUnit::PickRandomAliveSoldier() const
-{
-	if (AliveCount <= 0) { return INDEX_NONE; }
-	// 随机起点单向扫描, 均摊到任一存活个体
-	const int32 Count = Soldiers.Num();
-	const int32 StartIdx = FMath::RandHelper(Count);
-	for (int32 k = 0; k < Count; ++k)
-	{
-		const int32 Idx = (StartIdx + k) % Count;
-		if (Soldiers[Idx].bAlive) { return Idx; }
-	}
-	return INDEX_NONE;
 }

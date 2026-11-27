@@ -224,9 +224,22 @@ void ALegionCommanderCharacter::LookInput(const FInputActionValue& Value)
 	DoAim(LookAxisVector.X, LookAxisVector.Y);
 }
 
+bool ALegionCommanderCharacter::IsCommanderInputBlocked() const
+{
+	if (const ALegionPlayerController* PC = GetController<ALegionPlayerController>())
+	{
+		if (PC->IsDeploymentInputLocked() || PC->IsBattleOverInputLocked())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 void ALegionCommanderCharacter::DoAim(float Yaw, float Pitch)
 {
-	// 军团侧: Alt 呼出光标 / 地图开启时鼠标用于点选, 不转视角 (等价旧 TickGround 的光标守卫)
+	// 军团侧: 战终/接驳锁定或 Alt 呼出光标 / 地图开启时鼠标用于 UI 点选, 不转视角
+	if (IsCommanderInputBlocked()) { return; }
 	if (const ALegionPlayerController* PC = GetController<ALegionPlayerController>())
 	{
 		if (PC->bShowMouseCursor || PC->IsStrategicMapOpen()) { return; }
@@ -243,6 +256,7 @@ void ALegionCommanderCharacter::DoAim(float Yaw, float Pitch)
 
 void ALegionCommanderCharacter::DoMove(float Right, float Forward)
 {
+	if (IsCommanderInputBlocked()) { return; }
 	// only route inputs if the character is not dead
 	if (GetController() && !IsDead())
 	{
@@ -254,6 +268,7 @@ void ALegionCommanderCharacter::DoMove(float Right, float Forward)
 
 void ALegionCommanderCharacter::DoJumpStart()
 {
+	if (IsCommanderInputBlocked()) { return; }
 	// only route inputs if the character is not dead
 	if (!IsDead())
 	{
@@ -274,6 +289,10 @@ void ALegionCommanderCharacter::DoJumpEnd()
 
 bool ALegionCommanderCharacter::CanFireWeapon() const
 {
+	if (IsCommanderInputBlocked())
+	{
+		return false;
+	}
 	const ALegionPlayerController* PC = GetController<ALegionPlayerController>();
 	if (!PC)
 	{
@@ -310,6 +329,7 @@ void ALegionCommanderCharacter::DoStopFiring()
 
 void ALegionCommanderCharacter::DoSwitchWeapon()
 {
+	if (IsCommanderInputBlocked()) { return; }
 	// ensure we have at least two weapons two switch between
 	if (OwnedWeapons.Num() > 1 && !IsDead())
 	{
@@ -340,6 +360,7 @@ void ALegionCommanderCharacter::DoSwitchWeapon()
 
 void ALegionCommanderCharacter::SetSprinting(bool bSprint)
 {
+	if (bSprint && IsCommanderInputBlocked()) { return; }
 	GetCharacterMovement()->MaxWalkSpeed = bSprint ? SprintSpeed : WalkSpeed;
 }
 

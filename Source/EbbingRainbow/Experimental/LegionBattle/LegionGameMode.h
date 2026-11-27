@@ -6,11 +6,13 @@
 #include "GameFramework/GameModeBase.h"
 #include "Legion/Terrain/LegionTerrainGrid.h"
 #include "Experimental/LegionBattle/LegionTypes.h"
+#include "Experimental/LegionBattle/LegionWeather.h"
 #include "LegionGameMode.generated.h"
 
 class ALegionForest;
 class ALegionUnit;
 class UAnimationAsset;
+class UBlendSpace;
 class UGalacticCampaignSubsystem;
 class UMaterialInterface;
 class USkeletalMesh;
@@ -32,6 +34,37 @@ struct FPendingEnemyWave
 	FEnemyWaveLegionSpec Spec;
 	FVector DropLocation = FVector::ZeroVector;
 	bool bSpawned = false;
+};
+
+/** 开放世界内的候选局部战区 (经坡度与连通性筛选的出生点与交战朝向) */
+USTRUCT(BlueprintType)
+struct FLegionSpawnZone
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	FString DisplayName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	FVector2D CenterXY = FVector2D::ZeroVector;
+
+	/** 战线朝向角 (deg, 0=+X, 90=+Y): 我方指向敌方 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	float BattleAxisYawDeg = 90.0f;
+
+	/** 局部战区半边长 (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	float HalfExtentCm = 16000.0f;
+
+	/** 扫描评估指标: 可通行占比 / 高差 (cm) / 我方相对敌方高差 (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	float WalkableRatio = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	float ReliefSpanCm = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	float PlayerHighGroundDeltaCm = 0.0f;
 };
 
 /**
@@ -82,6 +115,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Camera")
 	float MaxZoomArmLength = 16000.0f;
 
+	/** 是否启用开放世界多点随机出生 (仅当地形尺寸容纳候选战区时生效; 命令行 -LegionZone=N / -LegionSeed=N 可覆盖) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	bool bUseRandomSpawnZone = true;
+
+	/** 预选候选局部战区列表 (Lvl_Legion 首颗行星默认内置 8 个空间分离点位) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Zone")
+	TArray<FLegionSpawnZone> CandidateZones;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Camera")
 	float EdgeScrollMarginPx = 28.0f;
 
@@ -130,7 +171,16 @@ public:
 	TSoftObjectPtr<UAnimationAsset> AllyAnimIdle;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Assets")
+	TSoftObjectPtr<UAnimationAsset> AllyAnimRelaxedIdle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Assets")
 	TSoftObjectPtr<UAnimationAsset> AllyAnimMove;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Assets")
+	TSoftObjectPtr<UBlendSpace> AllyRelaxedBlendSpace;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Assets")
+	TSoftObjectPtr<UBlendSpace> AllyCombatBlendSpace;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Legion|Assets")
 	TArray<TSoftObjectPtr<UAnimationAsset>> AllyAnimAttacks;
@@ -179,6 +229,10 @@ public:
 	}
 
 	FVector GetDeployCenter() const { return DeployCenter; }
+	float GetBattleAxisYawDeg() const { return BattleAxisYawDeg; }
+	const FString& GetActiveZoneName() const { return ActiveZoneName; }
+	ELegionWeatherPreset GetActiveWeatherPreset() const { return ActiveWeatherPreset; }
+	const FString& GetActiveWeatherName() const { return ActiveWeatherName; }
 	float GetBattleElapsed() const { return Elapsed; }
 
 	int32 CountAliveLegions(ELegionTeam Team) const;
@@ -187,6 +241,13 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Legion")
 	void AllOutAssault(ELegionTeam Team);
+
+	/** 友军敌情无线电广播: 某旅发现敌军时向附近友旅通报, 触发波浪警戒或侧翼增援 */
+	void BroadcastTeamContact(ELegionTeam ReportingTeam, ALegionUnit* SpottedEnemy, const FVector& ContactPos, bool bFromDirectFire);
+
+	/** 弱 AI 与单兵自治状态机自动化自检 (输出 [LegionAISelfTest] PASS/FAIL) */
+	UFUNCTION(BlueprintCallable, Category = "Legion")
+	bool RunLegionAISelfTest();
 
 	UFUNCTION(BlueprintCallable, Category = "Legion")
 	void SetTacticalTimeMode(ELegionTimeMode NewMode);
@@ -204,8 +265,12 @@ public:
 	/** 玩家点击「进入战场」后由加载屏调用: 解冻战斗时钟与双方接敌逻辑 */
 	void BeginBattle();
 
+#if !UE_BUILD_SHIPPING
+	/** 调试/自检用: 直接触发与真实战终完全一致的结算流程 (暂停 + 断控 + 鼠标 + 结算界面) */
+	void ForceBattleEndForTest(bool bVictory);
+#endif
+
 	FString GetBattleTitleText() const { return BattleTitleText; }
-	bool IsCampaignBattle() const { return BattleContractId != INDEX_NONE; }
 	FString GetBattleSubText() const { return BattleSubText; }
 
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLegionBattleEnd, bool);
@@ -219,12 +284,18 @@ private:
 		const FVector& Location, float YawDeg, int32 CampaignId, const FString& Callsign, int32 SyncLevel);
 	ALegionUnit* FindNearestEnemy(const ALegionUnit* From) const;
 	void LoadRuntimeAssets();
+	void SelectSpawnZone(const FBox& TerrainBounds, int32 Seed, bool bFilterBySituation,
+		ELegionTacticalProfile TacticalProfile, float ConflictIntensity, int32 DangerRating);
+	void GetBattleBasis(FVector& OutForward, FVector& OutRight) const;
 	void SpawnForest();
 	void BuildDeploymentMapTextures();
-	void DeployInitialForces(const UGalacticCampaignSubsystem* Campaign);
-	void PositionDeploymentCommander(UWorld& World);
+	void DeployInitialForces(const UGalacticCampaignSubsystem* Campaign, const FVector& BattleForward,
+		const FVector& BattleRight, float PlayerYaw, float EnemyYaw);
+	void PositionDeploymentCommander(UWorld& World, const FVector& BattleForward);
 	void SpawnWaveLegion(const FPendingEnemyWave& Wave);
+	void AssignInitialWeakAIDirectives();
 	void CheckBattleEnd();
+	void FinishBattle(bool bVictory);
 	void HandleAutoShot();
 
 	FLegionTerrainGrid TerrainGrid;
@@ -242,6 +313,15 @@ private:
 	TArray<FLegionTracerBeam> TracerBeams;
 	TArray<FLegionBullet> Bullets;
 
+	/** 子弹命中扫描的复用 scratch, 避免每发子弹重复分配候选数组 */
+	struct FLegionBulletHitCandidate
+	{
+		TWeakObjectPtr<ALegionUnit> Unit;
+		int32 SoldierIndex = INDEX_NONE;
+		FVector Feet = FVector::ZeroVector;
+	};
+	TArray<FLegionBulletHitCandidate> BulletHitCandidates;
+
 	/** 逐帧推进全部在飞子弹: 线段扫描敌兵胶囊/地形静态物, 命中即结算, 脱靶即湮灭 */
 	void SimulateBullets(float DeltaSeconds);
 
@@ -253,7 +333,10 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UMaterialInterface> CachedEnemyMat;
 	UPROPERTY(Transient) TObjectPtr<USkeletalMesh> CachedAllySkel;
 	UPROPERTY(Transient) TObjectPtr<UAnimationAsset> CachedAnimIdle;
+	UPROPERTY(Transient) TObjectPtr<UAnimationAsset> CachedAnimRelaxedIdle;
 	UPROPERTY(Transient) TObjectPtr<UAnimationAsset> CachedAnimMove;
+	UPROPERTY(Transient) TObjectPtr<UBlendSpace> CachedRelaxedBS;
+	UPROPERTY(Transient) TObjectPtr<UBlendSpace> CachedCombatBS;
 	UPROPERTY(Transient) TArray<TObjectPtr<UAnimationAsset>> CachedAnimAttacks;
 	UPROPERTY(Transient) TArray<TObjectPtr<UAnimationAsset>> CachedAnimDeaths;
 	UPROPERTY(Transient) TObjectPtr<UTexture2D> MinimapTexture;
@@ -287,10 +370,29 @@ private:
 	bool bDeployShotRequested = false;
 	/** -LegionCloseup: 战斗打响后把玩家传送到我方第一旅旁连拍, 验证持枪/开火动画/曳光近景 */
 	bool bCloseupShotRequested = false;
+	/** -LegionAIShot: 四态验证弱AI与单兵自治动画 (放松态 / 战略图巡逻侦察 / 警戒巡逻近景 / 交战抢射界近景) */
+	bool bAIShotRequested = false;
+	/** -ResultShot: 验证战终结算画面 (暂停/断控/光标/返回大厅按钮); 加 -ResultDefeat 测败北态 */
+	bool bResultShotRequested = false;
+	/** -LegionForceSkeletal: 无视 MaxAnimatedSoldiersPerSide 阈值强制骨骼表现, 供性能标尺逐档压测 */
+	bool bForceSkeletalSoldiers = false;
+	/** -LegionPerf: 交战稳定后切俯瞰机位采样帧耗时并写 [LegionPerf] 日志 (骨骼兵性能标尺) */
+	bool bPerfTestRequested = false;
+	int32 PerfTestStage = 0;
+	float PerfTestTimer = 0.0f;
+	TArray<float> PerfTestSamples;
+	bool bInitialWeakAIAssigned = false;
+	float InitialWeakAIDelay = 2.0f;
 	int32 AutoShotStage = 0;
 	float AutoShotTimer = 0.0f;
 	bool bOpeningShotDone = false;
 
 	FVector DeployCenter = FVector::ZeroVector;
 	float EffectiveBattlefieldHalfExtent = 0.0f;
+	float BattleAxisYawDeg = 90.0f;
+	int32 ActiveMatchSeed = 0;
+	int32 ActiveZoneIndex = INDEX_NONE;
+	FString ActiveZoneName = TEXT("中央战区");
+	ELegionWeatherPreset ActiveWeatherPreset = ELegionWeatherPreset::ClearMorning;
+	FString ActiveWeatherName = TEXT("清冽晨曦");
 };

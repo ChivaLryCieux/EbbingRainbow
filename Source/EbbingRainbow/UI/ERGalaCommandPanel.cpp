@@ -563,6 +563,16 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 			S->SetVerticalAlignment(VAlign_Center);
 		}
 
+		// 势力 Logo (纯 logo 无底片, 纵横比自适应)
+		if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetFactionLogoAssetPath(F.Faction)))
+		{
+			if (UImage* LogoImg = ERUI::MakeLogoImage(this, Tex, 30.0f))
+			{
+				UHorizontalBoxSlot* LS = Row->AddChildToHorizontalBox(LogoImg);
+				LS->SetPadding(FMargin(0.0f, 0.0f, 12.0f, 0.0f));
+				LS->SetVerticalAlignment(VAlign_Center);
+			}
+		}
 		UTextBlock* NameTxt = ERUI::MakeText(this, FText::FromString(F.DisplayName), EERTypeScale::Caption, ERUI::InkText(), false);
 		NameTxt->SetFont(ERUI::FontBold(21, 60));
 		{
@@ -663,39 +673,33 @@ void UERGalaCommandPanel::RebuildContractList()
 
 		// ---- 卡片正文: 七要素垂直排列, 每行独占一个横带, 行间留白 ----
 
-		// 1. 任务地点 Logo (技能图标占位): 暗曜石方框 + 红色系图标 (按星区取模选型)
+		// 1. 交战双方势力 Logo 英雄区: 去除占位技能图标, 雇主/敌对大 logo 同高居中,
+		//    合计宽度 ~470px (1080p 下卡片宽 588px 的 80%), 高度按双方纵横比联立求解
 		{
-			UBorder* LogoBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-			LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.012f, 0.013f, 0.018f, 0.94f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.5f)));
-			LogoBox->SetBrushColor(FLinearColor::White);
-			LogoBox->SetPadding(FMargin(4.0f));
-			LogoBox->SetHorizontalAlignment(HAlign_Left);
+			UTexture2D* EmpTex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetFactionLogoAssetPath(C.Employer));
+			UTexture2D* EneTex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetFactionLogoAssetPath(C.EnemyFaction));
+			if (EmpTex && EneTex)
+			{
+				const float A1 = (float)EmpTex->GetSizeX() / FMath::Max(1.0f, (float)EmpTex->GetSizeY());
+				const float A2 = (float)EneTex->GetSizeX() / FMath::Max(1.0f, (float)EneTex->GetSizeY());
+				const float Gap = 28.0f;
+				const float Height = 446.0f / (A1 + A2);
 
-			UImage* LogoImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-			static const ELegionClass Pick[4] = {
-				ELegionClass::Shieldbearer, ELegionClass::Pikeman, ELegionClass::Vanguard, ELegionClass::Marksman
-			};
-			if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr,
-				ERGalacticMeta::GetClassLogoAssetPath(Pick[C.TargetSectorId % 4], false)))
-			{
-				FSlateBrush Brush;
-				Brush.SetResourceObject(Tex);
-				Brush.ImageSize = FVector2D(52.0f, 52.0f);
-				Brush.DrawAs = ESlateBrushDrawType::Image;
-				LogoImg->SetBrush(Brush);
-			}
-			else
-			{
-				FSlateBrush IconBrush;
-				IconBrush.ImageSize = FVector2D(52.0f, 52.0f);
-				IconBrush.DrawAs = ESlateBrushDrawType::Image;
-				LogoImg->SetBrush(IconBrush);
-			}
-			LogoBox->SetContent(LogoImg);
-			{
-				UVerticalBoxSlot* S = Inner->AddChildToVerticalBox(LogoBox);
-				S->SetHorizontalAlignment(HAlign_Left);
-				S->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 14.0f));
+				UHorizontalBox* HeroRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+				if (UImage* EmpImg = ERUI::MakeLogoImage(this, EmpTex, Height))
+				{
+					UHorizontalBoxSlot* S = HeroRow->AddChildToHorizontalBox(EmpImg);
+					S->SetPadding(FMargin(0.0f, 0.0f, Gap, 0.0f));
+					S->SetVerticalAlignment(VAlign_Center);
+				}
+				if (UImage* EneImg = ERUI::MakeLogoImage(this, EneTex, Height))
+				{
+					UHorizontalBoxSlot* S = HeroRow->AddChildToHorizontalBox(EneImg);
+					S->SetVerticalAlignment(VAlign_Center);
+				}
+				UVerticalBoxSlot* HS = Inner->AddChildToVerticalBox(HeroRow);
+				HS->SetHorizontalAlignment(HAlign_Center);
+				HS->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 18.0f));
 			}
 		}
 
@@ -717,11 +721,12 @@ void UERGalaCommandPanel::RebuildContractList()
 			Inner->AddChildToVerticalBox(LocRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
 		}
 
-		// 雇主 → 敌对 (tertiary 情报行)
+		// 雇主 → 敌对 (tertiary 情报行, 纯文本: 大 logo 已在顶部承担视觉身份)
 		UTextBlock* Meta = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("雇主 %s  ·  敌对 %s"),
+			FText::FromString(FString::Printf(TEXT("雇主 %s  ·  敌对 %s  ·  %s"),
 				*ERGalacticMeta::GetFactionName(C.Employer),
-				*ERGalacticMeta::GetFactionName(C.EnemyFaction))),
+				*ERGalacticMeta::GetFactionName(C.EnemyFaction),
+				*ERGalacticMeta::GetTacticalProfileName(C.TacticalProfile))),
 			EERTypeScale::Micro, ERUI::InkText(0.55f), false);
 		Meta->SetFont(ERUI::FontRegular(13, 30));
 		Inner->AddChildToVerticalBox(Meta)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
