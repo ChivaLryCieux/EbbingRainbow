@@ -4,13 +4,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
-#include "Experimental/LegionBattle/LegionTerrainGrid.h"
+#include "Legion/Terrain/LegionTerrainGrid.h"
 #include "Experimental/LegionBattle/LegionTypes.h"
 #include "LegionGameMode.generated.h"
 
 class ALegionForest;
 class ALegionUnit;
 class UAnimationAsset;
+class UGalacticCampaignSubsystem;
 class UMaterialInterface;
 class USkeletalMesh;
 class UStaticMesh;
@@ -219,6 +220,9 @@ private:
 	ALegionUnit* FindNearestEnemy(const ALegionUnit* From) const;
 	void LoadRuntimeAssets();
 	void SpawnForest();
+	void BuildDeploymentMapTextures();
+	void DeployInitialForces(const UGalacticCampaignSubsystem* Campaign);
+	void PositionDeploymentCommander(UWorld& World);
 	void SpawnWaveLegion(const FPendingEnemyWave& Wave);
 	void CheckBattleEnd();
 	void HandleAutoShot();

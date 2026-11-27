@@ -64,6 +64,10 @@ public:
 	float GetWorldSpan() const { return GridWidth * CellSize; }
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FLegionTerrainPathfindingTest;
+#endif
+
 	struct FCell
 	{
 		float HeightZ = 0.0f;

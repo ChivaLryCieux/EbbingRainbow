@@ -12,7 +12,7 @@
 #include "Campaign/GalacticCampaignTypes.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
-#include "Experimental/LegionBattle/LegionTerrainGrid.h"
+#include "Legion/Terrain/LegionTerrainGrid.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
 #include "Engine/World.h"
 #include "Misc/FileHelper.h"

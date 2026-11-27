@@ -8,7 +8,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "CollisionQueryParams.h"
-#include "Experimental/LegionBattle/LegionTerrainGrid.h"
+#include "Legion/Terrain/LegionTerrainGrid.h"
 
 namespace
 {

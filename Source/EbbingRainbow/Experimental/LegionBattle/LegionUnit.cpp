@@ -6,7 +6,7 @@
 #include "Core/ERCollisionChannels.h"
 #include "Core/ERLog.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
-#include "Experimental/LegionBattle/LegionTerrainGrid.h"
+#include "Legion/Terrain/LegionTerrainGrid.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -18,6 +18,7 @@
 #include "Engine/World.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace LegionUnitInternal
@@ -1395,6 +1396,7 @@ void ALegionUnit::EnableSoldierRagdoll(USkeletalMeshComponent* C, int32 SoldierI
 void ALegionUnit::WriteAllSoldierTransforms(float TimeSeconds)
 {
 	if (bSkeletalSoldiers) { return; }
+	TRACE_CPUPROFILER_EVENT_SCOPE(ER_Legion_InstancedTransforms);
 	bool bWroteBody = false;
 	bool bWroteHead = false;
 	for (int32 i = 0; i < Soldiers.Num(); ++i)
