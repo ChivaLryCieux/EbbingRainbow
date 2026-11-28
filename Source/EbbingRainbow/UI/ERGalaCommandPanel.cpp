@@ -53,11 +53,16 @@ void UERGalaCommandPanel::NativeConstruct()
 	RefreshAll();
 }
 
-void UERGalaCommandPanel::OpenPanel(int32 InitialTab)
+void UERGalaCommandPanel::OpenPanel(int32 InitialTab, bool bInSettingsOnlyMode)
 {
 	bIsOpen = true;
+	bSettingsOnlyMode = bInSettingsOnlyMode;
 	SetVisibility(ESlateVisibility::Visible);
-	SetActiveTab(InitialTab);
+	if (TerminalTabRow)
+	{
+		TerminalTabRow->SetVisibility(bSettingsOnlyMode ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	}
+	SetActiveTab(bSettingsOnlyMode ? 3 : InitialTab);
 	RefreshAll();
 	SyncSettingsInputsFromService();
 }
@@ -72,7 +77,7 @@ void UERGalaCommandPanel::ClosePanel()
 
 void UERGalaCommandPanel::SetActiveTab(int32 TabIndex)
 {
-	ActiveTab = FMath::Clamp(TabIndex, 0, 3);
+	ActiveTab = bSettingsOnlyMode ? 3 : FMath::Clamp(TabIndex, 0, 3);
 	static const FText Titles[] = {
 		INVTEXT("虹膜基金会  ·  银河委托与战局终端"),
 		INVTEXT("虹膜基金会  ·  虹膜兵团整备终端"),
@@ -90,6 +95,10 @@ void UERGalaCommandPanel::SetActiveTab(int32 TabIndex)
 		if (Pages[i])
 		{
 			Pages[i]->SetVisibility(i == ActiveTab ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		}
+		if (TabButtons.IsValidIndex(i) && TabButtons[i])
+		{
+			TabButtons[i]->SetUrgent(i == ActiveTab);
 		}
 	}
 }
@@ -175,8 +184,8 @@ void UERGalaCommandPanel::BuildLayout()
 			S->SetPadding(FMargin(0.0f, 0.0f, 28.0f, 0.0f));
 		}
 
-		// 仅保留返回大厅按钮 (兵团整备与银河委托为两块互相独立、不可互达的面板)
-		UERActionButton* CloseBtn = MakeBoneButton(INVTEXT("返回大厅"), 26, true, [this]() { ClosePanel(); });
+		// 控制台终端关闭后回到第一人称大厅 (标题菜单中的设置入口同样适用)
+		UERActionButton* CloseBtn = MakeBoneButton(INVTEXT("断开连接"), 26, true, [this]() { ClosePanel(); });
 		CloseBtn->SetMinSize(220.0f, 0.0f);
 		HeaderRow->AddChildToHorizontalBox(CloseBtn)->SetVerticalAlignment(VAlign_Center);
 
@@ -194,10 +203,30 @@ void UERGalaCommandPanel::BuildLayout()
 	Div->AnchorLength = 42.0f;
 	Div->AnchorColor = T->Accent;
 	Div->LineColor = T->BoneGhost;
-	MainCol->AddChildToVerticalBox(Div)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 18.0f));
+	MainCol->AddChildToVerticalBox(Div)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+
+	// 控制台是游戏流程的唯一入口, 因此终端必须自带页签导航 (旧版依赖大厅直发按钮)。
+	{
+		UHorizontalBox* TabRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TerminalTabRow"));
+		TerminalTabRow = TabRow;
+		static const FText TabLabels[4] = {
+			INVTEXT("接取委托"), INVTEXT("兵团整备"), INVTEXT("银河局势"), INVTEXT("终端设置")
+		};
+		TabButtons.Reset();
+		for (int32 Tab = 0; Tab < 4; ++Tab)
+		{
+			const int32 TabIndex = Tab;
+			UERActionButton* TabBtn = MakeBoneButton(TabLabels[Tab], 17, false,
+				[this, TabIndex]() { SetActiveTab(TabIndex); });
+			TabBtn->SetMinSize(150.0f, 0.0f);
+			TabButtons.Add(TabBtn);
+			TabRow->AddChildToHorizontalBox(TabBtn)->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
+		}
+		MainCol->AddChildToVerticalBox(TabRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
+	}
 
 	// =========================================================================
-	// 内容区: Overlay 页签 (由大厅左部四按钮入口直达, 面板内不设导航)
+	// 内容区: Overlay 页签
 	// =========================================================================
 	UOverlay* ContentOv = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("ContentOverlay"));
 	{
@@ -808,15 +837,7 @@ void UERGalaCommandPanel::RebuildContractList()
 						Screen = CreateWidget<ULegionDeployScreen>(PC, ULegionDeployScreen::StaticClass());
 						if (Screen)
 						{
-							const FGalacticContract* Contract = Camp->FindContract(ContractId);
-							const FString Title = Contract ? Contract->Title : TEXT("出击部署");
-							const FString Sub = Contract
-								? FString::Printf(TEXT("委托  ·  %s 对 %s  ·  第 %02d 星区"),
-									*ERGalacticMeta::GetFactionCode(Contract->Employer),
-									*ERGalacticMeta::GetFactionCode(Contract->EnemyFaction),
-									Contract->TargetSectorId + 1)
-								: TEXT("虹膜基金会  ·  银河军事指挥");
-							Screen->SetupTransit(FText::FromString(Title), FText::FromString(Sub));
+							Screen->SetupTransit();
 							Screen->AddToViewport(999);
 						}
 					}

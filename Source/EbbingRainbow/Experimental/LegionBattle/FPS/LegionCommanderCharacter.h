@@ -247,8 +247,8 @@ public:
 
 	// ---- 军团侧 ----
 
-	/** Shift 疾跑开关 (IA_Sprint Started/Completed 驱动) */
-	void SetSprinting(bool bSprint);
+	/** Shift 疾跑开关 (IA_Sprint Started/Completed 驱动); virtual 供大厅等非战斗化身复用同一输入栈并替换封锁条件 */
+	virtual void SetSprinting(bool bSprint);
 
 	/** 打一发手枪, 供控制台 `ce TestFire` 验证开火链路 */
 	UFUNCTION(Exec)

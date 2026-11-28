@@ -70,8 +70,10 @@ void UGalacticCampaignSubsystem::Initialize(FSubsystemCollectionBase& Collection
 
 	SaveSlotPrefix = TEXT("ER_GalacticCampaign");
 	SaveStatus = EGalacticCampaignSaveStatus::Volatile;
-	InitFactionsAndSectors();
-	LoadCampaign(true);
+	// 标题菜单改版后不再在 GameInstance 初始化时隐式读档/建档:
+	// 「继续游戏 / 开始新游戏 / 读取存档」必须由玩家在大厅标题菜单中显式选择。
+	// 这里只准备一份内存战役沙盘, 保证直接启动调试关卡时查询接口仍有合法数据。
+	InitializeCampaignState(2026);
 }
 
 UGalacticCampaignSubsystem* UGalacticCampaignSubsystem::Get(const UObject* WorldContextObject)
@@ -93,6 +95,192 @@ FText UGalacticCampaignSubsystem::GetSaveNotice() const
 	case EGalacticCampaignSaveStatus::Incompatible: return INVTEXT("战役存档来自较新的版本；原存档已保留");
 	default:                                        return FText::GetEmpty();
 	}
+}
+
+int64 UGalacticCampaignSubsystem::ScanHighestPersistedGeneration(int32* OutSlotIndex) const
+{
+	if (OutSlotIndex) { *OutSlotIndex = INDEX_NONE; }
+	if (SaveSlotPrefix.IsEmpty()) { return 0; }
+
+	int64 BestGeneration = 0;
+	for (int32 Slot = 0; Slot < 2; ++Slot)
+	{
+		const FString SlotName = SaveSlotPrefix + (Slot == 0 ? TEXT("_A") : TEXT("_B"));
+		const ERGalacticSave::FReadResult Read = ERGalacticSave::ReadSlot(SlotName);
+		// NewerVersion 的页脚世代同样可读; 新档必须越过它, 否则降级运行会反复误判。
+		if ((Read.State == ERGalacticSave::ESlotState::Valid || Read.State == ERGalacticSave::ESlotState::NewerVersion)
+			&& Read.Generation > BestGeneration)
+		{
+			BestGeneration = Read.Generation;
+			if (OutSlotIndex) { *OutSlotIndex = Slot; }
+		}
+	}
+	return BestGeneration;
+}
+
+bool UGalacticCampaignSubsystem::HasNewerVersionPersistedSave() const
+{
+	if (SaveSlotPrefix.IsEmpty()) { return false; }
+	for (int32 Slot = 0; Slot < 2; ++Slot)
+	{
+		const FString SlotName = SaveSlotPrefix + (Slot == 0 ? TEXT("_A") : TEXT("_B"));
+		if (ERGalacticSave::ReadSlot(SlotName).State == ERGalacticSave::ESlotState::NewerVersion)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+TArray<FGalacticCampaignSaveSlotInfo> UGalacticCampaignSubsystem::GetSaveSlotInfos() const
+{
+	TArray<FGalacticCampaignSaveSlotInfo> Out;
+	if (SaveSlotPrefix.IsEmpty()) { return Out; }
+
+	for (int32 Slot = 0; Slot < 2; ++Slot)
+	{
+		FGalacticCampaignSaveSlotInfo Info;
+		Info.SlotIndex = Slot;
+		Info.SlotName = SaveSlotPrefix + (Slot == 0 ? TEXT("_A") : TEXT("_B"));
+
+		const ERGalacticSave::FReadResult Read = ERGalacticSave::ReadSlot(Info.SlotName);
+		Info.bExists = Read.State != ERGalacticSave::ESlotState::Missing;
+		Info.Generation = Read.Generation;
+		Info.bValid = Read.State == ERGalacticSave::ESlotState::Valid && Read.Snapshot != nullptr;
+		Info.bDamaged = Read.State == ERGalacticSave::ESlotState::Damaged;
+		Info.bNewerVersion = Read.State == ERGalacticSave::ESlotState::NewerVersion;
+		if (Info.bValid)
+		{
+			Info.CycleIndex = Read.Snapshot->CycleIndex;
+			Info.Credits = Read.Snapshot->GalaxyCoins;
+			Info.LegionCount = Read.Snapshot->PlayerLegions.Num();
+			Info.SavedAtUnixTime = Read.Snapshot->SavedAtUnixTime;
+		}
+		Out.Add(Info);
+	}
+	// 菜单一眼看到最新检查点; 缺失/损坏项世代为 0, 自然沉到底部。
+	Out.Sort([](const FGalacticCampaignSaveSlotInfo& A, const FGalacticCampaignSaveSlotInfo& B)
+	{
+		return A.Generation > B.Generation;
+	});
+	return Out;
+}
+
+bool UGalacticCampaignSubsystem::CanContinueCampaign() const
+{
+	if (SaveSlotPrefix.IsEmpty())
+	{
+		// PIE/命令行沙盘没有持久槽, 内存战役本身就是可继续状态。
+		return true;
+	}
+	if (HasNewerVersionPersistedSave()) { return false; }
+	for (const FGalacticCampaignSaveSlotInfo& Info : GetSaveSlotInfos())
+	{
+		if (Info.bValid) { return true; }
+	}
+	return false;
+}
+
+bool UGalacticCampaignSubsystem::ContinueLatestCampaign()
+{
+	if (SaveSlotPrefix.IsEmpty())
+	{
+		MarkCampaignSessionActive();
+		return true;
+	}
+	if (!CanContinueCampaign()) { return false; }
+	if (!LoadCampaign(false)) { return false; }
+
+	MarkCampaignSessionActive();
+	OnCampaignUpdated.Broadcast();
+	return true;
+}
+
+bool UGalacticCampaignSubsystem::StartNewCampaign(int32 Seed)
+{
+	if (bHasActiveContract) { return false; }
+
+	if (SaveSlotPrefix.IsEmpty())
+	{
+		InitializeCampaignState(Seed);
+		MarkCampaignSessionActive();
+		OnCampaignUpdated.Broadcast();
+		return true;
+	}
+	if (!IsCampaignAvailable()) { return false; }
+	if (HasNewerVersionPersistedSave())
+	{
+		// 新游戏允许分支覆盖本版本的旧检查点, 但绝不能让降级客户端覆盖更高版本客户端写出的存档。
+		SaveStatus = EGalacticCampaignSaveStatus::Incompatible;
+		OnCampaignUpdated.Broadcast();
+		return false;
+	}
+
+	int32 HighestSlot = INDEX_NONE;
+	const int64 HighestGeneration = ScanHighestPersistedGeneration(&HighestSlot);
+	InitializeCampaignState(Seed);
+	LastSavedSlot = HighestSlot;
+	LastSavedGeneration = HighestGeneration;
+
+	// 目标槽由 LastSavedSlot 反转到另一侧, 因而既有最新档会保留在兄弟槽中,
+	// 玩家仍可通过「读取存档」回滚到上一战役检查点。
+	if (!SaveCampaign()) { return false; }
+	MarkCampaignSessionActive();
+	OnCampaignUpdated.Broadcast();
+	return true;
+}
+
+bool UGalacticCampaignSubsystem::LoadCampaignFromSlot(int32 SlotIndex)
+{
+	if (SaveSlotPrefix.IsEmpty())
+	{
+		MarkCampaignSessionActive();
+		return true;
+	}
+	if (SlotIndex < 0 || SlotIndex > 1) { return false; }
+	if (HasNewerVersionPersistedSave())
+	{
+		SaveStatus = EGalacticCampaignSaveStatus::Incompatible;
+		OnCampaignUpdated.Broadcast();
+		return false;
+	}
+
+	const FString SlotName = SaveSlotPrefix + (SlotIndex == 0 ? TEXT("_A") : TEXT("_B"));
+	const ERGalacticSave::FReadResult Read = ERGalacticSave::ReadSlot(SlotName);
+	if (Read.State != ERGalacticSave::ESlotState::Valid || !Read.Snapshot || !IsValidSnapshot(*Read.Snapshot))
+	{
+		return false;
+	}
+
+	int32 HighestSlot = INDEX_NONE;
+	const int64 HighestGeneration = ScanHighestPersistedGeneration(&HighestSlot);
+
+	bHasActiveContract = false;
+	ActiveContract = FGalacticContract();
+	ApplySnapshot(*Read.Snapshot);
+	SaveStatus = EGalacticCampaignSaveStatus::Saved;
+	bSaveDirty = false;
+
+	if (Read.Generation >= HighestGeneration)
+	{
+		LastSavedSlot = SlotIndex;
+		LastSavedGeneration = Read.Generation;
+	}
+	else
+	{
+		// 回滚到较旧检查点时, 立即把它写成高于所有既有世代的新检查点。
+		// 这样下一次「继续游戏」会进入玩家刚选择的分支, 而原最新档仍留在另一槽。
+		LastSavedSlot = HighestSlot;
+		LastSavedGeneration = HighestGeneration;
+		if (!SaveCampaign())
+		{
+			return false;
+		}
+	}
+
+	MarkCampaignSessionActive();
+	OnCampaignUpdated.Broadcast();
+	return true;
 }
 
 void UGalacticCampaignSubsystem::ResetCampaign(int32 Seed)
@@ -385,6 +573,8 @@ bool UGalacticCampaignSubsystem::BeginContract(int32 ContractId)
 
 	ActiveContract = *Found;
 	bHasActiveContract = true;
+	// 出击本身就是一次明确的大厅战役会话; 战后返回 Lvl_Hall 时直接落地第一人称。
+	MarkCampaignSessionActive();
 	if (bNeedsCheckpoint)
 	{
 		OnCampaignUpdated.Broadcast();
@@ -628,6 +818,7 @@ bool UGalacticCampaignSubsystem::SaveCampaign()
 
 	UGalacticCampaignSaveGame* Snapshot = NewObject<UGalacticCampaignSaveGame>(this);
 	Snapshot->CampaignSeed = CampaignSeed;
+	Snapshot->SavedAtUnixTime = FDateTime::UtcNow().ToUnixTimestamp();
 	Snapshot->GalaxyCoins = Credits;
 	Snapshot->CycleIndex = CycleIndex;
 	Snapshot->NextLegionId = NextLegionId;

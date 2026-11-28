@@ -9,6 +9,7 @@
 
 class UBorder;
 class UCanvasPanel;
+class UERActionButton;
 class UERCornerReticle;
 class UERHallButton;
 class UERPrismBar;
@@ -41,6 +42,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ERUI|Hall")
 	bool IsZenMode() const { return bZenMode; }
 
+	/** 标题菜单模式: 显示「虹不我与」标题与继续/新游戏/读档/设置四按钮 */
+	UFUNCTION(BlueprintCallable, Category = "ERUI|Hall")
+	void ShowTitleMenu();
+
+	/** 面板模态打开期间临时隐藏标题菜单, 防止空透明区域误触底层菜单按钮 */
+	UFUNCTION(BlueprintCallable, Category = "ERUI|Hall")
+	void SetTitleMenuHidden(bool bHidden);
+
+	/** 第一人称备战模式: 隐藏标题菜单, 显示准星; 控制台接近后另显 E 交互提示 */
+	UFUNCTION(BlueprintCallable, Category = "ERUI|Hall")
+	void EnterFirstPersonMode();
+
+	UFUNCTION(BlueprintPure, Category = "ERUI|Hall")
+	bool IsFirstPersonMode() const { return bFirstPersonMode; }
+
+	/** 第一人称控制台交互提示 */
+	UFUNCTION(BlueprintCallable, Category = "ERUI|Hall")
+	void SetInteractionPromptVisible(bool bVisible, const FText& PromptText = FText::GetEmpty());
+
+	/** 兼容旧入口: 航线图已不再是Hall主流程, 保留给调试/旧蓝图调用 */
 	UFUNCTION(BlueprintCallable, Category = "ERUI|Hall")
 	void LaunchRouteMap();
 
@@ -89,6 +110,13 @@ protected:
 	UFUNCTION() void HandleRoutesClicked();
 	UFUNCTION() void HandleSituationClicked();
 	UFUNCTION() void HandleSettingsClicked();
+	void HandleLoadSlotClicked(int32 SlotIndex);
+	void EnterFirstPersonFromMenu();
+	void ShowLoadMenu();
+	void HideLoadMenu();
+	void RebuildLoadSlotList();
+	void RefreshTitleMenuState();
+	void SetMenuStatus(const FText& Message, bool bError = false);
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCanvasPanel> RootCanvas;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> DashboardContainer;
@@ -110,6 +138,13 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ZenHintText;
 	UPROPERTY(Transient) TObjectPtr<UBorder> CampaignSaveNoticeBorder;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CampaignSaveNoticeText;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> MenuStatusText;
+	UPROPERTY(Transient) TObjectPtr<UBorder> LoadMenuBorder;
+	UPROPERTY(Transient) TObjectPtr<UVerticalBox> LoadSlotListBox;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> LoadMenuStatusText;
+	UPROPERTY(Transient) TObjectPtr<UBorder> CrosshairDot;
+	UPROPERTY(Transient) TObjectPtr<UBorder> InteractionPromptBorder;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> InteractionPromptText;
 
 	UPROPERTY(Transient, meta = (BindWidgetAnimOptional)) TObjectPtr<UWidgetAnimation> Anim_Intro;
 	UPROPERTY(Transient, meta = (BindWidgetAnimOptional)) TObjectPtr<UWidgetAnimation> Anim_ZenEnter;
@@ -127,6 +162,7 @@ private:
 	bool bBaseCached = false;
 
 	bool bZenMode = false;
+	bool bFirstPersonMode = false;
 	FERRevealTrack EntranceTrack;
 	FERCipherReveal MastheadTagCipher;
 	FERCipherReveal MastheadMetaCipher;

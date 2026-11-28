@@ -270,6 +270,9 @@ bool FGalacticCampaignSaveTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("future retry refused"), FutureBlocked.Campaign->RetryCampaignSave());
 	TestFalse(TEXT("future recruit refused"), FutureBlocked.Campaign->RecruitLegion(ELegionClass::Pikeman));
 	TestFalse(TEXT("future deploy refused"), FutureBlocked.Campaign->BeginContract(1));
+	TestFalse(TEXT("future continue refused"), FutureBlocked.Campaign->CanContinueCampaign());
+	TestFalse(TEXT("future new game refused"), FutureBlocked.Campaign->StartNewCampaign(2026));
+	TestFalse(TEXT("future manual slot load refused"), FutureBlocked.Campaign->LoadCampaignFromSlot(0));
 	const ERGalacticSave::FReadResult OlderAfterFuture = ERGalacticSave::ReadSlot(OlderSlot);
 	TestEqual(TEXT("older good save retained"), (int32)OlderAfterFuture.State, (int32)ERGalacticSave::ESlotState::Valid);
 	TestEqual(TEXT("older good generation retained"), OlderAfterFuture.Generation, OlderValidGeneration);
@@ -307,6 +310,28 @@ bool FGalacticCampaignSaveTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("reload after write retry"), RetryReload.Campaign->LoadCampaign(false));
 	TestEqual(TEXT("retried nonce persisted"), RetryReload.Campaign->ContractRefreshNonce, NonceBeforeRetry);
 	TestTrue(TEXT("retried offer persisted"), RetryReload.Campaign->FindContract(FirstOfferAfterFailure) != nullptr);
+
+	// ---- 标题菜单 API: 无档不可继续; 新游戏激活会话; A/B 检查点按世代排序且可显式回滚 ----
+	DeleteCampaignTestSlots(Prefix);
+	FCampaignTestInstance Menu = CreateInstance();
+	TestFalse(TEXT("menu continue unavailable without slots"), Menu.Campaign->CanContinueCampaign());
+	TestFalse(TEXT("menu continue fails without slots"), Menu.Campaign->ContinueLatestCampaign());
+	TestTrue(TEXT("menu new game succeeds"), Menu.Campaign->StartNewCampaign(2026));
+	TestTrue(TEXT("menu new game activates session"), Menu.Campaign->IsCampaignSessionActive());
+	TestTrue(TEXT("menu continue available after new game"), Menu.Campaign->CanContinueCampaign());
+	const int32 InitialMenuNonce = Menu.Campaign->ContractRefreshNonce;
+	Menu.Campaign->RefreshContracts();
+	const TArray<FGalacticCampaignSaveSlotInfo> MenuSlots = Menu.Campaign->GetSaveSlotInfos();
+	TestEqual(TEXT("menu exposes two checkpoint entries"), MenuSlots.Num(), 2);
+	TestTrue(TEXT("menu checkpoints sorted newest first"), MenuSlots.Num() == 2 && MenuSlots[0].Generation >= MenuSlots[1].Generation);
+	TestTrue(TEXT("menu checkpoints valid"), MenuSlots.Num() == 2 && MenuSlots[0].bValid && MenuSlots[1].bValid);
+	if (MenuSlots.Num() == 2)
+	{
+		TestTrue(TEXT("menu load older checkpoint"), Menu.Campaign->LoadCampaignFromSlot(MenuSlots[1].SlotIndex));
+		TestEqual(TEXT("menu rollback restores older nonce"), Menu.Campaign->ContractRefreshNonce, InitialMenuNonce);
+		TestTrue(TEXT("menu rollback activates session"), Menu.Campaign->IsCampaignSessionActive());
+		TestTrue(TEXT("menu continue after rollback"), Menu.Campaign->ContinueLatestCampaign());
+	}
 
 	DeleteCampaignTestSlots(Prefix);
 	return true;

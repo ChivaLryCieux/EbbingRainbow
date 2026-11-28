@@ -9,6 +9,46 @@
 
 class UGalacticCampaignSaveGame;
 
+/** 用户-facing 的战役存档槽摘要。A/B 双槽仍是内部轮换备份; 大厅读取菜单把它们展示为可回滚的检查点。 */
+USTRUCT(BlueprintType)
+struct FGalacticCampaignSaveSlotInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	int32 SlotIndex = INDEX_NONE;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	FString SlotName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	bool bExists = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	bool bValid = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	bool bDamaged = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	bool bNewerVersion = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	int64 Generation = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	int32 CycleIndex = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	int32 Credits = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	int32 LegionCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Campaign|Save")
+	int64 SavedAtUnixTime = 0;
+};
+
 /** 银河战役存档状态 (Volatile = 命令行/编辑器调试沙盘, 不写盘) */
 enum class EGalacticCampaignSaveStatus : uint8
 {
@@ -52,6 +92,32 @@ public:
 	}
 	FText GetSaveNotice() const;
 	bool RetryCampaignSave();
+
+	// ---------------- 大厅标题菜单 / 会话入口 ----------------
+
+	/** 是否存在可被「继续游戏」使用的战役状态。PIE/命令行沙盘返回 true (内存战役)。 */
+	UFUNCTION(BlueprintPure, Category = "Campaign|Save")
+	bool CanContinueCampaign() const;
+
+	/** 扫描 A/B 轮换槽并返回用户可读摘要 (按槽位顺序, 缺失槽也会列出)。 */
+	UFUNCTION(BlueprintPure, Category = "Campaign|Save")
+	TArray<FGalacticCampaignSaveSlotInfo> GetSaveSlotInfos() const;
+
+	/** 「继续游戏」: 读取最新有效战役快照; 成功后把本次运行标记为已进入大厅会话。 */
+	UFUNCTION(BlueprintCallable, Category = "Campaign|Save")
+	bool ContinueLatestCampaign();
+
+	/** 「开始新游戏」: 以指定种子重建战役, 并以高于所有既有世代的新世代写入持久快照。 */
+	UFUNCTION(BlueprintCallable, Category = "Campaign|Save")
+	bool StartNewCampaign(int32 Seed = 2026);
+
+	/** 「读取存档」: 读取指定 A/B 检查点; 若选中较旧世代, 下一次写入会先越过所有既有世代, 使回滚分支成为最新战役。 */
+	UFUNCTION(BlueprintCallable, Category = "Campaign|Save")
+	bool LoadCampaignFromSlot(int32 SlotIndex);
+
+	/** 战役会话已进入第一人称大厅后, 战后返回 Lvl_Hall 时跳过标题菜单直接落地。 */
+	bool IsCampaignSessionActive() const { return bCampaignSessionActive; }
+	void MarkCampaignSessionActive() { bCampaignSessionActive = true; }
 
 	// ---------------- 查询 ----------------
 
@@ -127,6 +193,8 @@ private:
 	bool IsValidSnapshot(const UGalacticCampaignSaveGame& Snapshot) const;
 	void ApplySnapshot(const UGalacticCampaignSaveGame& Snapshot);
 	void PublishCampaignChange();
+	int64 ScanHighestPersistedGeneration(int32* OutSlotIndex = nullptr) const;
+	bool HasNewerVersionPersistedSave() const;
 
 	FManagedLegionData* FindPlayerLegionMutable(int32 LegionId);
 	void ShiftGalacticControl(EFactionId Winner, EFactionId Loser, float Amount, int32 SectorId);
@@ -176,4 +244,5 @@ private:
 	int32 LastSavedSlot = INDEX_NONE;
 	int64 LastSavedGeneration = 0;
 	bool bSaveDirty = false;
+	bool bCampaignSessionActive = false;
 };

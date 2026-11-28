@@ -13,6 +13,7 @@
 #include "Battle/Skills/BattleRandomStream.h"
 #include "Battle/UI/BattleHUD.h"
 #include "Hall/HallCameraPawn.h"
+#include "Hall/HallFirstPersonCharacter.h"
 #include "Hall/HallPlayerController.h"
 #include "Hall/HallHUD.h"
 #include "Run/RunSubsystem.h"
@@ -79,8 +80,8 @@ void ABattleGameMode::InitGame(const FString& MapName, const FString& Options, F
 	const FString CurrentMap = GetWorld() ? GetWorld()->GetMapName() : MapName;
 	if (MapName.Contains(TEXT("Hall")) || CurrentMap.Contains(TEXT("Hall")))
 	{
-		UE_LOG(LogERBattle, Warning, TEXT("[BattleGameMode] BattleGameMode loaded in Hall map '%s'! Redirecting classes to HallCameraPawn."), *CurrentMap);
-		DefaultPawnClass = AHallCameraPawn::StaticClass();
+		UE_LOG(LogERBattle, Warning, TEXT("[BattleGameMode] BattleGameMode loaded in Hall map '%s'! Redirecting classes to Hall first-person mode."), *CurrentMap);
+		DefaultPawnClass = ER::Debug::IsHallShowcase() ? AHallCameraPawn::StaticClass() : AHallFirstPersonCharacter::StaticClass();
 		PlayerControllerClass = AHallPlayerController::StaticClass();
 		HUDClass = AHallHUD::StaticClass();
 		return;
@@ -252,7 +253,7 @@ void ABattleGameMode::SpawnTeam(const TArray<FBattleUnitStats>& Roster, const TA
 AActor* ABattleGameMode::ChoosePlayerStart_Implementation(AController* Player)
 {
 	const FString CurrentMap = GetWorld() ? GetWorld()->GetMapName() : FString();
-	if (CurrentMap.Contains(TEXT("Hall")))
+	if (CurrentMap.Contains(TEXT("Hall")) && ER::Debug::IsHallShowcase())
 	{
 		if (UWorld* World = GetWorld())
 		{
@@ -271,7 +272,7 @@ AActor* ABattleGameMode::ChoosePlayerStart_Implementation(AController* Player)
 APawn* ABattleGameMode::SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform)
 {
 	const FString CurrentMap = GetWorld() ? GetWorld()->GetMapName() : FString();
-	if (CurrentMap.Contains(TEXT("Hall")))
+	if (CurrentMap.Contains(TEXT("Hall")) && ER::Debug::IsHallShowcase())
 	{
 		if (UWorld* World = GetWorld())
 		{

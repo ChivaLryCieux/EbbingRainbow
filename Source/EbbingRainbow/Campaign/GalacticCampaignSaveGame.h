@@ -76,6 +76,10 @@ public:
 
 	UPROPERTY()
 	FLegionBattleOutcome LastOutcome;
+
+	/** UTC Unix 秒; 旧版本存档没有该字段时为 0 (界面显示“时间未知”) */
+	UPROPERTY()
+	int64 SavedAtUnixTime = 0;
 };
 
 namespace ERGalacticSave

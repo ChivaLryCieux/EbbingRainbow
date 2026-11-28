@@ -45,9 +45,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Hall|Personnel")
 	UERPersonnelPanel* GetPersonnelPanel() const { return PersonnelPanel; }
 
-	/** 打开虹膜基金会银河委托/兵团整备终端 (InitialTab: 0=银河委托, 1=兵团整备) */
+	/** 打开虹膜基金会银河委托/兵团整备终端 (InitialTab: 0=银河委托, 1=兵团整备);
+	 *  bSettingsOnlyMode 仅供标题菜单「设置」使用, 会隐藏游戏流程页签防止绕过控制台。 */
 	UFUNCTION(BlueprintCallable, Category = "Hall|Galactic")
-	void OpenGalacticPanel(int32 InitialTab = 0);
+	void OpenGalacticPanel(int32 InitialTab = 0, bool bSettingsOnlyMode = false);
 
 	UFUNCTION(BlueprintCallable, Category = "Hall|Galactic")
 	void CloseGalacticPanel();

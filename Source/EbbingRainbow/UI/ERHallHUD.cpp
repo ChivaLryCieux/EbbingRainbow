@@ -6,6 +6,8 @@
 #include "Blueprint/WidgetTree.h"
 #include "Core/ERLog.h"
 #include "Hall/HallHUD.h"
+#include "Hall/HallPlayerController.h"
+#include "UI/ERActionButton.h"
 #include "UI/ERHallButton.h"
 #include "UI/ERUIStatics.h"
 #include "UI/Primitives/ERTechPrimitives.h"
@@ -85,22 +87,22 @@ void UERHallHUD::NativeConstruct()
 		}
 	}
 
-	// 两个入口统一「白底墨字彩条」, 按钮上只有中文 (无英文副标)
+	// 标题主菜单 (按钮变量名保留旧蓝图兼容绑定; 文案/行为已是新游戏流程)
 	if (PersonnelButton)
 	{
-		PersonnelButton->SetButtonTexts(INVTEXT("兵团整备"), FText::GetEmpty());
+		PersonnelButton->SetButtonTexts(INVTEXT("继续游戏"), FText::GetEmpty());
 		PersonnelButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
 		PersonnelButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandlePersonnelClicked);
 	}
 	if (RoutesButton)
 	{
-		RoutesButton->SetButtonTexts(INVTEXT("接取委托"), FText::GetEmpty());
+		RoutesButton->SetButtonTexts(INVTEXT("开始新游戏"), FText::GetEmpty());
 		RoutesButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
 		RoutesButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleRoutesClicked);
 	}
 	if (SituationButton)
 	{
-		SituationButton->SetButtonTexts(INVTEXT("银河局势"), FText::GetEmpty());
+		SituationButton->SetButtonTexts(INVTEXT("读取存档"), FText::GetEmpty());
 		SituationButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
 		SituationButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSituationClicked);
 	}
@@ -110,6 +112,7 @@ void UERHallHUD::NativeConstruct()
 		SettingsButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
 		SettingsButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSettingsClicked);
 	}
+	RefreshTitleMenuState();
 	if (ZenHintText && !ZenHintMessage.IsEmpty())
 	{
 		ZenHintText->SetText(ZenHintMessage);
@@ -291,6 +294,11 @@ void UERHallHUD::BuildLayout()
 		{
 			NavBox->AddChildToVerticalBox(Btn)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 		}
+
+		MenuStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
+		MenuStatusText->SetFont(ERUI::FontRegular(11, 80));
+		MenuStatusText->SetAutoWrapText(true);
+		NavBox->AddChildToVerticalBox(MenuStatusText)->SetPadding(FMargin(2.0f, 2.0f, 0.0f, 0.0f));
 	}
 
 	// 4. 观景模式提示条 (锐利直角黑曜石条)
@@ -332,6 +340,238 @@ void UERHallHUD::BuildLayout()
 		NoticeSlot->SetPosition(FVector2D(-46.0f, 44.0f));
 		NoticeSlot->SetAutoSize(true);
 	}
+
+	// 读取存档抽屉: 初始折叠, 点击「读取存档」后列出 A/B 战役检查点
+	if (!LoadMenuBorder)
+	{
+		LoadMenuBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LoadMenuBorder"));
+		LoadMenuBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.006f, 0.007f, 0.010f, 0.92f), 1.0f, T->BoneGhost));
+		LoadMenuBorder->SetPadding(FMargin(22.0f, 18.0f));
+		LoadMenuBorder->SetVisibility(ESlateVisibility::Collapsed);
+
+		UVerticalBox* LoadCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LoadMenuCol"));
+		LoadMenuBorder->SetContent(LoadCol);
+
+		UTextBlock* LoadTitle = ERUI::MakeText(this, INVTEXT("选择战役检查点"), EERTypeScale::Title, T->Bone, false);
+		LoadTitle->SetFont(ERUI::FontBold(22, 80));
+		LoadCol->AddChildToVerticalBox(LoadTitle)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+
+		LoadSlotListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LoadSlotListBox"));
+		LoadCol->AddChildToVerticalBox(LoadSlotListBox);
+
+		LoadMenuStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
+		LoadMenuStatusText->SetFont(ERUI::FontRegular(11, 60));
+		LoadMenuStatusText->SetAutoWrapText(true);
+		LoadCol->AddChildToVerticalBox(LoadMenuStatusText)->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 10.0f));
+
+		UERActionButton* BackBtn = UERActionButton::Make(this, INVTEXT("返回"), 17, false);
+		BackBtn->SetMinSize(150.0f, 0.0f);
+		BackBtn->SetNativeClick([this]() { HideLoadMenu(); });
+		LoadCol->AddChildToVerticalBox(BackBtn);
+
+		UCanvasPanelSlot* LoadSlot = RootCanvas->AddChildToCanvas(LoadMenuBorder);
+		LoadSlot->SetAnchors(FAnchors(0.0f, 1.0f));
+		LoadSlot->SetAlignment(FVector2D(0.0f, 1.0f));
+		LoadSlot->SetPosition(FVector2D(452.0f, -56.0f));
+		LoadSlot->SetAutoSize(true);
+	}
+
+	// 第一人称准星与交互提示均挂在 RootCanvas, 不受标题菜单 Dashboard 隐藏影响
+	if (!CrosshairDot)
+	{
+		CrosshairDot = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CrosshairDot"));
+		CrosshairDot->SetBrush(ERUI::RoundedBrush(2.0f, FLinearColor(0.94f, 0.96f, 1.0f, 0.72f), 0.0f, FLinearColor::Transparent));
+		CrosshairDot->SetVisibility(ESlateVisibility::Hidden);
+		UCanvasPanelSlot* CrossSlot = RootCanvas->AddChildToCanvas(CrosshairDot);
+		CrossSlot->SetAnchors(FAnchors(0.5f, 0.5f));
+		CrossSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+		CrossSlot->SetSize(FVector2D(4.0f, 4.0f));
+	}
+
+	if (!InteractionPromptBorder)
+	{
+		InteractionPromptBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("InteractionPromptBorder"));
+		InteractionPromptBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.006f, 0.008f, 0.012f, 0.84f), 1.0f, FLinearColor(0.70f, 0.86f, 1.0f, 0.35f)));
+		InteractionPromptBorder->SetPadding(FMargin(20.0f, 9.0f));
+		InteractionPromptBorder->SetVisibility(ESlateVisibility::Hidden);
+		InteractionPromptText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->Bone, false);
+		InteractionPromptText->SetFont(ERUI::FontBold(15, 80));
+		InteractionPromptBorder->SetContent(InteractionPromptText);
+
+		UCanvasPanelSlot* PromptSlot = RootCanvas->AddChildToCanvas(InteractionPromptBorder);
+		PromptSlot->SetAnchors(FAnchors(0.5f, 1.0f));
+		PromptSlot->SetAlignment(FVector2D(0.5f, 1.0f));
+		PromptSlot->SetPosition(FVector2D(0.0f, -118.0f));
+		PromptSlot->SetAutoSize(true);
+	}
+}
+
+void UERHallHUD::ShowTitleMenu()
+{
+	bFirstPersonMode = false;
+	HideLoadMenu();
+	if (DashboardContainer)
+	{
+		DashboardContainer->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	if (CrosshairDot) { CrosshairDot->SetVisibility(ESlateVisibility::Hidden); }
+	SetInteractionPromptVisible(false);
+	RefreshTitleMenuState();
+}
+
+void UERHallHUD::SetTitleMenuHidden(bool bHidden)
+{
+	if (bHidden)
+	{
+		HideLoadMenu();
+	}
+	if (DashboardContainer)
+	{
+		DashboardContainer->SetVisibility(
+			bHidden ? ESlateVisibility::Hidden : (bFirstPersonMode ? ESlateVisibility::Hidden : ESlateVisibility::SelfHitTestInvisible));
+	}
+}
+
+void UERHallHUD::EnterFirstPersonMode()
+{
+	bFirstPersonMode = true;
+	HideLoadMenu();
+	if (DashboardContainer)
+	{
+		DashboardContainer->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (CrosshairDot) { CrosshairDot->SetVisibility(ESlateVisibility::HitTestInvisible); }
+	if (ZenHintBorder) { ZenHintBorder->SetVisibility(ESlateVisibility::Hidden); }
+}
+
+void UERHallHUD::SetInteractionPromptVisible(bool bVisible, const FText& PromptText)
+{
+	if (InteractionPromptText)
+	{
+		InteractionPromptText->SetText(PromptText);
+	}
+	if (InteractionPromptBorder)
+	{
+		InteractionPromptBorder->SetVisibility(bVisible && bFirstPersonMode && !PromptText.IsEmpty()
+			? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+}
+
+void UERHallHUD::SetMenuStatus(const FText& Message, bool bError)
+{
+	if (!MenuStatusText) { return; }
+	MenuStatusText->SetText(Message);
+	MenuStatusText->SetColorAndOpacity(FSlateColor(bError
+		? FLinearColor(1.0f, 0.34f, 0.24f, 0.95f)
+		: ERUI::Theme()->BoneSecondary));
+}
+
+void UERHallHUD::RefreshTitleMenuState()
+{
+	UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this);
+	const bool bCanContinue = Campaign && Campaign->CanContinueCampaign();
+	if (PersonnelButton)
+	{
+		PersonnelButton->SetIsEnabled(bCanContinue);
+		PersonnelButton->SetRenderOpacity(bCanContinue ? 1.0f : 0.42f);
+	}
+	if (MenuStatusText)
+	{
+		const FText NoSaveText = INVTEXT("未检测到可用战役存档");
+		if (!bCanContinue)
+		{
+			SetMenuStatus(NoSaveText, true);
+		}
+		else if (MenuStatusText->GetText().EqualTo(NoSaveText))
+		{
+			SetMenuStatus(FText::GetEmpty());
+		}
+	}
+}
+
+void UERHallHUD::ShowLoadMenu()
+{
+	if (bFirstPersonMode) { return; }
+	RebuildLoadSlotList();
+	if (LoadMenuBorder)
+	{
+		LoadMenuBorder->SetVisibility(ESlateVisibility::Visible);
+	}
+}
+
+void UERHallHUD::HideLoadMenu()
+{
+	if (LoadMenuBorder)
+	{
+		LoadMenuBorder->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+void UERHallHUD::RebuildLoadSlotList()
+{
+	if (!LoadSlotListBox) { return; }
+	LoadSlotListBox->ClearChildren();
+	if (LoadMenuStatusText) { LoadMenuStatusText->SetText(FText::GetEmpty()); }
+
+	UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this);
+	TArray<FGalacticCampaignSaveSlotInfo> Infos = Campaign ? Campaign->GetSaveSlotInfos() : TArray<FGalacticCampaignSaveSlotInfo>();
+	Infos.Sort([](const FGalacticCampaignSaveSlotInfo& A, const FGalacticCampaignSaveSlotInfo& B)
+	{
+		return A.Generation > B.Generation;
+	});
+
+	int32 ValidCount = 0;
+	for (const FGalacticCampaignSaveSlotInfo& Info : Infos)
+	{
+		if (!Info.bValid) { continue; }
+		++ValidCount;
+
+		FString TimeText = TEXT("时间未知");
+		if (Info.SavedAtUnixTime > 0)
+		{
+			TimeText = FDateTime::FromUnixTimestamp(Info.SavedAtUnixTime).ToString(TEXT("%Y-%m-%d %H:%M"));
+		}
+		const FString Label = FString::Printf(TEXT("检查点 %s · 第 %02d 周期 · %d 银河币 · 世代 %lld · %s"),
+			Info.SlotIndex == 0 ? TEXT("A") : TEXT("B"), Info.CycleIndex, Info.Credits, Info.Generation, *TimeText);
+
+		const int32 SlotIndex = Info.SlotIndex;
+		UERActionButton* SlotButton = UERActionButton::Make(this, FText::FromString(Label), 16, true);
+		SlotButton->SetMinSize(620.0f, 0.0f);
+		SlotButton->SetNativeClick([this, SlotIndex]() { HandleLoadSlotClicked(SlotIndex); });
+		LoadSlotListBox->AddChildToVerticalBox(SlotButton)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+	}
+
+	if (ValidCount == 0 && LoadMenuStatusText)
+	{
+		LoadMenuStatusText->SetText(INVTEXT("没有可读取的持久化战役检查点。PIE/命令行沙盘请直接开始新游戏。"));
+	}
+}
+
+void UERHallHUD::HandleLoadSlotClicked(int32 SlotIndex)
+{
+	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
+	{
+		if (Campaign->LoadCampaignFromSlot(SlotIndex))
+		{
+			EnterFirstPersonFromMenu();
+			return;
+		}
+	}
+	SetMenuStatus(INVTEXT("读取该战役检查点失败"), true);
+	RebuildLoadSlotList();
+}
+
+void UERHallHUD::EnterFirstPersonFromMenu()
+{
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		if (AHallPlayerController* HallPC = Cast<AHallPlayerController>(PC))
+		{
+			HallPC->EnterFirstPerson();
+			return;
+		}
+	}
+	EnterFirstPersonMode();
 }
 
 void UERHallHUD::NativeDestruct()
@@ -441,11 +681,11 @@ void UERHallHUD::ApplyZenState(bool bInZen)
 {
 	if (DashboardContainer)
 	{
-		DashboardContainer->SetVisibility(bInZen ? ESlateVisibility::Hidden : ESlateVisibility::SelfHitTestInvisible);
+		DashboardContainer->SetVisibility(bInZen || bFirstPersonMode ? ESlateVisibility::Hidden : ESlateVisibility::SelfHitTestInvisible);
 	}
 	else if (NavBox)
 	{
-		NavBox->SetVisibility(bInZen ? ESlateVisibility::Hidden : ESlateVisibility::SelfHitTestInvisible);
+		NavBox->SetVisibility(bInZen || bFirstPersonMode ? ESlateVisibility::Hidden : ESlateVisibility::SelfHitTestInvisible);
 	}
 	if (ZenHintBorder)
 	{
@@ -502,48 +742,47 @@ void UERHallHUD::LaunchRouteMap()
 
 void UERHallHUD::HandlePersonnelClicked()
 {
-	UE_LOG(LogERHall, Log, TEXT("[Hall] Legion Roster clicked -> Galactic Panel (Tab 1)."));
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Continue Game clicked."));
 	BP_OnPersonnelClicked();
 
-	if (APlayerController* PC = GetOwningPlayer())
+	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
 	{
-		if (AHallHUD* HallHUD = Cast<AHallHUD>(PC->GetHUD()))
+		if (Campaign->ContinueLatestCampaign())
 		{
-			HallHUD->OpenGalacticPanel(1);
-		}
-		else
-		{
-			UE_LOG(LogERHall, Warning, TEXT("[Hall] Galactic panel skipped: HUD is not AHallHUD."));
+			EnterFirstPersonFromMenu();
+			return;
 		}
 	}
+	SetMenuStatus(INVTEXT("无法读取最新战役存档"), true);
+	RefreshTitleMenuState();
 }
 
 void UERHallHUD::HandleRoutesClicked()
 {
-	UE_LOG(LogERHall, Log, TEXT("[Hall] Galactic Contracts clicked -> Galactic Panel (Tab 0)."));
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Start New Game clicked."));
 	BP_OnRoutesClicked();
 
-	if (APlayerController* PC = GetOwningPlayer())
+	if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
 	{
-		if (AHallHUD* HallHUD = Cast<AHallHUD>(PC->GetHUD()))
+		if (Campaign->StartNewCampaign(2026))
 		{
-			HallHUD->OpenGalacticPanel(0);
+			EnterFirstPersonFromMenu();
 			return;
 		}
 	}
-	LaunchRouteMap();
+	SetMenuStatus(INVTEXT("新战役初始化或存档写入失败"), true);
 }
 
 void UERHallHUD::HandleSituationClicked()
 {
-	UE_LOG(LogERHall, Log, TEXT("[Hall] Galaxy Situation clicked -> Galactic Panel (Tab 2)."));
-
-	if (APlayerController* PC = GetOwningPlayer())
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Load Game clicked."));
+	if (LoadMenuBorder && LoadMenuBorder->GetVisibility() == ESlateVisibility::Visible)
 	{
-		if (AHallHUD* HallHUD = Cast<AHallHUD>(PC->GetHUD()))
-		{
-			HallHUD->OpenGalacticPanel(2);
-		}
+		HideLoadMenu();
+	}
+	else
+	{
+		ShowLoadMenu();
 	}
 }
 
@@ -555,7 +794,7 @@ void UERHallHUD::HandleSettingsClicked()
 	{
 		if (AHallHUD* HallHUD = Cast<AHallHUD>(PC->GetHUD()))
 		{
-			HallHUD->OpenGalacticPanel(3);
+			HallHUD->OpenGalacticPanel(3, true);
 		}
 	}
 }

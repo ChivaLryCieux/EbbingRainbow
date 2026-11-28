@@ -14,7 +14,9 @@ AHallCameraPawn::AHallCameraPawn()
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationRoll = false;
 
-	AutoPossessPlayer = EAutoReceiveInput::Player0;
+	// 观景机位只作为 GameMode/PlayerController 的显式 ViewTarget 或被接管出生 Pawn;
+	// 禁止自动占领, 否则正常模式会抢走 HallFirstPersonCharacter 的玩家输入。
+	AutoPossessPlayer = EAutoReceiveInput::Disabled;
 
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 

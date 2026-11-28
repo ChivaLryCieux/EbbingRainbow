@@ -34,8 +34,10 @@ class EBBINGRAINBOW_API UERGalaCommandPanel : public UUserWidget
 	GENERATED_BODY()
 
 public:
+	/** bSettingsOnlyMode=true 时只显示设置页并隐藏页签导航, 供标题菜单「设置」使用;
+	 *  这样才能保证委托/整备/银河局势只能由大厅控制台唤醒。 */
 	UFUNCTION(BlueprintCallable, Category = "ERUI|Galactic")
-	void OpenPanel(int32 InitialTab = 0);
+	void OpenPanel(int32 InitialTab = 0, bool bSettingsOnlyMode = false);
 
 	UFUNCTION(BlueprintCallable, Category = "ERUI|Galactic")
 	void ClosePanel();
@@ -78,6 +80,8 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UERActionButton> CampaignSaveRetryButton;
 	UPROPERTY(Transient) TObjectPtr<UERActionButton> RefreshContractsButton;
 	UPROPERTY(Transient) TObjectPtr<UERActionButton> ReinforceAllButton;
+	UPROPERTY(Transient) TObjectPtr<UWidget> TerminalTabRow;
+	UPROPERTY(Transient) TArray<TObjectPtr<UERActionButton>> TabButtons;
 	UPROPERTY(Transient) TObjectPtr<UWidget> ContractsPage;
 	UPROPERTY(Transient) TObjectPtr<UWidget> RosterPage;
 	UPROPERTY(Transient) TObjectPtr<UWidget> SituationPage;
@@ -101,6 +105,7 @@ private:
 
 	bool bBuilt = false;
 	bool bIsOpen = false;
+	bool bSettingsOnlyMode = false;
 	int32 ActiveTab = 0;
 	/** 出击部署已点击、等待下一帧 OpenLevel: 防止卡顿期间重复点击触发多次部署 */
 	bool bDeployInTransit = false;

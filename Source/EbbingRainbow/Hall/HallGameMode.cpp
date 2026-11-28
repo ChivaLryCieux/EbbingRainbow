@@ -4,17 +4,17 @@
 #include "Core/ERLog.h"
 #include "Core/ERDebug.h"
 #include "Hall/HallCameraPawn.h"
-#include "Hall/HallFPPawn.h"
+#include "Hall/HallFirstPersonCharacter.h"
 #include "Hall/HallPlayerController.h"
 #include "Hall/HallHUD.h"
 #include "EngineUtils.h"
 
 AHallGameMode::AHallGameMode()
 {
-	// 默认第一人称大厅 Pawn; -HallShowcase 回到旧的 HallCameraPawn 观景模式
+	// 默认复用军团指挥官输入/相机栈的大厅第一人称化身; -HallShowcase 回到旧的 HallCameraPawn 观景模式
 	DefaultPawnClass = ER::Debug::IsHallShowcase()
 		? AHallCameraPawn::StaticClass()
-		: AHallFPPawn::StaticClass();
+		: AHallFirstPersonCharacter::StaticClass();
 	PlayerControllerClass = AHallPlayerController::StaticClass();
 	HUDClass = AHallHUD::StaticClass();
 }

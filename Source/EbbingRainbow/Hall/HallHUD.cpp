@@ -3,6 +3,7 @@
 #include "Hall/HallHUD.h"
 #include "Core/ERLog.h"
 #include "Hall/HallFPPawn.h"
+#include "Hall/HallPlayerController.h"
 #include "UI/ERGalaCommandPanel.h"
 #include "UI/ERHallHUD.h"
 #include "UI/ERPersonnelPanel.h"
@@ -40,6 +41,11 @@ void AHallHUD::BeginPlay()
 		if (HallWidget)
 		{
 			HallWidget->AddToViewport(10);
+			if (AHallPlayerController* HallPC = Cast<AHallPlayerController>(PC))
+			{
+				if (HallPC->IsFirstPersonActive()) { HallWidget->EnterFirstPersonMode(); }
+				else { HallWidget->ShowTitleMenu(); }
+			}
 		}
 	}
 
@@ -151,7 +157,7 @@ void AHallHUD::HandlePersonnelPanelClosed()
 	UE_LOG(LogERHall, Log, TEXT("[Hall] Personnel panel closed."));
 }
 
-void AHallHUD::OpenGalacticPanel(int32 InitialTab)
+void AHallHUD::OpenGalacticPanel(int32 InitialTab, bool bSettingsOnlyMode)
 {
 	APlayerController* PC = GetOwningPlayerController();
 	if (!PC) { return; }
@@ -173,8 +179,8 @@ void AHallHUD::OpenGalacticPanel(int32 InitialTab)
 		bCursorWasVisibleBeforePanel = PC->bShowMouseCursor;
 		ApplyPanelInputMode(true);
 	}
-	GalacticPanel->OpenPanel(InitialTab);
-	UE_LOG(LogERHall, Log, TEXT("[Hall] Galactic Command Panel opened (tab=%d)."), InitialTab);
+	GalacticPanel->OpenPanel(InitialTab, bSettingsOnlyMode);
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Galactic Command Panel opened (tab=%d, settingsOnly=%d)."), InitialTab, (int32)bSettingsOnlyMode);
 }
 
 void AHallHUD::CloseGalacticPanel()
@@ -205,6 +211,11 @@ void AHallHUD::ApplyPanelInputMode(bool bPanelOpen)
 
 	if (bPanelOpen)
 	{
+		if (bCursorWasVisibleBeforePanel && HallWidget)
+		{
+			// 面板根画布的透明空洞不应把点击漏回标题菜单; 模态期间直接隐藏底层菜单。
+			HallWidget->SetTitleMenuHidden(true);
+		}
 		PC->bShowMouseCursor = true;
 		PC->bEnableClickEvents = true;
 		PC->bEnableMouseOverEvents = true;
@@ -216,6 +227,10 @@ void AHallHUD::ApplyPanelInputMode(bool bPanelOpen)
 	}
 
 	// 还原到打开面板前的状态: 原本在第一人称漫游 -> 收回光标; 原本在 UI 模式 -> 保持光标
+	if (bCursorWasVisibleBeforePanel && HallWidget)
+	{
+		HallWidget->SetTitleMenuHidden(false);
+	}
 	PC->bShowMouseCursor = bCursorWasVisibleBeforePanel;
 	if (bCursorWasVisibleBeforePanel)
 	{
