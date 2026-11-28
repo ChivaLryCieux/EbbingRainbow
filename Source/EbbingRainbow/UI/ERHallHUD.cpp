@@ -25,9 +25,11 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/Engine.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Run/RunSubsystem.h"
 
 TSharedRef<SWidget> UERHallHUD::RebuildWidget()
@@ -92,6 +94,11 @@ void UERHallHUD::NativeConstruct()
 		SettingsButton->SetButtonTexts(INVTEXT("设置"), FText::GetEmpty());
 		SettingsButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSettingsClicked);
 	}
+	if (QuitButton)
+	{
+		QuitButton->SetButtonTexts(INVTEXT("退出游戏"), FText::GetEmpty());
+		QuitButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleQuitClicked);
+	}
 
 	ApplyResonantLayoutStyle();
 
@@ -111,12 +118,7 @@ void UERHallHUD::NativeConstruct()
 
 	RefreshTitleMenuState();
 
-	const FString SloganTag = TEXT("虹膜基金会 · 银河军事指挥服务");
 	const FString SloganSub = TEXT("我们面向全银河提供军事指挥服务");
-	if (MastheadTagText)
-	{
-		MastheadTagText->SetText(FText::FromString(SloganTag));
-	}
 	if (MastheadMetaText)
 	{
 		MastheadMetaText->SetText(FText::FromString(SloganSub));
@@ -127,12 +129,13 @@ void UERHallHUD::NativeConstruct()
 	if (bEnableEntranceAnimation && !IsDesignTime())
 	{
 		EntranceTrack.Trigger(FMath::Max(0.45f, EntranceDuration));
-		MastheadTagCipher.Start(SloganTag, 0.42f, 0.08f);
+		MastheadTagCipher.FinishImmediately();
 		MastheadMetaCipher.FinishImmediately();
 		if (PersonnelButton) { PersonnelButton->TriggerEntrancePulse(0.26f); }
 		if (RoutesButton)    { RoutesButton->TriggerEntrancePulse(0.36f); }
 		if (SituationButton) { SituationButton->TriggerEntrancePulse(0.46f); }
 		if (SettingsButton)  { SettingsButton->TriggerEntrancePulse(0.56f); }
+		if (QuitButton)      { QuitButton->TriggerEntrancePulse(0.66f); }
 		ApplyEntrancePose();
 	}
 	else
@@ -244,7 +247,7 @@ void UERHallHUD::BuildLayout()
 		MS->SetAutoSize(true);
 	}
 
-	// 3. 左下纯白排印纵向导航: 继续游戏 / 开始新游戏 / 读取存档 / 设置
+	// 3. 左下纯白排印纵向导航: 继续游戏 / 开始新游戏 / 读取存档 / 设置 / 退出游戏
 	//    (旧蓝图设计器里的底部双按钮 DockBox 仅作兼容绑定, 折叠隐藏)
 	if (DockBox)
 	{
@@ -273,13 +276,28 @@ void UERHallHUD::BuildLayout()
 		RoutesButton    = MakeNavButton(TEXT("NavRoutesButton"), INVTEXT("02"));
 		SituationButton = MakeNavButton(TEXT("NavSituationButton"), INVTEXT("03"));
 		SettingsButton  = MakeNavButton(TEXT("NavSettingsButton"), INVTEXT("04"));
+		QuitButton      = MakeNavButton(TEXT("NavQuitButton"), INVTEXT("05"));
 
-		UERHallButton* NavButtons[] = { PersonnelButton, RoutesButton, SituationButton, SettingsButton };
+		UERHallButton* NavButtons[] = { PersonnelButton, RoutesButton, SituationButton, SettingsButton, QuitButton };
 		for (UERHallButton* Btn : NavButtons)
 		{
 			NavBox->AddChildToVerticalBox(Btn)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
 		}
 
+		MenuStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
+		MenuStatusText->SetAutoWrapText(true);
+		NavBox->AddChildToVerticalBox(MenuStatusText)->SetPadding(FMargin(14.0f, 6.0f, 0.0f, 0.0f));
+	}
+	if (NavBox && !QuitButton)
+	{
+		QuitButton = WidgetTree->ConstructWidget<UERHallButton>(UERHallButton::StaticClass(), TEXT("NavQuitButton"));
+		QuitButton->IndexCode = INVTEXT("05");
+		QuitButton->AccentColor = T->Accent;
+		QuitButton->bPrimary = true;
+		NavBox->AddChildToVerticalBox(QuitButton)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+	}
+	if (NavBox && !MenuStatusText)
+	{
 		MenuStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
 		MenuStatusText->SetAutoWrapText(true);
 		NavBox->AddChildToVerticalBox(MenuStatusText)->SetPadding(FMargin(14.0f, 6.0f, 0.0f, 0.0f));
@@ -408,6 +426,73 @@ void UERHallHUD::ApplyResonantLayoutStyle()
 	if (MastheadDivider) { MastheadDivider->SetVisibility(ESlateVisibility::Collapsed); }
 	if (DockBox)         { DockBox->SetVisibility(ESlateVisibility::Collapsed); }
 
+	if (MastheadTitleText && !MastheadTitleRow)
+	{
+		if (UVerticalBox* MastCol = Cast<UVerticalBox>(MastheadTitleText->GetParent()))
+		{
+			MastheadTitleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("MastheadTitleRow"));
+			MastheadTitleRow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+			if (UTexture2D* IrisTex = LoadObject<UTexture2D>(nullptr, TEXT("/Game/UI/Textures/T_UI_Faction_Iris_White.T_UI_Faction_Iris_White")))
+			{
+				constexpr float LogoSize = 128.0f;
+				MastheadLogoOverlay = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("MastheadLogoOverlay"));
+				MastheadLogoOverlay->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+				UImage* LogoShadow = ERUI::MakeLogoImage(this, IrisTex, LogoSize);
+				LogoShadow->SetColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.80f));
+				LogoShadow->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+				if (UOverlaySlot* SS = MastheadLogoOverlay->AddChildToOverlay(LogoShadow))
+				{
+					SS->SetHorizontalAlignment(HAlign_Left);
+					SS->SetVerticalAlignment(VAlign_Top);
+					SS->SetPadding(FMargin(5.0f, 7.0f, 0.0f, 0.0f));
+				}
+
+				UImage* LogoMain = ERUI::MakeLogoImage(this, IrisTex, LogoSize);
+				LogoMain->SetColorAndOpacity(FLinearColor(0.99f, 0.99f, 0.98f, 1.0f));
+				LogoMain->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+				if (UOverlaySlot* MS = MastheadLogoOverlay->AddChildToOverlay(LogoMain))
+				{
+					MS->SetHorizontalAlignment(HAlign_Left);
+					MS->SetVerticalAlignment(VAlign_Top);
+					MS->SetPadding(FMargin(0.0f, 0.0f, 5.0f, 7.0f));
+				}
+
+				if (UHorizontalBoxSlot* LS = MastheadTitleRow->AddChildToHorizontalBox(MastheadLogoOverlay))
+				{
+					LS->SetVerticalAlignment(VAlign_Center);
+					LS->SetPadding(FMargin(0.0f, 4.0f, 24.0f, 0.0f));
+				}
+			}
+
+			const bool bMoveDivider = MastheadDivider && MastheadDivider->GetParent() == MastCol;
+			const bool bMoveMeta = MastheadMetaText && MastheadMetaText->GetParent() == MastCol;
+			if (bMoveDivider) { MastheadDivider->RemoveFromParent(); }
+			if (bMoveMeta)    { MastheadMetaText->RemoveFromParent(); }
+
+			MastheadTitleText->RemoveFromParent();
+			if (UHorizontalBoxSlot* TS = MastheadTitleRow->AddChildToHorizontalBox(MastheadTitleText))
+			{
+				TS->SetVerticalAlignment(VAlign_Center);
+				TS->SetPadding(FMargin(0.0f));
+			}
+
+			if (UVerticalBoxSlot* RS = MastCol->AddChildToVerticalBox(MastheadTitleRow))
+			{
+				RS->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+			}
+			if (bMoveDivider)
+			{
+				MastCol->AddChildToVerticalBox(MastheadDivider);
+			}
+			if (bMoveMeta)
+			{
+				MastCol->AddChildToVerticalBox(MastheadMetaText);
+			}
+		}
+	}
+
 	if (MastheadContainer)
 	{
 		if (UCanvasPanelSlot* MS = Cast<UCanvasPanelSlot>(MastheadContainer->Slot))
@@ -417,26 +502,18 @@ void UERHallHUD::ApplyResonantLayoutStyle()
 			MS->SetPosition(FVector2D(72.0f, 58.0f));
 			MS->SetAutoSize(true);
 		}
-		if (MastheadTitleText)
+		if (UWidget* ParentCol = MastheadTitleRow ? MastheadTitleRow->GetParent() : (MastheadTitleText ? MastheadTitleText->GetParent() : nullptr))
 		{
-			if (UWidget* ParentCol = MastheadTitleText->GetParent())
+			if (UOverlaySlot* ColSlot = Cast<UOverlaySlot>(ParentCol->Slot))
 			{
-				if (UOverlaySlot* ColSlot = Cast<UOverlaySlot>(ParentCol->Slot))
-				{
-					ColSlot->SetPadding(FMargin(0.0f));
-				}
+				ColSlot->SetPadding(FMargin(0.0f));
 			}
 		}
 	}
 
 	if (MastheadTagText)
 	{
-		ERUI::ApplyResonantText(MastheadTagText, 13, false, 260,
-			FLinearColor(0.99f, 0.99f, 0.98f, 0.80f), FVector2D(1.5f, 2.0f), 0.84f);
-		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(MastheadTagText->Slot))
-		{
-			S->SetPadding(FMargin(6.0f, 0.0f, 0.0f, 6.0f));
-		}
+		MastheadTagText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	if (MastheadTitleText)
 	{
@@ -454,7 +531,7 @@ void UERHallHUD::ApplyResonantLayoutStyle()
 			FLinearColor(0.99f, 0.99f, 0.98f, 0.88f), FVector2D(1.5f, 2.5f), 0.86f);
 		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(MastheadMetaText->Slot))
 		{
-			S->SetPadding(FMargin(6.0f, 0.0f, 0.0f, 0.0f));
+			S->SetPadding(FMargin(4.0f, 0.0f, 0.0f, 0.0f));
 		}
 	}
 
@@ -909,4 +986,12 @@ void UERHallHUD::HandleSettingsClicked()
 			HallHUD->OpenGalacticPanel(3, true);
 		}
 	}
+}
+
+void UERHallHUD::HandleQuitClicked()
+{
+	UE_LOG(LogERHall, Log, TEXT("[Hall] Quit Game clicked."));
+	UWorld* World = ResolvePlayWorld();
+	UKismetSystemLibrary::QuitGame(World ? static_cast<UObject*>(World) : static_cast<UObject*>(this),
+		GetOwningPlayer(), EQuitPreference::Quit, false);
 }

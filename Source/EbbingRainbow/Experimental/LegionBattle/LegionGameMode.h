@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -18,6 +18,7 @@ class UMaterialInterface;
 class USkeletalMesh;
 class UStaticMesh;
 class UTexture2D;
+class ULegionBoltFX;
 
 /** 战场时间流速档位 */
 UENUM(BlueprintType)
@@ -217,6 +218,13 @@ public:
 
 	/** 真实弹道模拟: 士兵开火生成的轻量子弹 (HUD 据以绘制曳光) */
 	const TArray<FLegionBullet>& GetBullets() const { return Bullets; }
+	/** 命中收尾记录 (仅供显示层, 由显示层推进缩短) —— 可读写, 显示层负责收缩与清理 */
+	TArray<FLegionBoltGhost>& GetBoltGhosts() { return BoltGhosts; }
+	/** 本帧光弹事件 (枪口/命中), 显示层在 GameMode::Tick 内读取, 帧末由 GameMode 清空 */
+	const TArray<FLegionBoltEvent>& GetBoltEvents() const { return BoltEvents; }
+	void ClearBoltEvents() { BoltEvents.Reset(); }
+	/** 供光弹显示层记录事件 (模拟内部也走此入口) */
+	void EmitBoltEvent(ELegionBoltEventType Type, const FVector& Pos, const FVector& NormalOrDir, ELegionTeam Team);
 
 	/** 士兵开火: 在 MuzzlePos 处以 Vel 速度生成一发实体弹道子弹 (阵营取自 Source) */
 	void SpawnBullet(const FVector& MuzzlePos, const FVector& Vel, ALegionUnit* Source);
@@ -326,6 +334,13 @@ private:
 	TArray<FPendingEnemyWave> PendingWaves;
 	TArray<FLegionTracerBeam> TracerBeams;
 	TArray<FLegionBullet> Bullets;
+	/** 命中收尾 (显示数据, 但尾长收缩由显示层写回) */
+	TArray<FLegionBoltGhost> BoltGhosts;
+	/** 每帧清空的光弹事件队列 */
+	TArray<FLegionBoltEvent> BoltEvents;
+	/** 光弹显示层 (BeginPlay 创建, 拥有实例化面片组件) */
+	UPROPERTY()
+	TObjectPtr<ULegionBoltFX> BoltFX;
 
 	/** 子弹命中扫描的复用 scratch, 避免每发子弹重复分配候选数组 */
 	struct FLegionBulletHitCandidate

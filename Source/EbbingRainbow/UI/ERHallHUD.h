@@ -16,6 +16,8 @@ class UERPrismBar;
 class UERTechDivider;
 class UERTechFrame;
 class UHorizontalBox;
+class UImage;
+class UOverlay;
 class UTextBlock;
 class UVerticalBox;
 class UWidgetAnimation;
@@ -42,7 +44,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ERUI|Hall")
 	bool IsZenMode() const { return bZenMode; }
 
-	/** 标题菜单模式: 显示「虹不我与」标题与继续/新游戏/读档/设置四按钮 */
+	/** 标题菜单模式: 显示「虹不我与」标题与继续/新游戏/读档/设置/退出五按钮 */
 	UFUNCTION(BlueprintCallable, Category = "ERUI|Hall")
 	void ShowTitleMenu();
 
@@ -110,6 +112,7 @@ protected:
 	UFUNCTION() void HandleRoutesClicked();
 	UFUNCTION() void HandleSituationClicked();
 	UFUNCTION() void HandleSettingsClicked();
+	UFUNCTION() void HandleQuitClicked();
 	void HandleLoadSlotClicked(int32 SlotIndex);
 	void EnterFirstPersonFromMenu();
 	void ShowLoadMenu();
@@ -134,8 +137,11 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> RoutesButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> SituationButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> SettingsButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UERHallButton> QuitButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UBorder> ZenHintBorder;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ZenHintText;
+	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> MastheadTitleRow;
+	UPROPERTY(Transient) TObjectPtr<UOverlay> MastheadLogoOverlay;
 	UPROPERTY(Transient) TObjectPtr<UBorder> CampaignSaveNoticeBorder;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CampaignSaveNoticeText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> MenuStatusText;

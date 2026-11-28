@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Experimental/LegionBattle/LegionGameMode.h"
 
@@ -8,6 +8,7 @@
 #include "Experimental/LegionBattle/LegionHUD.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
+#include "Legion/FX/LegionBoltFX.h"
 #include "Legion/LegionPerf.h"
 
 #include "Animation/AnimationAsset.h"
@@ -86,6 +87,8 @@ ALegionGameMode::ALegionGameMode()
 void ALegionGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+	BoltFX = NewObject<ULegionBoltFX>(this);
+	BoltFX->Initialize(this);
 
 	int32 V = 0;
 	if (FParse::Value(FCommandLine::Get(), TEXT("-LegionLegions="), V))  { LegionsPerSide = FMath::Max(1, V); }
@@ -359,6 +362,10 @@ void ALegionGameMode::Tick(float DeltaSeconds)
 	}
 	} // end if (bBattleStarted)
 
+	// 光弹显示层: 每帧把模拟数据翻译成实例化面片; 事件队列帧末清空
+	if (BoltFX) { BoltFX->UpdateVisuals(DeltaSeconds); }
+	ClearBoltEvents();
+
 	HandleAutoShot();
 }
 
@@ -513,6 +520,16 @@ void ALegionGameMode::SpawnBullet(const FVector& MuzzlePos, const FVector& Vel, 
 	B.Team = Source->GetTeam();
 	B.Source = Source;
 	Bullets.Add(B);
+	EmitBoltEvent(ELegionBoltEventType::Muzzle, MuzzlePos, Vel.GetSafeNormal(), B.Team);
+}
+
+void ALegionGameMode::EmitBoltEvent(ELegionBoltEventType Type, const FVector& Pos, const FVector& NormalOrDir, ELegionTeam Team)
+{
+	FLegionBoltEvent& Ev = BoltEvents.AddDefaulted_GetRef();
+	Ev.Type = Type;
+	Ev.Pos = Pos;
+	Ev.NormalOrDir = NormalOrDir;
+	Ev.Team = Team;
 }
 
 void ALegionGameMode::SimulateBullets(float DeltaSeconds)
@@ -537,22 +554,27 @@ void ALegionGameMode::SimulateBullets(float DeltaSeconds)
 		FLegionBullet& B = Bullets[i];
 		B.PrevPos = B.Pos;
 		B.Pos += B.Vel * DeltaSeconds;
+		B.Traveled += B.Vel.Size() * DeltaSeconds;
 		B.Life -= DeltaSeconds;
 
 		bool bKill = (B.Life <= 0.0f);
 		FVector SegEnd = B.Pos;
+		bool bFoundHit = false;
+		FVector SoldierHitPos = FVector::ZeroVector;
 
 		// 1. 地形/岩石/树干等静态物遮挡: 线段trace, 命中则截断飞行线段 (掩体自然生效)
 		float TerrainT = 1.0f;
+		FHitResult TerrainHit;
+		bool bTerrainImpact = false;
 		if (!bKill)
 		{
-			FHitResult TerrainHit;
 			FCollisionQueryParams Params(SCENE_QUERY_STAT(LegionBulletTerrain), false);
 			if (World->LineTraceSingleByChannel(TerrainHit, B.PrevPos, B.Pos, ECC_WorldStatic, Params))
 			{
 				TerrainT = FMath::Clamp(TerrainHit.Time, 0.0f, 1.0f);
 				SegEnd = FMath::Lerp(B.PrevPos, B.Pos, TerrainT);
 				bKill = true; // 无论是否先打中士兵, 子弹最多飞到遮挡点
+				bTerrainImpact = true;
 			}
 		}
 
@@ -590,7 +612,7 @@ void ALegionGameMode::SimulateBullets(float DeltaSeconds)
 			// 时间优先扫描: 第一个命中的采样点就是子弹终点, 无需把每个士兵都扫完整段
 			ALegionUnit* HitUnit = nullptr;
 			int32 HitSoldier = INDEX_NONE;
-			bool bFoundHit = false;
+			bFoundHit = false;
 			const bool bHasHitCandidates = (BulletHitCandidates.Num() > 0);
 			for (int32 k = 0; bHasHitCandidates && k <= Steps && !bFoundHit; ++k)
 			{
@@ -611,6 +633,7 @@ void ALegionGameMode::SimulateBullets(float DeltaSeconds)
 					{
 						HitUnit = CandidateUnit;
 						HitSoldier = Candidate.SoldierIndex;
+						SoldierHitPos = P;
 						bFoundHit = true;
 						break;
 					}
@@ -627,6 +650,39 @@ void ALegionGameMode::SimulateBullets(float DeltaSeconds)
 
 		if (bKill)
 		{
+			// 命中收尾 (寿命耗尽的自然消失不产生收尾): 弹头冻结在命中点, 尾长=死亡瞬间可见长度,
+			// 由显示层按弹速收缩 —— 头到尾依次熄灭, 视觉上就是光弹撞进了表面
+			if (B.Life > 0.0f)
+			{
+				FVector HitPos = FVector::ZeroVector;
+				FVector HitNormalOrDir = B.Vel.GetSafeNormal();
+				ELegionBoltEventType EvType = ELegionBoltEventType::Muzzle;
+				bool bHasImpact = false;
+				if (bFoundHit)
+				{
+					HitPos = SoldierHitPos;
+					EvType = ELegionBoltEventType::ImpactSoldier;
+					bHasImpact = true;
+				}
+				else if (bTerrainImpact)
+				{
+					HitPos = SegEnd;
+					HitNormalOrDir = TerrainHit.ImpactNormal;
+					EvType = ELegionBoltEventType::ImpactTerrain;
+					bHasImpact = true;
+				}
+				if (bHasImpact)
+				{
+					FLegionBoltGhost G;
+					G.HeadPos = HitPos;
+					G.Dir = B.Vel.GetSafeNormal();
+					G.TailLen = FMath::Min(200.0f, B.Traveled); // 与 LegionBoltFX::BoltLengthCm 一致
+					G.ShrinkSpeed = B.Vel.Size();
+					G.Team = B.Team;
+					BoltGhosts.Add(G);
+					EmitBoltEvent(EvType, HitPos, HitNormalOrDir, B.Team);
+				}
+			}
 			Bullets.RemoveAtSwap(i);
 		}
 	}

@@ -191,8 +191,38 @@ struct FLegionBullet
 	FVector PrevPos = FVector::ZeroVector;
 	FVector Vel = FVector::ZeroVector;
 	float Life = 0.0f;
+	/** 已飞行距离 (cm): 光弹可见长度取其与设定长度的较小值, 避免刚出膛时尾巴戳到枪口后 */
+	float Traveled = 0.0f;
 	ELegionTeam Team = ELegionTeam::Player;
 	TWeakObjectPtr<ALegionUnit> Source;
+};
+
+/** 命中后的光弹收尾记录 (仅供显示): 弹头冻结在命中点, 尾长按弹速缩短到 0 后移除。
+ *  模拟侧只管写入, 生命周期由显示层推进 —— 不占用模拟帧逻辑。 */
+struct FLegionBoltGhost
+{
+	FVector HeadPos = FVector::ZeroVector;
+	FVector Dir = FVector::ForwardVector;
+	float TailLen = 0.0f;
+	float ShrinkSpeed = 5200.0f;
+	ELegionTeam Team = ELegionTeam::Player;
+};
+
+/** 光弹事件类型: 每帧清空, 仅供显示层生成反馈 (闪光/日后的 Niagara 粒子) */
+enum class ELegionBoltEventType : uint8
+{
+	Muzzle,         // 出膛枪口
+	ImpactTerrain,  // 命中地形/静态物
+	ImpactSoldier,  // 命中士兵
+};
+
+struct FLegionBoltEvent
+{
+	ELegionBoltEventType Type = ELegionBoltEventType::Muzzle;
+	FVector Pos = FVector::ZeroVector;
+	/** 地形命中 = 法线; 枪口/士兵命中 = 飞行方向 */
+	FVector NormalOrDir = FVector::ForwardVector;
+	ELegionTeam Team = ELegionTeam::Player;
 };
 
 /**

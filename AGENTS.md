@@ -171,6 +171,7 @@ ue.py` 是转发到 SteerAgents 的 shim——**新代码直接用 `steeragents`
   单位胶囊对该通道 Ignore、地形默认 Block，不要手写忽略列表。
 - 调试自动化（AutoShot/AutoWin）在 `UBattleDebugSubsystem`，
   别往 GameMode 塞；调试命令/CVar 加 `#if !UE_BUILD_SHIPPING` 或 `ECVF_Cheat`。
+- **Python 搭材质图时 `MaterialExpressionComponentMask` 的 r/g/b/a 位域属性在 python 下设置不生效**（输出仍是 float2，编译报 "Arithmetic between types float3 and float2"）；提取 UV 分量用 DotProduct(uv, (1,0)/(0,1)) 替代，参考 `Scripts/legion_make_bolt_material.py`。`MaterialExpressionBreakOutFloat2Components` 未导出到 python。
 - `.uasset` 可能是**只读**（WFCKit/Materials、Content/Input 等均踩过），保存会静默失败；
   脚本先清只读位（参考 `wfc_apply_futuristic_materials.py`）。
 - `WFCKitTileTable.h` 由 `Scripts/gen_tile_table.py` 生成，勿手改。
