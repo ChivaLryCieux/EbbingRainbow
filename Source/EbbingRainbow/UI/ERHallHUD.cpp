@@ -17,6 +17,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/Spacer.h"
@@ -48,10 +49,7 @@ void UERHallHUD::NativePreConstruct()
 	}
 	Super::NativePreConstruct();
 
-	if (ZenHintText && !ZenHintMessage.IsEmpty())
-	{
-		ZenHintText->SetText(ZenHintMessage);
-	}
+	ApplyResonantLayoutStyle();
 	if (IsDesignTime())
 	{
 		ApplyZenState(bPreviewZenMode);
@@ -73,6 +71,30 @@ void UERHallHUD::NativeConstruct()
 	}
 	RefreshCampaignSaveNotice();
 
+	// 标题主菜单 (按钮变量名保留旧蓝图兼容绑定; 文案/行为已是新游戏流程)
+	if (PersonnelButton)
+	{
+		PersonnelButton->SetButtonTexts(INVTEXT("继续游戏"), FText::GetEmpty());
+		PersonnelButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandlePersonnelClicked);
+	}
+	if (RoutesButton)
+	{
+		RoutesButton->SetButtonTexts(INVTEXT("开始新游戏"), FText::GetEmpty());
+		RoutesButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleRoutesClicked);
+	}
+	if (SituationButton)
+	{
+		SituationButton->SetButtonTexts(INVTEXT("读取存档"), FText::GetEmpty());
+		SituationButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSituationClicked);
+	}
+	if (SettingsButton)
+	{
+		SettingsButton->SetButtonTexts(INVTEXT("设置"), FText::GetEmpty());
+		SettingsButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSettingsClicked);
+	}
+
+	ApplyResonantLayoutStyle();
+
 	if (!bBaseCached)
 	{
 		bBaseCached = true;
@@ -87,39 +109,10 @@ void UERHallHUD::NativeConstruct()
 		}
 	}
 
-	// 标题主菜单 (按钮变量名保留旧蓝图兼容绑定; 文案/行为已是新游戏流程)
-	if (PersonnelButton)
-	{
-		PersonnelButton->SetButtonTexts(INVTEXT("继续游戏"), FText::GetEmpty());
-		PersonnelButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
-		PersonnelButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandlePersonnelClicked);
-	}
-	if (RoutesButton)
-	{
-		RoutesButton->SetButtonTexts(INVTEXT("开始新游戏"), FText::GetEmpty());
-		RoutesButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
-		RoutesButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleRoutesClicked);
-	}
-	if (SituationButton)
-	{
-		SituationButton->SetButtonTexts(INVTEXT("读取存档"), FText::GetEmpty());
-		SituationButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
-		SituationButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSituationClicked);
-	}
-	if (SettingsButton)
-	{
-		SettingsButton->SetButtonTexts(INVTEXT("设置"), FText::GetEmpty());
-		SettingsButton->SetAccentAndPrimary(ERUI::Theme()->Accent, true);
-		SettingsButton->OnButtonClicked.AddUniqueDynamic(this, &UERHallHUD::HandleSettingsClicked);
-	}
 	RefreshTitleMenuState();
-	if (ZenHintText && !ZenHintMessage.IsEmpty())
-	{
-		ZenHintText->SetText(ZenHintMessage);
-	}
 
-	const FString SloganTag = TEXT("虹膜基金会  ·  银河军事指挥服务");
-	const FString SloganSub = TEXT("「 我们面向全银河提供军事指挥服务 」");
+	const FString SloganTag = TEXT("虹膜基金会 · 银河军事指挥服务");
+	const FString SloganSub = TEXT("我们面向全银河提供军事指挥服务");
 	if (MastheadTagText)
 	{
 		MastheadTagText->SetText(FText::FromString(SloganTag));
@@ -127,8 +120,6 @@ void UERHallHUD::NativeConstruct()
 	if (MastheadMetaText)
 	{
 		MastheadMetaText->SetText(FText::FromString(SloganSub));
-		MastheadMetaText->SetFont(ERUI::FontBold(12, 120));
-		MastheadMetaText->SetColorAndOpacity(FSlateColor(ERUI::Theme()->Accent));
 	}
 
 	ApplyZenState(false);
@@ -234,32 +225,26 @@ void UERHallHUD::BuildLayout()
 			S->SetPadding(FMargin(24.0f, 16.0f, 34.0f, 16.0f));
 		}
 
-		MastheadTagText = ERUI::MakeText(this, INVTEXT("虹膜基金会  ·  银河军事指挥服务"), EERTypeScale::Micro, T->BoneSecondary, false);
-		MastheadTagText->SetFont(ERUI::FontBold(13, 120));
+		MastheadTagText = ERUI::MakeText(this, INVTEXT("虹膜基金会 · 银河军事指挥服务"), EERTypeScale::Micro, T->BoneSecondary, false);
 		MCol->AddChildToVerticalBox(MastheadTagText);
 
-		MastheadTitleText = ERUI::MakeText(this, INVTEXT("虹不我与"), EERTypeScale::Display, T->Bone);
-		MastheadTitleText->SetFont(ERUI::FontBold(48, 80));
-		MCol->AddChildToVerticalBox(MastheadTitleText)->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 6.0f));
+		MastheadTitleText = ERUI::MakeText(this, INVTEXT("虹不我与"), EERTypeScale::Hero, T->Bone);
+		MCol->AddChildToVerticalBox(MastheadTitleText);
 
 		MastheadDivider = WidgetTree->ConstructWidget<UERTechDivider>(UERTechDivider::StaticClass(), TEXT("MastheadDivider"));
-		MastheadDivider->AnchorLength = 28.0f;
-		MastheadDivider->AnchorColor = T->Accent;
-		MastheadDivider->LineColor = T->BoneGhost;
-		MastheadDivider->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-		MCol->AddChildToVerticalBox(MastheadDivider)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 7.0f));
+		MastheadDivider->SetVisibility(ESlateVisibility::Collapsed);
+		MCol->AddChildToVerticalBox(MastheadDivider);
 
-		MastheadMetaText = ERUI::MakeText(this, INVTEXT("「 我们面向全银河提供军事指挥服务 」"), EERTypeScale::Micro, T->BoneTertiary, false);
-		MastheadMetaText->SetFont(ERUI::FontBold(14, 120));
+		MastheadMetaText = ERUI::MakeText(this, INVTEXT("我们面向全银河提供军事指挥服务"), EERTypeScale::Micro, T->BoneSecondary, false);
 		MCol->AddChildToVerticalBox(MastheadMetaText);
 
 		UCanvasPanelSlot* MS = DashCanvas->AddChildToCanvas(MastOv);
 		MS->SetAnchors(FAnchors(0.0f, 0.0f));
-		MS->SetPosition(FVector2D(46.0f, 44.0f));
+		MS->SetPosition(FVector2D(72.0f, 58.0f));
 		MS->SetAutoSize(true);
 	}
 
-	// 3. 左部标题下方纵向导航: [01 兵团整备] [02 银河委托] [03 银河局势] [04 设置]
+	// 3. 左下纯白排印纵向导航: 继续游戏 / 开始新游戏 / 读取存档 / 设置
 	//    (旧蓝图设计器里的底部双按钮 DockBox 仅作兼容绑定, 折叠隐藏)
 	if (DockBox)
 	{
@@ -272,7 +257,7 @@ void UERHallHUD::BuildLayout()
 		UCanvasPanelSlot* DockSlot = DashCanvas->AddChildToCanvas(NavBox);
 		DockSlot->SetAnchors(FAnchors(0.0f, 1.0f));
 		DockSlot->SetAlignment(FVector2D(0.0f, 1.0f));
-		DockSlot->SetPosition(FVector2D(46.0f, -56.0f));
+		DockSlot->SetPosition(FVector2D(64.0f, -82.0f));
 		DockSlot->SetAutoSize(true);
 
 		auto MakeNavButton = [&](const TCHAR* Name, const FText& Code) -> UERHallButton*
@@ -292,26 +277,23 @@ void UERHallHUD::BuildLayout()
 		UERHallButton* NavButtons[] = { PersonnelButton, RoutesButton, SituationButton, SettingsButton };
 		for (UERHallButton* Btn : NavButtons)
 		{
-			NavBox->AddChildToVerticalBox(Btn)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+			NavBox->AddChildToVerticalBox(Btn)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
 		}
 
 		MenuStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
-		MenuStatusText->SetFont(ERUI::FontRegular(11, 80));
 		MenuStatusText->SetAutoWrapText(true);
-		NavBox->AddChildToVerticalBox(MenuStatusText)->SetPadding(FMargin(2.0f, 2.0f, 0.0f, 0.0f));
+		NavBox->AddChildToVerticalBox(MenuStatusText)->SetPadding(FMargin(14.0f, 6.0f, 0.0f, 0.0f));
 	}
 
-	// 4. 观景模式提示条 (锐利直角黑曜石条)
+	// 4. 观景模式提示条 (无底卡纯白字 + 错位黑影)
 	if (!ZenHintBorder)
 	{
 		ZenHintBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ZenHintBorder"));
-		ZenHintBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.86f), 1.0f, T->BoneGhost));
-		ZenHintBorder->SetBrushColor(FLinearColor::White);
-		ZenHintBorder->SetPadding(FMargin(24.0f, 10.0f));
+		ZenHintBorder->SetBrush(ERUI::TransparentBrush());
+		ZenHintBorder->SetPadding(FMargin(0.0f));
 		ZenHintBorder->SetVisibility(ESlateVisibility::Hidden);
 
-		ZenHintText = ERUI::MakeText(this, ZenHintMessage, EERTypeScale::Micro, T->BoneSecondary, true);
-		ZenHintText->SetFont(ERUI::FontRegular(9, 200));
+		ZenHintText = ERUI::MakeText(this, ZenHintMessage, EERTypeScale::Micro, T->BoneSecondary, false);
 		ZenHintBorder->SetContent(ZenHintText);
 
 		UCanvasPanelSlot* HintSlot = RootCanvas->AddChildToCanvas(ZenHintBorder);
@@ -321,13 +303,12 @@ void UERHallHUD::BuildLayout()
 		HintSlot->SetAutoSize(true);
 	}
 
-	// 右上银河战役存档提示 (正常时折叠)
+	// 右上银河战役存档提示 (无底卡纯白字 + 错位黑影, 正常时折叠)
 	if (!CampaignSaveNoticeBorder)
 	{
 		CampaignSaveNoticeBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CampaignSaveNoticeBorder"));
-		CampaignSaveNoticeBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.009f, 0.012f, 0.86f), 1.0f, T->BoneGhost));
-		CampaignSaveNoticeBorder->SetBrushColor(FLinearColor::White);
-		CampaignSaveNoticeBorder->SetPadding(FMargin(18.0f, 9.0f));
+		CampaignSaveNoticeBorder->SetBrush(ERUI::TransparentBrush());
+		CampaignSaveNoticeBorder->SetPadding(FMargin(0.0f));
 		CampaignSaveNoticeBorder->SetVisibility(ESlateVisibility::Collapsed);
 
 		CampaignSaveNoticeText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
@@ -337,42 +318,55 @@ void UERHallHUD::BuildLayout()
 		UCanvasPanelSlot* NoticeSlot = RootCanvas->AddChildToCanvas(CampaignSaveNoticeBorder);
 		NoticeSlot->SetAnchors(FAnchors(1.0f, 0.0f));
 		NoticeSlot->SetAlignment(FVector2D(1.0f, 0.0f));
-		NoticeSlot->SetPosition(FVector2D(-46.0f, 44.0f));
+		NoticeSlot->SetPosition(FVector2D(-72.0f, 58.0f));
 		NoticeSlot->SetAutoSize(true);
 	}
 
-	// 读取存档抽屉: 初始折叠, 点击「读取存档」后列出 A/B 战役检查点
+	// 读取存档抽屉: 无底卡建筑竖线 + 纯白错位阴影列表
 	if (!LoadMenuBorder)
 	{
 		LoadMenuBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LoadMenuBorder"));
-		LoadMenuBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.006f, 0.007f, 0.010f, 0.92f), 1.0f, T->BoneGhost));
-		LoadMenuBorder->SetPadding(FMargin(22.0f, 18.0f));
+		LoadMenuBorder->SetBrush(ERUI::TransparentBrush());
+		LoadMenuBorder->SetPadding(FMargin(0.0f));
 		LoadMenuBorder->SetVisibility(ESlateVisibility::Collapsed);
 
+		UHorizontalBox* LoadWrap = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LoadMenuWrap"));
+		LoadMenuBorder->SetContent(LoadWrap);
+
+		UImage* SepLine = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("LoadMenuSepLine"));
+		SepLine->SetBrush(ERUI::WhiteBrush(FVector2D(1.0f, 1.0f)));
+		SepLine->SetColorAndOpacity(FLinearColor(0.99f, 0.99f, 0.98f, 0.35f));
+		{
+			UHorizontalBoxSlot* SS = LoadWrap->AddChildToHorizontalBox(SepLine);
+			SS->SetVerticalAlignment(VAlign_Fill);
+			SS->SetPadding(FMargin(0.0f, 4.0f, 20.0f, 4.0f));
+		}
+
 		UVerticalBox* LoadCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LoadMenuCol"));
-		LoadMenuBorder->SetContent(LoadCol);
+		LoadWrap->AddChildToHorizontalBox(LoadCol);
 
 		UTextBlock* LoadTitle = ERUI::MakeText(this, INVTEXT("选择战役检查点"), EERTypeScale::Title, T->Bone, false);
-		LoadTitle->SetFont(ERUI::FontBold(22, 80));
-		LoadCol->AddChildToVerticalBox(LoadTitle)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+		ERUI::ApplyResonantText(LoadTitle, 17, true, 140, FLinearColor(0.99f, 0.99f, 0.98f, 0.96f), FVector2D(2.0f, 2.5f), 0.86f);
+		LoadCol->AddChildToVerticalBox(LoadTitle)->SetPadding(FMargin(4.0f, 0.0f, 0.0f, 10.0f));
 
 		LoadSlotListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LoadSlotListBox"));
 		LoadCol->AddChildToVerticalBox(LoadSlotListBox);
 
 		LoadMenuStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
-		LoadMenuStatusText->SetFont(ERUI::FontRegular(11, 60));
+		ERUI::ApplyResonantText(LoadMenuStatusText, 13, false, 80, FLinearColor(0.99f, 0.99f, 0.98f, 0.78f), FVector2D(1.5f, 2.0f), 0.86f);
 		LoadMenuStatusText->SetAutoWrapText(true);
-		LoadCol->AddChildToVerticalBox(LoadMenuStatusText)->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 10.0f));
+		LoadCol->AddChildToVerticalBox(LoadMenuStatusText)->SetPadding(FMargin(4.0f, 6.0f, 0.0f, 8.0f));
 
 		UERActionButton* BackBtn = UERActionButton::Make(this, INVTEXT("返回"), 17, false);
-		BackBtn->SetMinSize(150.0f, 0.0f);
+		BackBtn->SetResonantHudStyle(true, true);
+		BackBtn->SetMinSize(140.0f, 0.0f);
 		BackBtn->SetNativeClick([this]() { HideLoadMenu(); });
 		LoadCol->AddChildToVerticalBox(BackBtn);
 
 		UCanvasPanelSlot* LoadSlot = RootCanvas->AddChildToCanvas(LoadMenuBorder);
 		LoadSlot->SetAnchors(FAnchors(0.0f, 1.0f));
 		LoadSlot->SetAlignment(FVector2D(0.0f, 1.0f));
-		LoadSlot->SetPosition(FVector2D(452.0f, -56.0f));
+		LoadSlot->SetPosition(FVector2D(304.0f, -82.0f));
 		LoadSlot->SetAutoSize(true);
 	}
 
@@ -380,7 +374,7 @@ void UERHallHUD::BuildLayout()
 	if (!CrosshairDot)
 	{
 		CrosshairDot = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CrosshairDot"));
-		CrosshairDot->SetBrush(ERUI::RoundedBrush(2.0f, FLinearColor(0.94f, 0.96f, 1.0f, 0.72f), 0.0f, FLinearColor::Transparent));
+		CrosshairDot->SetBrush(ERUI::RoundedBrush(2.0f, FLinearColor(0.96f, 0.97f, 1.0f, 0.80f), 0.0f, FLinearColor::Transparent));
 		CrosshairDot->SetVisibility(ESlateVisibility::Hidden);
 		UCanvasPanelSlot* CrossSlot = RootCanvas->AddChildToCanvas(CrosshairDot);
 		CrossSlot->SetAnchors(FAnchors(0.5f, 0.5f));
@@ -391,11 +385,10 @@ void UERHallHUD::BuildLayout()
 	if (!InteractionPromptBorder)
 	{
 		InteractionPromptBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("InteractionPromptBorder"));
-		InteractionPromptBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.006f, 0.008f, 0.012f, 0.84f), 1.0f, FLinearColor(0.70f, 0.86f, 1.0f, 0.35f)));
-		InteractionPromptBorder->SetPadding(FMargin(20.0f, 9.0f));
+		InteractionPromptBorder->SetBrush(ERUI::TransparentBrush());
+		InteractionPromptBorder->SetPadding(FMargin(0.0f));
 		InteractionPromptBorder->SetVisibility(ESlateVisibility::Hidden);
 		InteractionPromptText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->Bone, false);
-		InteractionPromptText->SetFont(ERUI::FontBold(15, 80));
 		InteractionPromptBorder->SetContent(InteractionPromptText);
 
 		UCanvasPanelSlot* PromptSlot = RootCanvas->AddChildToCanvas(InteractionPromptBorder);
@@ -403,6 +396,124 @@ void UERHallHUD::BuildLayout()
 		PromptSlot->SetAlignment(FVector2D(0.5f, 1.0f));
 		PromptSlot->SetPosition(FVector2D(0.0f, -118.0f));
 		PromptSlot->SetAutoSize(true);
+	}
+
+	ApplyResonantLayoutStyle();
+}
+
+void UERHallHUD::ApplyResonantLayoutStyle()
+{
+	if (CornerReticle)   { CornerReticle->SetVisibility(ESlateVisibility::Collapsed); }
+	if (MastheadFrame)   { MastheadFrame->SetVisibility(ESlateVisibility::Collapsed); }
+	if (MastheadDivider) { MastheadDivider->SetVisibility(ESlateVisibility::Collapsed); }
+	if (DockBox)         { DockBox->SetVisibility(ESlateVisibility::Collapsed); }
+
+	if (MastheadContainer)
+	{
+		if (UCanvasPanelSlot* MS = Cast<UCanvasPanelSlot>(MastheadContainer->Slot))
+		{
+			MS->SetAnchors(FAnchors(0.0f, 0.0f));
+			MS->SetAlignment(FVector2D(0.0f, 0.0f));
+			MS->SetPosition(FVector2D(72.0f, 58.0f));
+			MS->SetAutoSize(true);
+		}
+		if (MastheadTitleText)
+		{
+			if (UWidget* ParentCol = MastheadTitleText->GetParent())
+			{
+				if (UOverlaySlot* ColSlot = Cast<UOverlaySlot>(ParentCol->Slot))
+				{
+					ColSlot->SetPadding(FMargin(0.0f));
+				}
+			}
+		}
+	}
+
+	if (MastheadTagText)
+	{
+		ERUI::ApplyResonantText(MastheadTagText, 13, false, 260,
+			FLinearColor(0.99f, 0.99f, 0.98f, 0.80f), FVector2D(1.5f, 2.0f), 0.84f);
+		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(MastheadTagText->Slot))
+		{
+			S->SetPadding(FMargin(6.0f, 0.0f, 0.0f, 6.0f));
+		}
+	}
+	if (MastheadTitleText)
+	{
+		MastheadTitleText->SetText(INVTEXT("虹不我与"));
+		ERUI::ApplyResonantText(MastheadTitleText, 124, true, 160,
+			FLinearColor(0.99f, 0.99f, 0.98f, 1.00f), FVector2D(5.0f, 7.0f), 0.80f);
+		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(MastheadTitleText->Slot))
+		{
+			S->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		}
+	}
+	if (MastheadMetaText)
+	{
+		ERUI::ApplyResonantText(MastheadMetaText, 15, false, 220,
+			FLinearColor(0.99f, 0.99f, 0.98f, 0.88f), FVector2D(1.5f, 2.5f), 0.86f);
+		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(MastheadMetaText->Slot))
+		{
+			S->SetPadding(FMargin(6.0f, 0.0f, 0.0f, 0.0f));
+		}
+	}
+
+	if (NavBox)
+	{
+		if (UCanvasPanelSlot* DockSlot = Cast<UCanvasPanelSlot>(NavBox->Slot))
+		{
+			DockSlot->SetAnchors(FAnchors(0.0f, 1.0f));
+			DockSlot->SetAlignment(FVector2D(0.0f, 1.0f));
+			DockSlot->SetPosition(FVector2D(64.0f, -82.0f));
+			DockSlot->SetAutoSize(true);
+		}
+	}
+	if (MenuStatusText)
+	{
+		ERUI::ApplyResonantText(MenuStatusText, 13, false, 100,
+			FLinearColor(0.99f, 0.99f, 0.98f, 0.80f), FVector2D(1.5f, 2.0f), 0.86f);
+	}
+
+	if (ZenHintBorder)
+	{
+		ZenHintBorder->SetBrush(ERUI::TransparentBrush());
+		ZenHintBorder->SetPadding(FMargin(0.0f));
+	}
+	if (ZenHintText)
+	{
+		FText HintText = ZenHintMessage;
+		if (HintText.ToString().Contains(TEXT("ZEN MODE")))
+		{
+			HintText = INVTEXT("观景模式 · 点击任意位置或按 ESC 返回");
+		}
+		if (!HintText.IsEmpty())
+		{
+			ZenHintText->SetText(HintText);
+		}
+		ERUI::ApplyResonantText(ZenHintText, 13, false, 180,
+			FLinearColor(0.99f, 0.99f, 0.98f, 0.82f), FVector2D(1.5f, 2.0f), 0.86f);
+	}
+
+	if (CampaignSaveNoticeBorder)
+	{
+		CampaignSaveNoticeBorder->SetBrush(ERUI::TransparentBrush());
+		CampaignSaveNoticeBorder->SetPadding(FMargin(0.0f));
+	}
+	if (CampaignSaveNoticeText)
+	{
+		ERUI::ApplyResonantText(CampaignSaveNoticeText, 13, false, 100,
+			FLinearColor(0.99f, 0.99f, 0.98f, 0.86f), FVector2D(1.5f, 2.0f), 0.86f);
+	}
+
+	if (InteractionPromptBorder)
+	{
+		InteractionPromptBorder->SetBrush(ERUI::TransparentBrush());
+		InteractionPromptBorder->SetPadding(FMargin(0.0f));
+	}
+	if (InteractionPromptText)
+	{
+		ERUI::ApplyResonantText(InteractionPromptText, 19, true, 160,
+			FLinearColor(0.99f, 0.99f, 0.98f, 0.98f), FVector2D(2.0f, 3.0f), 0.90f);
 	}
 }
 
@@ -473,7 +584,7 @@ void UERHallHUD::RefreshTitleMenuState()
 	if (PersonnelButton)
 	{
 		PersonnelButton->SetIsEnabled(bCanContinue);
-		PersonnelButton->SetRenderOpacity(bCanContinue ? 1.0f : 0.42f);
+		PersonnelButton->SetRenderOpacity(1.0f);
 	}
 	if (MenuStatusText)
 	{
@@ -536,9 +647,10 @@ void UERHallHUD::RebuildLoadSlotList()
 
 		const int32 SlotIndex = Info.SlotIndex;
 		UERActionButton* SlotButton = UERActionButton::Make(this, FText::FromString(Label), 16, true);
-		SlotButton->SetMinSize(620.0f, 0.0f);
+		SlotButton->SetResonantHudStyle(true, true);
+		SlotButton->SetMinSize(560.0f, 0.0f);
 		SlotButton->SetNativeClick([this, SlotIndex]() { HandleLoadSlotClicked(SlotIndex); });
-		LoadSlotListBox->AddChildToVerticalBox(SlotButton)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+		LoadSlotListBox->AddChildToVerticalBox(SlotButton)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 6.0f));
 	}
 
 	if (ValidCount == 0 && LoadMenuStatusText)

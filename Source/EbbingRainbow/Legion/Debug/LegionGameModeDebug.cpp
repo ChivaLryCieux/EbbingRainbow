@@ -259,6 +259,102 @@ void ALegionGameMode::HandleAutoShot()
 		}
 		return;
 	}
+
+	// -PauseShot: 验证 Esc 暂停画面 (游戏暂停 / 操控切断 / 光标出现 / 三按钮 / 设置弹窗 / 恢复)
+	if (bPauseShotRequested)
+	{
+		AutoShotTimer += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+		if (AutoShotStage == 0 && AutoShotTimer > 1.2f)
+		{
+			AutoShotStage = 1;
+			if (IConsoleVariable* CV = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality")))
+			{
+				CV->Set(0);
+			}
+			if (ALegionPlayerController* PC = GetWorld() ? Cast<ALegionPlayerController>(GetWorld()->GetFirstPlayerController()) : nullptr)
+			{
+				PC->SetPauseMenuOpen(true);
+			}
+
+			TWeakObjectPtr<ALegionGameMode> WeakGM(this);
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakGM](float)
+			{
+				ALegionGameMode* G = WeakGM.Get();
+				UWorld* W = G ? G->GetWorld() : nullptr;
+				ALegionPlayerController* PC = W ? Cast<ALegionPlayerController>(W->GetFirstPlayerController()) : nullptr;
+				ALegionHUD* HUD = PC ? Cast<ALegionHUD>(PC->GetHUD()) : nullptr;
+				ALegionCommanderCharacter* Cmd = PC ? Cast<ALegionCommanderCharacter>(PC->GetPawn()) : nullptr;
+
+				int32 Fails = 0;
+				auto Check = [&Fails](const char* Name, bool bOk)
+				{
+					UE_LOG(LogERLegion, Log, TEXT("[LegionPauseTest] %s: %s"),
+						bOk ? TEXT("PASS") : TEXT("FAIL"), UTF8_TO_TCHAR(Name));
+					if (!bOk) { ++Fails; }
+				};
+
+				Check("game is paused when pause menu opens", G && UGameplayStatics::IsGamePaused(G) && G->GetTacticalTimeMode() == ELegionTimeMode::Paused);
+				Check("controller pause state active", PC && PC->IsPauseMenuOpen());
+				Check("mouse cursor is visible", PC && PC->bShowMouseCursor);
+				Check("move & look inputs are ignored", PC && PC->IsMoveInputIgnored() && PC->IsLookInputIgnored());
+				bool bAimBlocked = false;
+				if (PC && Cmd)
+				{
+					const FRotator BeforeRot = PC->GetControlRotation();
+					Cmd->DoAim(45.0f, 15.0f);
+					bAimBlocked = PC->GetControlRotation().Equals(BeforeRot, 0.01f);
+				}
+				Check("first-person aim blocked while paused", bAimBlocked);
+				Check("pause screen visible", HUD && HUD->IsPauseMenuVisible());
+
+				FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionPause"), true, true);
+
+				TWeakObjectPtr<ALegionHUD> WeakHUD(HUD);
+				TWeakObjectPtr<ALegionPlayerController> WeakPC(PC);
+				FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakGM, WeakHUD, WeakPC, Fails](float) mutable
+				{
+					ALegionHUD* H = WeakHUD.Get();
+					ALegionPlayerController* P = WeakPC.Get();
+					if (H) { H->OpenPauseSettings(); }
+
+					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakGM, WeakHUD, WeakPC, Fails](float) mutable
+					{
+						ALegionHUD* H2 = WeakHUD.Get();
+						ALegionPlayerController* P2 = WeakPC.Get();
+						ALegionGameMode* G2 = WeakGM.Get();
+						auto Check2 = [&Fails](const char* Name, bool bOk)
+						{
+							UE_LOG(LogERLegion, Log, TEXT("[LegionPauseTest] %s: %s"),
+								bOk ? TEXT("PASS") : TEXT("FAIL"), UTF8_TO_TCHAR(Name));
+							if (!bOk) { ++Fails; }
+						};
+						Check2("settings panel opened from pause menu", H2 && H2->IsPauseSettingsOpen());
+						FScreenshotRequest::RequestScreenshot(FPaths::ScreenShotDir() / TEXT("LegionPauseSettings"), true, true);
+
+						FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakGM, WeakHUD, WeakPC, Fails](float) mutable
+						{
+							ALegionHUD* H3 = WeakHUD.Get();
+							ALegionPlayerController* P3 = WeakPC.Get();
+							ALegionGameMode* G3 = WeakGM.Get();
+							if (H3) { H3->ClosePauseSettings(); }
+							if (P3) { P3->SetPauseMenuOpen(false); }
+							const bool bResumed = G3 && !UGameplayStatics::IsGamePaused(G3) && P3 && !P3->IsPauseMenuOpen();
+							UE_LOG(LogERLegion, Log, TEXT("[LegionPauseTest] %s: resume restored unpaused state"),
+								bResumed ? TEXT("PASS") : TEXT("FAIL"));
+							if (!bResumed) { ++Fails; }
+							UE_LOG(LogERLegion, Log, TEXT("[LegionPauseTest] done: %s (%d failed)"),
+								Fails == 0 ? TEXT("ALL PASS") : TEXT("HAS FAILURES"), Fails);
+							return false;
+						}), 0.4f);
+						return false;
+					}), 0.4f);
+					return false;
+				}), 0.4f);
+				return false;
+			}), 0.4f);
+		}
+		return;
+	}
 #endif
 
 	// -LegionAIShot: 四态连拍验证弱 AI 与单兵自治动画 (放松态 / 战略图巡逻侦察 / 警戒巡逻近景 / 交战抢射界近景)

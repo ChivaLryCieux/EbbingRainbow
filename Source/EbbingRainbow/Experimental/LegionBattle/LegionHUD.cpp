@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Experimental/LegionBattle/LegionHUD.h"
 
@@ -14,10 +14,12 @@
 #include "Experimental/LegionBattle/LegionDeployScreen.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
 #include "Experimental/LegionBattle/LegionHUDWidget.h"
+#include "Experimental/LegionBattle/LegionPauseScreen.h"
 #include "Experimental/LegionBattle/LegionPlayerController.h"
 #include "Experimental/LegionBattle/LegionUnit.h"
 #include "Experimental/LegionBattle/LegionWeather.h"
 #include "GameFramework/PlayerController.h"
+#include "UI/ERGalaCommandPanel.h"
 #include "UI/ERUIStatics.h"
 #include "UI/ERUITheme.h"
 
@@ -34,7 +36,7 @@ void ALegionHUD::BeginPlay()
 		}
 
 		// 出击部署接驳屏: 战斗未打响时铺满全屏, 封锁输入并轮询流送/植被就绪度;
-		// 就绪后由玩家点击「进入战场」才真正开战 (自动化链路 GameMode 会直接置 bBattleStarted, 不进此分支)
+		// 就绪后由玩家点击「接入虹膜」才真正开战 (自动化链路 GameMode 会直接置 bBattleStarted, 不进此分支)
 		ALegionGameMode* GM = GetWorld() ? Cast<ALegionGameMode>(GetWorld()->GetAuthGameMode()) : nullptr;
 		if (GM && !GM->IsBattleStarted())
 		{
@@ -83,12 +85,129 @@ UTexture2D* ALegionHUD::GetClassLogoTexture(ELegionClass Archetype, bool bAlly) 
 
 void ALegionHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (SettingsPanel)
+	{
+		SettingsPanel->RemoveFromParent();
+		SettingsPanel = nullptr;
+	}
+	if (PauseScreen)
+	{
+		PauseScreen->RemoveFromParent();
+		PauseScreen = nullptr;
+	}
 	if (Widget)
 	{
 		Widget->RemoveFromParent();
 		Widget = nullptr;
 	}
 	Super::EndPlay(EndPlayReason);
+}
+
+void ALegionHUD::SetPauseMenuVisible(bool bVisible)
+{
+	APlayerController* PC = GetOwningPlayerController();
+	if (!PC) { return; }
+
+	if (bVisible)
+	{
+		if (!PauseScreen)
+		{
+			PauseScreen = CreateWidget<ULegionPauseScreen>(PC, ULegionPauseScreen::StaticClass());
+			if (PauseScreen)
+			{
+				TWeakObjectPtr<ALegionPlayerController> WeakPC(Cast<ALegionPlayerController>(PC));
+				TWeakObjectPtr<ALegionHUD> WeakHUD(this);
+				PauseScreen->OnResumeClicked.BindLambda([WeakPC]()
+				{
+					if (ALegionPlayerController* LPC = WeakPC.Get()) { LPC->SetPauseMenuOpen(false); }
+				});
+				PauseScreen->OnAbortClicked.BindLambda([WeakPC]()
+				{
+					if (ALegionPlayerController* LPC = WeakPC.Get()) { LPC->AbortBattleFromPause(); }
+				});
+				PauseScreen->OnSettingsClicked.BindLambda([WeakHUD]()
+				{
+					if (ALegionHUD* H = WeakHUD.Get()) { H->OpenPauseSettings(); }
+				});
+				PauseScreen->AddToViewport(200);
+			}
+		}
+		if (PauseScreen)
+		{
+			PauseScreen->ShowPauseMenu();
+		}
+		if (Widget)
+		{
+			Widget->SetPauseMenuMode(true);
+		}
+		return;
+	}
+
+	if (SettingsPanel && SettingsPanel->IsPanelOpen())
+	{
+		SettingsPanel->ClosePanel();
+	}
+	if (PauseScreen)
+	{
+		PauseScreen->HidePauseMenu();
+	}
+	if (Widget)
+	{
+		Widget->SetPauseMenuMode(false);
+	}
+}
+
+void ALegionHUD::OpenPauseSettings()
+{
+	APlayerController* PC = GetOwningPlayerController();
+	if (!PC) { return; }
+
+	if (!SettingsPanel)
+	{
+		SettingsPanel = CreateWidget<UERGalaCommandPanel>(PC, UERGalaCommandPanel::StaticClass());
+		if (SettingsPanel)
+		{
+			SettingsPanel->OnPanelClosed.AddUniqueDynamic(this, &ALegionHUD::HandlePauseSettingsClosed);
+			SettingsPanel->AddToViewport(250);
+		}
+	}
+	if (PauseScreen)
+	{
+		PauseScreen->HidePauseMenu();
+	}
+	if (SettingsPanel)
+	{
+		SettingsPanel->OpenPanel(3, true);
+	}
+}
+
+void ALegionHUD::ClosePauseSettings()
+{
+	if (SettingsPanel && SettingsPanel->IsPanelOpen())
+	{
+		SettingsPanel->ClosePanel();
+	}
+}
+
+void ALegionHUD::HandlePauseSettingsClosed()
+{
+	if (ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetOwningPlayerController()))
+	{
+		if (PC->IsPauseMenuOpen() && PauseScreen)
+		{
+			PauseScreen->ShowPauseMenu();
+		}
+	}
+}
+
+bool ALegionHUD::IsPauseMenuVisible() const
+{
+	return PauseScreen && PauseScreen->IsPauseMenuVisible();
+}
+
+bool ALegionHUD::IsPauseSettingsOpen() const
+{
+	return SettingsPanel && SettingsPanel->IsPanelOpen();
 }
 
 void ALegionHUD::DrawHUD()
@@ -101,8 +220,8 @@ void ALegionHUD::DrawHUD()
 	ALegionPlayerController* PC = Cast<ALegionPlayerController>(GetOwningPlayerController());
 	if (!GM || !PC) { return; }
 
-	// 战终结算画面: 隐藏所有战场 2D/3D 叠层 (雨丝/阵型圈/番号/小地图/准星), 只留冻结的纯粹战场与极简结算字样
-	if (GM->IsBattleOver())
+	// 战终结算或暂停菜单期间: 隐藏所有战场 2D/3D 叠层 (雨丝/阵型圈/番号/小地图/准星)
+	if (GM->IsBattleOver() || PC->IsPauseMenuOpen())
 	{
 		EnemySkyBannerEntries.Reset();
 		return;
@@ -154,8 +273,8 @@ void ALegionHUD::DrawHUD()
 			}
 		}
 	}
-
-	// 1. 远程齐射弹道 / 技能冲击线
+	// 曳光束与实体子弹 Canvas 线 (2026-12-03 恢复兜底: 光弹 ISM 管线尚未在实机验证可见,
+	// 待 LegionBoltFX 组件渲染问题定位后再行移除; 两套绘制并存期光弹调试成本为零)
 	for (const FLegionTracerBeam& B : GM->GetTracerBeams())
 	{
 		const float Alpha = FMath::Clamp(B.Remaining / FMath::Max(0.01f, B.Duration), 0.0f, 1.0f);
@@ -163,8 +282,6 @@ void ALegionHUD::DrawHUD()
 		C.A *= Alpha;
 		DrawProjectedLine(B.Start, B.End, C, 2.2f);
 	}
-
-	// 1b. 实体弹道曳光: 每发在飞子弹绘一小段速度方向亮线 (我方偏青/敌方偏橙红)
 	for (const FLegionBullet& B : GM->GetBullets())
 	{
 		const FVector Tail = B.Pos - B.Vel * 0.016f;
@@ -173,6 +290,7 @@ void ALegionHUD::DrawHUD()
 			: FLinearColor(1.0f, 0.38f, 0.16f, 0.95f);
 		DrawProjectedLine(Tail, B.Pos, C, 1.6f);
 	}
+
 
 	// 2. 敌军增援空降点预警
 	const float Now = GM->GetBattleElapsed();
@@ -414,7 +532,7 @@ void ALegionHUD::DrawCrosshair(ALegionPlayerController* PC)
 
 		if (bEnemy)
 		{
-			// 瞄准天空 Logo 时把提示放在铭牌下方并配暗曜石底衬, 不与 Logo / 番号文字重叠
+			// 瞄准天空 Logo 时把提示放在铭牌下方: 纯白错位黑影文字 + 左侧细竖标, 无底盒
 			float BannerBotY = CY + 62.0f;
 			if (GetEnemySkyBannerBottomY(Aim, BannerBotY))
 			{
@@ -428,24 +546,23 @@ void ALegionHUD::DrawCrosshair(ALegionPlayerController* PC)
 			float HW = 0.0f, HH = 0.0f;
 			Canvas->TextSize(Font, Hint, HW, HH, 1.0f, 1.0f);
 
-			const float PadX = 10.0f;
-			const float PadY = 4.0f;
-			const float PillW = HW + PadX * 2.0f + 4.0f;
-			const float PillH = HH + PadY * 2.0f;
-			const float PillX = CX - PillW * 0.5f;
-			const float PillY = BannerBotY;
+			const float TickW = 3.0f;
+			const float TotalW = TickW + 8.0f + HW;
+			const float StartX = CX - TotalW * 0.5f;
+			const float TextY = BannerBotY;
 			const FLinearColor BarCol = bHasSel ? FLinearColor(1.0f, 0.28f, 0.16f, 1.0f) : T->BoneSecondary;
 
-			DrawRect(FLinearColor(0.012f, 0.014f, 0.020f, 0.88f), PillX, PillY, PillW, PillH);
-			DrawRect(BarCol, PillX, PillY, 4.0f, PillH);
-			DrawText(Hint, bHasSel ? T->Bone : T->BoneSecondary, PillX + 4.0f + PadX, PillY + PadY, Font, 1.0f, false);
+			DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.78f), StartX + 1.5f, TextY + 1.5f, TickW, HH);
+			DrawRect(BarCol, StartX, TextY, TickW, HH);
+			DrawResonantText(Hint, bHasSel ? FLinearColor(0.99f, 0.99f, 0.98f, 1.0f) : FLinearColor(0.96f, 0.96f, 0.95f, 0.80f),
+				StartX + TickW + 8.0f, TextY, Font, 1.0f);
 		}
 		else
 		{
 			const FString Label = FString::Printf(TEXT("%s  %d/%d"), *Aim->GetCallsign(), Aim->GetAliveCount(), Aim->GetSoldierCount());
 			float TW = 0.0f, TH = 0.0f;
 			Canvas->TextSize(Font, Label, TW, TH, 1.0f, 1.0f);
-			DrawText(Label, Col, CX - TW * 0.5f, CY + 26.0f, Font, 1.0f, false);
+			DrawResonantText(Label, FLinearColor(0.99f, 0.99f, 0.98f, 0.98f), CX - TW * 0.5f, CY + 26.0f, Font, 1.0f);
 		}
 	}
 }
@@ -1177,7 +1294,17 @@ void ALegionHUD::DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* 
 			constexpr float PadX = 9.0f;
 			constexpr float IconGap = 9.0f;
 
-			DrawBonePlate(Rect.Min.X, Rect.Min.Y, Sz.X, Sz.Y, It.MarkCol, false, It.bSel, false);
+			// 暗曜石极简卡片: 在黑白高对比等高线底图上保持清晰, 纯白字 + 错位黑影 + 左侧阵营条
+			DrawRect(FLinearColor(0.008f, 0.010f, 0.014f, 0.86f), Rect.Min.X, Rect.Min.Y, Sz.X, Sz.Y);
+			DrawRect(It.MarkCol, Rect.Min.X, Rect.Min.Y, BarW, Sz.Y);
+			{
+				const FLinearColor BorderCol = It.bSel ? T->Accent : FLinearColor(0.92f, 0.92f, 0.90f, 0.22f);
+				const float Th = It.bSel ? 1.8f : 1.0f;
+				DrawLine(Rect.Min.X, Rect.Min.Y, Rect.Max.X, Rect.Min.Y, BorderCol, Th);
+				DrawLine(Rect.Max.X, Rect.Min.Y, Rect.Max.X, Rect.Max.Y, BorderCol, Th);
+				DrawLine(Rect.Max.X, Rect.Max.Y, Rect.Min.X, Rect.Max.Y, BorderCol, Th);
+				DrawLine(Rect.Min.X, Rect.Max.Y, Rect.Min.X, Rect.Min.Y, BorderCol, Th);
+			}
 
 			// 大号部队 Logo (暗曜石内框 + 技能图标占位)
 			const float IX = Rect.Min.X + BarW + PadX + 2.0f;
@@ -1193,45 +1320,68 @@ void ALegionHUD::DrawStrategicMap(ALegionGameMode* GM, ALegionPlayerController* 
 				}
 			}
 
-			// 右侧两行: 部队名称 + 兵员数量 + 贴底细血条
+			// 右侧两行: 纯白错位阴影部队名称 + 兵员数量 + 贴底细血条
 			const float TextX = IX + It.IconSz + 2.0f + IconGap;
 			const float TextBlockH = It.NameH + It.SubH + 3.0f;
 			const float TextTopY = Rect.Min.Y + (Sz.Y - 5.0f - TextBlockH) * 0.5f;
-			DrawText(It.Name, ERUI::InkText(It.bAlly ? 1.0f : 0.88f), TextX, TextTopY, Font, 1.32f, false);
-			DrawText(It.Sub, ERUI::InkText(0.68f), TextX, TextTopY + It.NameH + 3.0f, Font, 1.02f, false);
+			DrawResonantText(It.Name, FLinearColor(0.99f, 0.99f, 0.98f, It.bAlly ? 1.0f : 0.92f), TextX, TextTopY, Font, 1.32f);
+			DrawResonantText(It.Sub, FLinearColor(0.92f, 0.92f, 0.90f, 0.74f), TextX, TextTopY + It.NameH + 3.0f, Font, 1.02f);
 
 			const float HPRatio = FMath::Clamp(It.Unit->GetLegionHP() / FMath::Max(1.0f, It.Unit->GetLegionMaxHP()), 0.0f, 1.0f);
 			const float BarX = TextX;
 			const float BarWMax = FMath::Max(16.0f, Rect.Max.X - PadX - BarX);
-			DrawRect(FLinearColor(0.02f, 0.02f, 0.03f, 0.22f), BarX, Rect.Max.Y - 6.0f, BarWMax, 3.0f);
+			DrawRect(FLinearColor(0.92f, 0.92f, 0.90f, 0.18f), BarX, Rect.Max.Y - 6.0f, BarWMax, 3.0f);
 			DrawRect(It.MarkCol, BarX, Rect.Max.Y - 6.0f, BarWMax * HPRatio, 3.0f);
 
 			StrategicBadgeRects.Add({ It.Unit, Rect });
 		}
 	}
 
-	// 右上角「返回战场」按钮 + 缩放读数 (右对齐, 彻底让出地图顶部中央视野)
+	// 右上角「返回战场」按钮 + 缩放读数 (无底卡纯白字 + 错位黑影 + 左侧虹彩条)
 	{
 		const FBox2D BR = GetMapReturnButtonRect(SX, SY);
 		float MX = 0.0f, MY = 0.0f;
 		const bool bHover = PC->GetMousePosition(MX, MY) && BR.IsInside(FVector2D(MX, MY));
 		const FVector2D Sz = BR.GetSize();
-		DrawBonePlate(BR.Min.X, BR.Min.Y, Sz.X, Sz.Y, T->Accent, true, false, bHover);
 
 		const FString Txt = TEXT("返回战场");
 		const float BtnScale = 1.85f;
 		float TW = 0.0f, TH = 0.0f;
 		Canvas->TextSize(Font, Txt, TW, TH, BtnScale, BtnScale);
-		DrawText(Txt, ERUI::InkText(),
-			BR.Min.X + 4.0f + (Sz.X - 4.0f - TW) * 0.5f, BR.Min.Y + (Sz.Y - TH) * 0.5f, Font, BtnScale, false);
+
+		const float PrismW = 3.0f;
+		const float TextX = BR.Max.X - TW;
+		const float TextY = BR.Min.Y + (Sz.Y - TH) * 0.5f;
+		const float PrismX = TextX - 14.0f;
+		const float S3 = TH / 3.0f;
+		DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.80f), PrismX + 1.5f, TextY + 1.5f, PrismW, TH);
+		DrawRect(T->PrismStart, PrismX, TextY, PrismW, S3 + 1.0f);
+		DrawRect(T->PrismMid, PrismX, TextY + S3, PrismW, S3 + 1.0f);
+		DrawRect(T->PrismEnd, PrismX, TextY + 2.0f * S3, PrismW, TH - 2.0f * S3);
+
+		DrawResonantText(Txt, bHover ? FLinearColor(1.0f, 1.0f, 1.0f, 1.0f) : FLinearColor(0.99f, 0.99f, 0.98f, 0.88f),
+			TextX, TextY, Font, BtnScale, FVector2D(2.2f, 2.8f), 0.90f);
+		if (bHover)
+		{
+			DrawLine(TextX, TextY + TH + 2.0f, TextX + TW, TextY + TH + 2.0f, FLinearColor(0.99f, 0.99f, 0.98f, 0.90f), 1.0f);
+		}
 
 		const bool bPaused = GM->GetTacticalTimeMode() == ELegionTimeMode::Paused;
 		const FString ZoomTxt = FString::Printf(TEXT("缩放 %.1f 倍  ·  %s"), View.Zoom,
 			bPaused ? TEXT("战场已暂停 · 命令在返回战场后执行") : TEXT("兵团正在执行命令"));
 		float ZW = 0.0f, ZH = 0.0f;
 		Canvas->TextSize(Font, ZoomTxt, ZW, ZH, 1.05f, 1.05f);
-		DrawText(ZoomTxt, T->BoneSecondary, BR.Max.X - ZW, BR.Max.Y + 8.0f, Font, 1.05f, false);
+		DrawResonantText(ZoomTxt, FLinearColor(0.99f, 0.99f, 0.98f, 0.72f), BR.Max.X - ZW, BR.Max.Y + 8.0f, Font, 1.05f);
 	}
+}
+
+void ALegionHUD::DrawResonantText(const FString& Text, const FLinearColor& Color, float X, float Y,
+	UFont* Font, float Scale, FVector2D ShadowOffset, float ShadowAlpha)
+{
+	if (!Canvas || Text.IsEmpty()) { return; }
+	const FLinearColor ShadowCol(0.0f, 0.0f, 0.0f, FMath::Clamp(ShadowAlpha * Color.A, 0.0f, 1.0f));
+	DrawText(Text, ShadowCol, X + ShadowOffset.X, Y + ShadowOffset.Y, Font, Scale, false);
+	DrawText(Text, Color, X, Y, Font, Scale, false);
 }
 
 void ALegionHUD::DrawBonePlate(float X, float Y, float W, float H, const FLinearColor& Accent,
@@ -1263,10 +1413,9 @@ void ALegionHUD::DrawBonePlate(float X, float Y, float W, float H, const FLinear
 
 void ALegionHUD::DrawProjectedLine(const FVector& A, const FVector& B, const FLinearColor& Color, float Thickness)
 {
-	const FVector PA = Canvas->Project(A, false);
-	const FVector PB = Canvas->Project(B, false);
-	if (PA.Z <= 0.0f || PB.Z <= 0.0f) { return; }
-	DrawLine(PA.X, PA.Y, PB.X, PB.Y, Color, Thickness);
+	// 一律走近平面裁剪: 端点贴近相机时未裁剪的投影坐标会发散成横贯全屏的长线,
+	// 裁剪后的线段才是数学上正确的投影 (DrawClippedWorldLine 内部已实现)
+	DrawClippedWorldLine(A, B, Color, Thickness);
 }
 
 void ALegionHUD::DrawClippedWorldLine(const FVector& A, const FVector& B, const FLinearColor& Color, float Thickness)
@@ -1407,13 +1556,10 @@ void ALegionHUD::DrawEnemySkyBanner(ALegionUnit* Unit, ALegionPlayerController* 
 		DrawLine(Proj.X - HalfTick, TickY, Proj.X + HalfTick, TickY, TickCol, 1.2f);
 	}
 
-	// 白底墨字彩条外框 + 左侧红条
-	DrawBonePlate(X, Y, BoxW, TotalH, AccentCol, false, bHovered || bFocusedTarget, bHovered);
-
-	// Logo 区域暗曜石内框 (在亮蓝天空与白云背景下确保红色部队图标高对比锐利)
-	const float InnerX = X + BarW + (BoxW - BarW - IconSize) * 0.5f;
+	// 无白底卡片: 浮空暗影图标 + 纯白错位阴影文字 + 底部细血条
+	const float InnerX = Proj.X - IconSize * 0.5f;
 	const float InnerY = Y + Pad;
-	DrawRect(FLinearColor(0.012f, 0.013f, 0.018f, 0.92f), InnerX - 2.0f, InnerY - 2.0f, IconSize + 4.0f, IconSize + 4.0f);
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.65f), InnerX - 2.0f, InnerY - 2.0f, IconSize + 4.0f, IconSize + 4.0f);
 
 	if (UTexture2D* LogoTex = GetClassLogoTexture(Unit->GetArchetype(), false))
 	{
@@ -1426,14 +1572,18 @@ void ALegionHUD::DrawEnemySkyBanner(ALegionUnit* Unit, ALegionPlayerController* 
 		}
 	}
 
-	// 底部番号与存活兵力 + 血条
-	const float TextX = X + BarW + (BoxW - BarW - LabelW) * 0.5f;
+	// 底部番号与存活兵力 (纯白+黑色错位阴影) + 血条 (带黑影)
+	const float TextX = Proj.X - LabelW * 0.5f;
 	const float TextY = Y + LogoAreaH + 2.0f;
-	DrawText(Label, ERUI::InkText(), TextX, TextY, Font, 1.0f, false);
+	DrawResonantText(Label, bHovered ? FLinearColor(1.0f, 1.0f, 1.0f, 1.0f) : FLinearColor(0.99f, 0.99f, 0.98f, 0.96f),
+		TextX, TextY, Font, 1.0f);
 
 	const float HPRatio = FMath::Clamp(Unit->GetLegionHP() / FMath::Max(1.0f, Unit->GetLegionMaxHP()), 0.0f, 1.0f);
-	DrawRect(FLinearColor(0.02f, 0.02f, 0.03f, 0.22f), X + BarW + 4.0f, Y + TotalH - 5.0f, BoxW - BarW - 8.0f, 3.0f);
-	DrawRect(AccentCol, X + BarW + 4.0f, Y + TotalH - 5.0f, (BoxW - BarW - 8.0f) * HPRatio, 3.0f);
+	const float BarWTotal = FMath::Max(IconSize, LabelW);
+	const float BarLeftX = Proj.X - BarWTotal * 0.5f;
+	const float BarTopY = Y + TotalH - 4.0f;
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.65f), BarLeftX - 1.0f, BarTopY - 1.0f, BarWTotal + 2.0f, 5.0f);
+	DrawRect(AccentCol, BarLeftX, BarTopY, BarWTotal * HPRatio, 3.0f);
 
 	// 瞄准悬停 / 集火锁定光学角括弧
 	if (bHovered || bFocusedTarget)
@@ -1457,19 +1607,15 @@ void ALegionHUD::DrawEnemySkyBanner(ALegionUnit* Unit, ALegionPlayerController* 
 		DrawLine(R, Bot, R, Bot - Arm, LockCol, Th);
 	}
 
-	// 顶部集火状态标 (配暗曜石微底衬以在亮天白云下保持锐利)
+	// 顶部集火状态标 (无底盒, 鲜红错位阴影字)
 	if (bFocusedTarget)
 	{
 		const FString Tag = TEXT("集火目标");
 		float TagW = 0.0f, TagH = 0.0f;
 		Canvas->TextSize(Font, Tag, TagW, TagH, 0.95f, 0.95f);
-		const float PW = TagW + 16.0f;
-		const float PH = TagH + 6.0f;
-		const float PX = Proj.X - PW * 0.5f;
-		const float PY = Y - PH - (bHovered ? 12.0f : 8.0f);
-		DrawRect(FLinearColor(0.012f, 0.014f, 0.020f, 0.88f), PX, PY, PW, PH);
-		DrawRect(FLinearColor(1.0f, 0.24f, 0.14f, 1.0f), PX, PY, 3.0f, PH);
-		DrawText(Tag, T->Bone, PX + 9.0f, PY + 3.0f, Font, 0.95f, false);
+		const float PX = Proj.X - TagW * 0.5f;
+		const float PY = Y - TagH - (bHovered ? 12.0f : 8.0f);
+		DrawResonantText(Tag, FLinearColor(1.0f, 0.36f, 0.24f, 1.0f), PX, PY, Font, 0.95f);
 	}
 
 	// 记录可点击/可瞄准命中区域 (适度留边, 抬头右键锁定手感顺畅)
@@ -1495,7 +1641,7 @@ void ALegionHUD::DrawDropZoneWarning(const FVector& WorldPos, const FString& Lab
 	DrawLine(P.X - R, P.Y, P.X, P.Y - R, Red, 2.0f);
 
 	const FString Txt = FString::Printf(TEXT("%s  %.0f 秒后"), *Label, RemainingSec);
-	DrawText(Txt, Red, P.X - 42.0f, P.Y - 36.0f, nullptr, 0.9f, false);
+	DrawResonantText(Txt, Red, P.X - 42.0f, P.Y - 36.0f, nullptr, 0.9f);
 }
 
 void ALegionHUD::DrawUnitBadge(ALegionUnit* Unit, bool bSelected)
@@ -1551,20 +1697,25 @@ void ALegionHUD::DrawUnitBadge(ALegionUnit* Unit, bool bSelected)
 	float TW = 0.0f, TH = 0.0f;
 	Canvas->TextSize(Font, Label, TW, TH, 1.0f, 1.0f);
 
-	const float BarW = 4.0f;
-	const float IconSz = bSelected ? 24.0f : 22.0f;
-	const float W = BarW + 8.0f + IconSz + 7.0f + TW + 10.0f;
-	const float H = bSelected ? 36.0f : 34.0f;
+	const float IconSz = bSelected ? 26.0f : 22.0f;
+	const float BarW = bSelected ? 3.0f : 0.0f;
+	const float BarGap = bSelected ? 6.0f : 0.0f;
+	const float W = BarW + BarGap + IconSz + 8.0f + TW;
+	const float H = FMath::Max(IconSz, TH + 6.0f);
 	const float X = Proj.X - W * 0.5f;
 	const float Y = Proj.Y - H;
 
-	// 白底墨字彩条底板 + 左侧阵营色条 + 选中加粗描边
-	DrawBonePlate(X, Y, W, H, MarkCol, false, bSelected, false);
+	// 无白底卡片: 选中态左侧 3px 金条 + 浮空暗影图标 + 纯白错位阴影文字 + 细血条
+	if (bSelected)
+	{
+		DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.72f), X + 1.0f, Y + 1.0f, BarW, H);
+		DrawRect(MarkCol, X, Y, BarW, H);
+	}
 
-	// 我方部队占位 Logo (蓝色技能图标 + 暗曜石底框)
-	const float IX = X + BarW + 6.0f;
-	const float IY = Y + (H - 5.0f - IconSz) * 0.5f;
-	DrawRect(FLinearColor(0.012f, 0.013f, 0.018f, 0.92f), IX - 1.0f, IY - 1.0f, IconSz + 2.0f, IconSz + 2.0f);
+	// 我方部队占位 Logo (1px 暗影边框)
+	const float IX = X + BarW + BarGap;
+	const float IY = Y + (H - IconSz) * 0.5f;
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.65f), IX - 1.0f, IY - 1.0f, IconSz + 2.0f, IconSz + 2.0f);
 	if (UTexture2D* LogoTex = GetClassLogoTexture(Unit->GetArchetype(), true))
 	{
 		if (LogoTex->GetResource())
@@ -1575,11 +1726,14 @@ void ALegionHUD::DrawUnitBadge(ALegionUnit* Unit, bool bSelected)
 		}
 	}
 
-	// 血条/兵力比例条 (贴底 3px, 墨色底 + 阵营色填充)
-	const float HPRatio = FMath::Clamp(Unit->GetLegionHP() / FMath::Max(1.0f, Unit->GetLegionMaxHP()), 0.0f, 1.0f);
-	DrawRect(FLinearColor(0.02f, 0.02f, 0.03f, 0.22f), X + BarW + 4.0f, Y + H - 5.0f, W - BarW - 8.0f, 3.0f);
-	DrawRect(MarkCol, X + BarW + 4.0f, Y + H - 5.0f, (W - BarW - 8.0f) * HPRatio, 3.0f);
+	const float TextX = IX + IconSz + 8.0f;
+	const float TextY = Y + (H - 4.0f - TH) * 0.5f;
+	const FLinearColor TextCol = bSelected ? FLinearColor(1.0f, 0.92f, 0.68f, 1.0f) : FLinearColor(0.99f, 0.99f, 0.98f, 0.96f);
+	DrawResonantText(Label, TextCol, TextX, TextY, Font, 1.0f);
 
-	// 部队名称 + 存活人数
-	DrawText(Label, ERUI::InkText(), IX + IconSz + 7.0f, Y + (H - 5.0f - TH) * 0.5f, Font, 1.0f, false);
+	// 贴字底 2px 细血条 (带黑影)
+	const float HPRatio = FMath::Clamp(Unit->GetLegionHP() / FMath::Max(1.0f, Unit->GetLegionMaxHP()), 0.0f, 1.0f);
+	const float HPBarY = TextY + TH + 2.0f;
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.65f), TextX - 1.0f, HPBarY - 1.0f, TW + 2.0f, 4.0f);
+	DrawRect(MarkCol, TextX, HPBarY, TW * HPRatio, 2.0f);
 }

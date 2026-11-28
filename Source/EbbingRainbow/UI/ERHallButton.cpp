@@ -10,6 +10,7 @@
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/SizeBox.h"
@@ -90,7 +91,11 @@ void UERHallButton::Build()
 	WidgetTree->RootWidget = HitButton;
 
 	ButtonSizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("ButtonSizeBox"));
-	ButtonSizeBox->SetWidthOverride(ButtonWidth);
+	ButtonSizeBox->SetMinDesiredWidth(180.0f);
+	if (bApplyWidthOverride)
+	{
+		ButtonSizeBox->SetWidthOverride(ButtonWidth);
+	}
 	ButtonSizeBox->SetHeightOverride(ButtonHeight);
 	HitButton->SetContent(ButtonSizeBox);
 
@@ -98,79 +103,37 @@ void UERHallButton::Build()
 	RootOverlay->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	ButtonSizeBox->SetContent(RootOverlay);
 
-	// 1. 机能风 45° 切角底板 (右上/左下切角 + 四角对准刻度 + 左侧点睛条)
-	TechFrame = WidgetTree->ConstructWidget<UERTechFrame>(UERTechFrame::StaticClass(), TEXT("TechFrame"));
-	TechFrame->Chamfer = FVector4(0.0f, 14.0f, 0.0f, 14.0f);
-	TechFrame->BorderThickness = 1.0f;
-	TechFrame->bDrawCornerBrackets = true;
-	TechFrame->BracketLength = 10.0f;
-	TechFrame->BracketThickness = 1.5f;
-	TechFrame->AccentEdge = EERAccentEdge::Left;
-	TechFrame->AccentThickness = 3.5f;
-	TechFrame->bUsePrismAccent = bPrimary;
-	TechFrame->DesiredFrameSize = FVector2D(ButtonWidth, ButtonHeight);
-	TechFrame->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	{
-		UOverlaySlot* S = RootOverlay->AddChildToOverlay(TechFrame);
-		S->SetHorizontalAlignment(HAlign_Fill);
-		S->SetVerticalAlignment(VAlign_Fill);
-	}
-
-	// 2. 内容排版: [大号 Linux Biolinum 索引号] | [粗体主标题 / 极小英文遥测副标] ... [→]
+	// 纯白字 + 错位黑影《控制:共振》风格 (保留 TechFrame 作为折叠兼容位, 绝不绘制白底卡片)
 	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("ContentRow"));
 	Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	{
 		UOverlaySlot* S = RootOverlay->AddChildToOverlay(Row);
-		S->SetHorizontalAlignment(HAlign_Fill);
-		S->SetVerticalAlignment(VAlign_Fill);
-		S->SetPadding(FMargin(22.0f, 10.0f, 20.0f, 10.0f));
+		S->SetHorizontalAlignment(HAlign_Left);
+		S->SetVerticalAlignment(VAlign_Center);
+		S->SetPadding(FMargin(14.0f, 4.0f, 16.0f, 4.0f));
 	}
 
-	IndexText = ERUI::MakeText(this, IndexCode, EERTypeScale::Title, T->BoneSecondary, true);
-	IndexText->SetFont(ERUI::FontBold(30, 40));
+	LabelText = ERUI::MakeText(this, Label, EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 0.82f));
+	ERUI::ApplyResonantText(LabelText, 21, true, 140, FLinearColor(0.99f, 0.99f, 0.98f, 0.82f), FVector2D(2.0f, 3.0f), 0.86f);
 	{
-		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(IndexText);
+		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(LabelText);
 		S->SetVerticalAlignment(VAlign_Center);
-		S->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
-	}
-
-	UVerticalBox* TextCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("TextCol"));
-	TextCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	{
-		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(TextCol);
-		S->SetVerticalAlignment(VAlign_Center);
-		S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	}
-
-	LabelText = ERUI::MakeText(this, Label, EERTypeScale::Title, T->Bone);
-	LabelText->SetFont(ERUI::FontBold(32, 100));
-	TextCol->AddChildToVerticalBox(LabelText);
-
-	// 按钮禁止中英文并存: 副标行保留控件 (兼容旧蓝图绑定) 但默认折叠
-	CaptionText = ERUI::MakeText(this, Caption, EERTypeScale::Micro, T->BoneTertiary, true);
-	CaptionText->SetFont(ERUI::FontRegular(8, 240));
-	CaptionText->SetVisibility(ESlateVisibility::Collapsed);
-	TextCol->AddChildToVerticalBox(CaptionText);
-
-	ArrowText = ERUI::MakeText(this, INVTEXT("→"), EERTypeScale::Title, T->BoneSecondary, true);
-	ArrowText->SetFont(ERUI::FontBold(26, 0));
-	{
-		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(ArrowText);
-		S->SetVerticalAlignment(VAlign_Center);
-		S->SetPadding(FMargin(10.0f, 0.0f, 0.0f, 0.0f));
 	}
 }
 
 void UERHallButton::SyncStaticProperties()
 {
-	if (IndexText)   { IndexText->SetText(IndexCode); }
-	if (LabelText)   { LabelText->SetText(Label); }
-	bPrimary = true; // 全工程统一「白底墨字彩条」, 不再提供黑底次按钮
-	if (CaptionText)
-	{
-		CaptionText->SetVisibility(Caption.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
-		if (!CaptionCipher.IsRunning()) { CaptionText->SetText(Caption); }
-	}
+	// 全面隐藏旧卡片框体、序号、英文副标与箭头, 仅留纯白汉字 + 错位阴影
+	if (TechFrame)  { TechFrame->SetVisibility(ESlateVisibility::Collapsed); }
+	if (BodyBorder) { BodyBorder->SetVisibility(ESlateVisibility::Collapsed); }
+	if (GlowBorder) { GlowBorder->SetVisibility(ESlateVisibility::Collapsed); }
+	if (LedBorder)  { LedBorder->SetVisibility(ESlateVisibility::Collapsed); }
+	if (IndexText)  { IndexText->SetVisibility(ESlateVisibility::Collapsed); }
+	if (CaptionText){ CaptionText->SetVisibility(ESlateVisibility::Collapsed); }
+	if (ArrowText)  { ArrowText->SetVisibility(ESlateVisibility::Collapsed); }
+
+	if (LabelText)  { LabelText->SetText(Label); }
+
 	if (ButtonSizeBox)
 	{
 		if (bApplyWidthOverride)
@@ -181,13 +144,49 @@ void UERHallButton::SyncStaticProperties()
 		{
 			ButtonSizeBox->ClearWidthOverride();
 		}
+		ButtonSizeBox->SetMinDesiredWidth(180.0f);
 		ButtonSizeBox->SetHeightOverride(ButtonHeight);
-	}
-	if (TechFrame)
-	{
-		TechFrame->bUsePrismAccent = bPrimary;
-		TechFrame->AccentEdge = EERAccentEdge::Left;
-		TechFrame->AccentThickness = bPrimary ? 4.0f : 3.0f;
+
+		if (UOverlay* RootOverlay = Cast<UOverlay>(ButtonSizeBox->GetContent()))
+		{
+			if (!HoverBarContainer)
+			{
+				HoverBarContainer = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("HoverBarContainer"));
+				HoverBarContainer->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+				HoverBarContainer->SetRenderOpacity(0.0f);
+
+				HoverBarShadow = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("HoverBarShadow"));
+				HoverBarShadow->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 18.0f)));
+				HoverBarShadow->SetColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.82f));
+				HoverBarShadow->SetRenderTranslation(FVector2D(1.5f, 2.0f));
+				HoverBarContainer->AddChildToOverlay(HoverBarShadow);
+
+				HoverBar = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("HoverBar"));
+				HoverBar->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 18.0f)));
+				HoverBar->SetColorAndOpacity(FLinearColor(0.99f, 0.99f, 0.98f, 1.0f));
+				HoverBarContainer->AddChildToOverlay(HoverBar);
+
+				UOverlaySlot* BarSlot = RootOverlay->AddChildToOverlay(HoverBarContainer);
+				BarSlot->SetHorizontalAlignment(HAlign_Left);
+				BarSlot->SetVerticalAlignment(VAlign_Center);
+				BarSlot->SetPadding(FMargin(0.0f));
+			}
+
+			// 兼容 WBP_HallButton 既有层级: 找到挂在 RootOverlay 下的内容行并统一左对齐紧凑边距
+			for (int32 i = 0; i < RootOverlay->GetChildrenCount(); ++i)
+			{
+				UWidget* Child = RootOverlay->GetChildAt(i);
+				if (Child && Child != TechFrame && Child != HoverBarContainer)
+				{
+					if (UOverlaySlot* RowSlot = Cast<UOverlaySlot>(Child->Slot))
+					{
+						RowSlot->SetHorizontalAlignment(HAlign_Left);
+						RowSlot->SetVerticalAlignment(VAlign_Center);
+						RowSlot->SetPadding(FMargin(14.0f, 4.0f, 16.0f, 4.0f));
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -238,9 +237,9 @@ void UERHallButton::RefreshVisuals(float DeltaTime, bool bDesignPreview)
 		return;
 	}
 
-	const UERUITheme* T = ERUI::Theme();
-	const bool bHovered = !bDesignPreview && HitButton && HitButton->IsHovered();
-	const bool bPressed = !bDesignPreview && HitButton && HitButton->IsPressed();
+	const bool bEnabled = GetIsEnabled() && (!HitButton || HitButton->GetIsEnabled());
+	const bool bHovered = bEnabled && !bDesignPreview && HitButton && HitButton->IsHovered();
+	const bool bPressed = bEnabled && !bDesignPreview && HitButton && HitButton->IsPressed();
 
 	if (bHovered && !bWasHovered)
 	{
@@ -251,67 +250,41 @@ void UERHallButton::RefreshVisuals(float DeltaTime, bool bDesignPreview)
 	HoverSpring.SetTarget(bHovered ? 1.0f : 0.0f);
 	PressSpring.SetTarget(bPressed ? 1.0f : 0.0f);
 
-	const float HoverA = (DeltaTime > 0.0f) ? HoverSpring.Tick(DeltaTime) : 0.0f;
+	const float HoverA = (DeltaTime > 0.0f) ? HoverSpring.Tick(DeltaTime) : (bHovered ? 1.0f : 0.0f);
 	const float PressA = (DeltaTime > 0.0f) ? PressSpring.Tick(DeltaTime) : 0.0f;
-	const float Hover01 = FMath::Clamp(HoverA, 0.0f, 1.15f);
-	const float Pulse = bPrimary ? ERMotion::SolemnPulse(ElapsedTime, BreathSpeed) : 0.0f;
+	const float Hover01 = FMath::Clamp(HoverA, 0.0f, 1.0f);
 
-	// 黑-白-点睛彩对比: 主按钮反白极墨字 + 虹彩边条; 次按钮哑光黑曜石 + 纯白字
-	if (TechFrame)
+	// 确保持久化 WBP 的旧卡片/刻度不会复活
+	if (TechFrame)  { TechFrame->SetVisibility(ESlateVisibility::Collapsed); }
+	if (BodyBorder) { BodyBorder->SetVisibility(ESlateVisibility::Collapsed); }
+	if (IndexText)  { IndexText->SetVisibility(ESlateVisibility::Collapsed); }
+	if (CaptionText){ CaptionText->SetVisibility(ESlateVisibility::Collapsed); }
+	if (ArrowText)  { ArrowText->SetVisibility(ESlateVisibility::Collapsed); }
+
+	const FLinearColor TextCol = bEnabled
+		? FLinearColor(0.99f, 0.99f, 0.98f, FMath::Lerp(0.84f, 1.00f, Hover01))
+		: FLinearColor(0.96f, 0.96f, 0.95f, 0.42f);
+	const FVector2D ShadowOff = FMath::Lerp(FVector2D(2.0f, 3.0f), FVector2D(1.0f, 1.5f), FMath::Clamp(PressA, 0.0f, 1.0f));
+	const float ShadowAlpha = bEnabled ? 0.86f : 0.45f;
+
+	if (LabelText)
 	{
-		if (bPrimary)
-		{
-			const FLinearColor Fill = FMath::Lerp(
-				FLinearColor(0.93f, 0.93f, 0.91f, 0.95f),
-				FLinearColor(1.00f, 1.00f, 0.98f, 1.00f),
-				FMath::Clamp(Hover01, 0.0f, 1.0f));
-			const FLinearColor Border = FLinearColor(0.02f, 0.02f, 0.03f, 0.35f + 0.45f * FMath::Clamp(Hover01, 0.0f, 1.0f));
-			const FLinearColor Bracket = FLinearColor(0.01f, 0.01f, 0.02f, 0.72f + 0.25f * Pulse);
-			TechFrame->SetFrameColors(Fill, Border, Bracket, AccentColor);
-			TechFrame->bUsePrismAccent = true;
-		}
-		else
-		{
-			const FLinearColor Fill = FMath::Lerp(
-				FLinearColor(0.008f, 0.009f, 0.012f, 0.90f),
-				FLinearColor(0.024f, 0.026f, 0.032f, 0.96f),
-				FMath::Clamp(Hover01, 0.0f, 1.0f));
-			const FLinearColor Border = FLinearColor(0.92f, 0.92f, 0.90f, 0.22f + 0.56f * FMath::Clamp(Hover01, 0.0f, 1.0f));
-			const FLinearColor Bracket = FLinearColor(0.92f, 0.92f, 0.90f, 0.68f + 0.32f * FMath::Clamp(Hover01, 0.0f, 1.0f));
-			const FLinearColor EdgeCol = FMath::Lerp(FLinearColor(0.92f, 0.92f, 0.90f, 0.28f), AccentColor, FMath::Clamp(Hover01, 0.0f, 1.0f));
-			TechFrame->SetFrameColors(Fill, Border, Bracket, EdgeCol);
-			TechFrame->bUsePrismAccent = false;
-		}
-		TechFrame->SetMotionState(1.0f, FMath::Clamp(Hover01, 0.0f, 1.0f), SweepProgress);
+		ERUI::ApplyResonantText(LabelText, 21, true, 140, TextCol, ShadowOff, ShadowAlpha);
+		LabelText->SetRenderTranslation(FVector2D(8.0f * HoverA, 0.0f));
+	}
+	if (HoverBarContainer)
+	{
+		HoverBarContainer->SetRenderOpacity(bEnabled ? Hover01 : 0.0f);
+	}
+	if (HoverBar)
+	{
+		HoverBar->SetColorAndOpacity(FLinearColor(0.99f, 0.99f, 0.98f, 1.0f));
 	}
 
-	// 文字色彩反转
-	const FLinearColor MainTextCol = bPrimary ? T->PureInk : T->Bone;
-	const FLinearColor SubTextCol  = bPrimary ? ERUI::Fade(T->PureInk, 0.62f) : ERUI::Fade(T->Bone, 0.48f + 0.28f * FMath::Clamp(Hover01, 0.0f, 1.0f));
-	const FLinearColor IdxCol      = bPrimary ? ERUI::Fade(T->PureInk, 0.42f + 0.30f * FMath::Clamp(Hover01, 0.0f, 1.0f)) : FMath::Lerp(ERUI::Fade(T->Bone, 0.32f), AccentColor, FMath::Clamp(Hover01, 0.0f, 1.0f));
-
-	if (IndexText)   { IndexText->SetColorAndOpacity(FSlateColor(IdxCol)); }
-	if (LabelText)   { LabelText->SetColorAndOpacity(FSlateColor(MainTextCol)); }
-	if (CaptionText) { CaptionText->SetColorAndOpacity(FSlateColor(SubTextCol)); }
-	if (ArrowText)
-	{
-		ArrowText->SetColorAndOpacity(FSlateColor(bPrimary ? T->PureInk : FMath::Lerp(T->BoneSecondary, T->Bone, FMath::Clamp(Hover01, 0.0f, 1.0f))));
-		ArrowText->SetRenderTranslation(FVector2D(6.0f * HoverA, 0.0f));
-	}
-
-	// 弹簧物理位姿 (极克制 3px 轻抬 + 按压缩放)
 	const float Scale = FMath::Lerp(1.0f, PressedScale, FMath::Clamp(PressA, 0.0f, 1.0f));
-	SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	SetRenderTransformPivot(FVector2D(0.0f, 0.5f));
 	SetRenderScale(FVector2D(Scale, Scale));
-	SetRenderTranslation(FVector2D(0.0f, -3.0f * HoverA + 1.5f * PressA));
-
-	// 兼容旧 WBP 如果仍保留 BodyBorder (不破坏老蓝图)
-	if (!TechFrame && BodyBorder)
-	{
-		const FLinearColor Fill = bPrimary ? FLinearColor(0.94f, 0.94f, 0.92f, 0.96f) : T->InkPanel;
-		BodyBorder->SetBrush(ERUI::RoundedBrush(0.0f, Fill, 1.0f, T->Bone));
-		BodyBorder->SetBrushColor(FLinearColor::White);
-	}
+	SetRenderTranslation(FVector2D::ZeroVector);
 }
 
 void UERHallButton::HandleClicked()

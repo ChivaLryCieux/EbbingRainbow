@@ -776,6 +776,7 @@ public:
 	void Construct(const FArguments&) {}
 
 	TArray<FERControlShareSlice> Slices;
+	bool bLightOnDark = false;
 
 	virtual FVector2D ComputeDesiredSize(float) const override { return FVector2D(420.0, 420.0); }
 
@@ -821,8 +822,11 @@ public:
 			{
 				Orbit.Add(Point(Start + FullTurn * Step / OrbitSteps, OrbitRadius));
 			}
+			const FLinearColor OrbitCol = bLightOnDark
+				? FLinearColor(0.99f, 0.99f, 0.98f, 0.22f)
+				: FLinearColor(0.10f, 0.10f, 0.10f, 0.18f);
 			FSlateDrawElement::MakeLines(OutDrawElements, LayerId, PaintGeo, Orbit,
-				ESlateDrawEffect::None, FLinearColor(0.10f, 0.10f, 0.10f, 0.18f), true, 1.0f);
+				ESlateDrawEffect::None, OrbitCol, true, 1.0f);
 
 			for (int32 Tick = 0; Tick < 48; ++Tick)
 			{
@@ -831,8 +835,11 @@ public:
 				const float OuterTick = Outer + Side * ((Tick % 4 == 0) ? 0.062f : 0.052f);
 				TArray<FVector2D> Line = { Point(Angle, InnerTick), Point(Angle, OuterTick) };
 				const bool bMajor = Tick % 4 == 0;
+				const FLinearColor TickCol = bLightOnDark
+					? FLinearColor(0.99f, 0.99f, 0.98f, bMajor ? 0.34f : 0.14f)
+					: FLinearColor(0.10f, 0.10f, 0.10f, bMajor ? 0.20f : 0.10f);
 				FSlateDrawElement::MakeLines(OutDrawElements, LayerId, PaintGeo, Line,
-					ESlateDrawEffect::None, FLinearColor(0.10f, 0.10f, 0.10f, bMajor ? 0.20f : 0.10f),
+					ESlateDrawEffect::None, TickCol,
 					true, bMajor ? 1.0f : 0.8f);
 			}
 		}
@@ -899,7 +906,9 @@ public:
 
 		if (Painted.Num() > 1)
 		{
-			const FLinearColor SeamColor(0.93f, 0.93f, 0.91f, 0.9f);
+			const FLinearColor SeamColor = bLightOnDark
+				? FLinearColor(0.006f, 0.007f, 0.010f, 0.95f)
+				: FLinearColor(0.93f, 0.93f, 0.91f, 0.9f);
 			for (const FPaintedSlice& Slice : Painted)
 			{
 				TArray<FVector2D> Seam = { Point(Slice.StartAngle, Inner), Point(Slice.StartAngle, Outer) };
@@ -924,8 +933,10 @@ public:
 			const FString TotalText = FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Total));
 			const FSlateFontInfo TotalFont = ERUI::FontBold(FMath::Clamp(FMath::RoundToInt(Side * 0.062f), 12, 26), 0);
 			const FSlateFontInfo LabelFont = ERUI::FontRegular(FMath::Clamp(FMath::RoundToInt(Side * 0.035f), 8, 13), 40);
-			DrawCentered(TotalText, Center + FVector2D(0.0, -Side * 0.026), TotalFont, ERUI::InkText());
-			DrawCentered(TEXT("控制总量"), Center + FVector2D(0.0, Side * 0.025), LabelFont, ERUI::InkText(0.62f));
+			const FLinearColor TotalCol = bLightOnDark ? FLinearColor(0.99f, 0.99f, 0.98f, 1.0f) : ERUI::InkText();
+			const FLinearColor SubCol = bLightOnDark ? FLinearColor(0.99f, 0.99f, 0.98f, 0.56f) : ERUI::InkText(0.62f);
+			DrawCentered(TotalText, Center + FVector2D(0.0, -Side * 0.026), TotalFont, TotalCol);
+			DrawCentered(TEXT("控制总量"), Center + FVector2D(0.0, Side * 0.025), LabelFont, SubCol);
 
 			if (Side >= 190.0f)
 			{
@@ -952,6 +963,7 @@ TSharedRef<SWidget> UERControlSharePie::RebuildWidget()
 {
 	MyLeaf = SNew(SERControlSharePieLeaf);
 	MyLeaf->Slices = Slices;
+	MyLeaf->bLightOnDark = bLightOnDark;
 	return MyLeaf.ToSharedRef();
 }
 
@@ -961,6 +973,16 @@ void UERControlSharePie::SetSlices(TArray<FERControlShareSlice> InSlices)
 	if (MyLeaf.IsValid())
 	{
 		MyLeaf->Slices = Slices;
+		MyLeaf->Invalidate(EInvalidateWidgetReason::Paint);
+	}
+}
+
+void UERControlSharePie::SetLightOnDark(bool bInLightOnDark)
+{
+	bLightOnDark = bInLightOnDark;
+	if (MyLeaf.IsValid())
+	{
+		MyLeaf->bLightOnDark = bLightOnDark;
 		MyLeaf->Invalidate(EInvalidateWidgetReason::Paint);
 	}
 }

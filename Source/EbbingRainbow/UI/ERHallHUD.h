@@ -74,7 +74,7 @@ public:
 	FString RouteLevelOptions = TEXT("game=/Script/EbbingRainbow.RouteGameMode");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Hall")
-	FText ZenHintMessage = INVTEXT("ZEN MODE // 观景模式 · 点击任意位置或按 ESC 返回");
+	FText ZenHintMessage = INVTEXT("观景模式 · 点击任意位置或按 ESC 返回");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Motion")
 	bool bEnableEntranceAnimation = true;
@@ -151,6 +151,7 @@ protected:
 
 private:
 	void BuildLayout();
+	void ApplyResonantLayoutStyle();
 	void ApplyZenState(bool bInZen);
 	void RefreshCampaignSaveNotice();
 	void ApplyEntrancePose();

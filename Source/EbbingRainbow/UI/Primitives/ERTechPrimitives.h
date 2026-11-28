@@ -269,7 +269,11 @@ class EBBINGRAINBOW_API UERControlSharePie : public UWidget
 
 public:
 	void SetSlices(TArray<FERControlShareSlice> InSlices);
+	void SetLightOnDark(bool bInLightOnDark);
 	virtual void ReleaseSlateResources(bool bReleaseChildren) override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Chart")
+	bool bLightOnDark = false;
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;

@@ -11,6 +11,8 @@
 class UBorder;
 class UButton;
 class UERTechFrame;
+class UImage;
+class UOverlay;
 class USizeBox;
 class UTextBlock;
 class UWidgetAnimation;
@@ -62,13 +64,13 @@ public:
 	bool bPrimary = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	bool bApplyWidthOverride = true;
+	bool bApplyWidthOverride = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton", meta = (EditCondition = "bApplyWidthOverride"))
-	float ButtonWidth = 360.0f;
+	float ButtonWidth = 240.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
-	float ButtonHeight = 88.0f;
+	float ButtonHeight = 42.0f;
 
 	/** 保留旧属性以兼容已有蓝图序列化 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|HallButton")
@@ -128,6 +130,10 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ArrowText;
 
 	UPROPERTY(Transient, meta = (BindWidgetAnimOptional)) TObjectPtr<UWidgetAnimation> Anim_Hover;
+
+	UPROPERTY(Transient) TObjectPtr<UOverlay> HoverBarContainer;
+	UPROPERTY(Transient) TObjectPtr<UImage> HoverBarShadow;
+	UPROPERTY(Transient) TObjectPtr<UImage> HoverBar;
 
 private:
 	void Build();

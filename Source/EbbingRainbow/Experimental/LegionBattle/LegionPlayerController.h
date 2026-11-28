@@ -204,6 +204,11 @@ public:
 	void EnterBattleOverMode();
 	bool IsBattleOverInputLocked() const { return bBattleOverInputLocked; }
 
+	/** Esc 暂停界面状态机 */
+	bool IsPauseMenuOpen() const { return bPauseMenuOpen; }
+	void SetPauseMenuOpen(bool bOpen);
+	void AbortBattleFromPause();
+
 protected:
 
 	/** 战场视角: 光标可见时取光标下兵团, 否则取准星下兵团 */
@@ -217,6 +222,8 @@ protected:
 	void HandleMapClick(const FVector2D& ScreenPos, bool bRight);
 	void ResetMapView();
 	void ApplyInputMode();
+	void SetCommanderInputContextsActive(bool bActive);
+	bool IsGameplayInputBlocked() const { return bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen; }
 
 	// ---- 战场视角 ----
 	void TickGround(float DeltaTime);
@@ -233,8 +240,11 @@ private:
 	bool bAltCursor = false;
 	bool bDeploymentInputLocked = false;
 	bool bBattleOverInputLocked = false;
+	bool bPauseMenuOpen = false;
+	bool bCommanderContextsActive = false;
 	FLegionMapView MapView;
 	ELegionTimeMode PrevTimeMode = ELegionTimeMode::Normal;
+	ELegionTimeMode PrePauseTimeMode = ELegionTimeMode::Normal;
 
 	bool bLeftDown = false;
 	bool bMapDragged = false;

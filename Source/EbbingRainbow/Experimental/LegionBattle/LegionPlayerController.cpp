@@ -66,8 +66,111 @@ void ALegionPlayerController::SetDeploymentInputLocked(bool bLocked)
 	ApplyInputMode();
 }
 
+void ALegionPlayerController::SetCommanderInputContextsActive(bool bActive)
+{
+	if (bCommanderContextsActive == bActive || !IsLocalPlayerController()) { return; }
+
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
+	if (!Subsystem) { return; }
+
+	for (const TSoftObjectPtr<UInputMappingContext>& Ctx :
+		{ DefaultMappingContext, MouseLookMappingContext, WeaponsMappingContext })
+	{
+		if (bActive)
+		{
+			if (UInputMappingContext* MC = Ctx.LoadSynchronous())
+			{
+				Subsystem->AddMappingContext(MC, 0);
+			}
+			else
+			{
+				UE_LOG(LogERLegion, Warning, TEXT("[Legion] InputMappingContext failed to load: %s"), *Ctx.ToString());
+			}
+		}
+		else if (UInputMappingContext* MC = Ctx.Get())
+		{
+			Subsystem->RemoveMappingContext(MC);
+		}
+	}
+	bCommanderContextsActive = bActive;
+}
+
+void ALegionPlayerController::SetPauseMenuOpen(bool bOpen)
+{
+	if (bOpen && (bBattleOverInputLocked || bDeploymentInputLocked)) { return; }
+	if (bPauseMenuOpen == bOpen) { return; }
+
+	ALegionGameMode* GM = GetLegionGM(GetWorld());
+	ALegionHUD* HUD = Cast<ALegionHUD>(MyHUD);
+
+	if (bOpen)
+	{
+		PrePauseTimeMode = GM ? GM->GetTacticalTimeMode() : ELegionTimeMode::Normal;
+		bPauseMenuOpen = true;
+		bRightDragging = false;
+		bLeftDown = false;
+		bMapDragged = false;
+		bMidDown = false;
+		bAltCursor = false;
+		if (HoveredLegion.IsValid()) { HoveredLegion->SetHovered(false); }
+		HoveredLegion = nullptr;
+
+		if (ALegionCommanderCharacter* Cmd = Cast<ALegionCommanderCharacter>(GetPawn()))
+		{
+			Cmd->DoStopFiring();
+			Cmd->DoSprintEnd();
+			Cmd->StopJumping();
+		}
+
+		SetIgnoreMoveInput(true);
+		SetIgnoreLookInput(true);
+		SetCommanderInputContextsActive(false);
+
+		if (GM) { GM->SetTacticalTimeMode(ELegionTimeMode::Paused); }
+		if (HUD) { HUD->SetPauseMenuVisible(true); }
+		ApplyInputMode();
+		return;
+	}
+
+	bPauseMenuOpen = false;
+	if (HUD) { HUD->SetPauseMenuVisible(false); }
+
+	if (!bBattleOverInputLocked && !bDeploymentInputLocked)
+	{
+		SetIgnoreMoveInput(false);
+		SetIgnoreLookInput(false);
+		SetCommanderInputContextsActive(true);
+		if (GM && !GM->IsBattleOver())
+		{
+			GM->SetTacticalTimeMode(bMapOpen ? ELegionTimeMode::Paused : PrePauseTimeMode);
+		}
+	}
+	ApplyInputMode();
+}
+
+void ALegionPlayerController::AbortBattleFromPause()
+{
+	if (ALegionGameMode* GM = GetLegionGM(GetWorld()))
+	{
+		GM->AbortBattleAsDefeat();
+		return;
+	}
+	if (UWorld* World = GetWorld())
+	{
+		UGameplayStatics::SetGamePaused(World, false);
+		UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
+		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")));
+	}
+}
+
 void ALegionPlayerController::EnterBattleOverMode()
 {
+	if (bPauseMenuOpen)
+	{
+		SetPauseMenuOpen(false);
+	}
+
 	if (!bBattleOverInputLocked)
 	{
 		bBattleOverInputLocked = true;
@@ -94,23 +197,7 @@ void ALegionPlayerController::EnterBattleOverMode()
 
 		SetIgnoreMoveInput(true);
 		SetIgnoreLookInput(true);
-
-		// 卸载第一人称 Enhanced Input 映射上下文, 从输入层彻底切断移动/视角/开火/切枪
-		if (IsLocalPlayerController())
-		{
-			if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
-				ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
-			{
-				for (const TSoftObjectPtr<UInputMappingContext>& Ctx :
-					{ DefaultMappingContext, MouseLookMappingContext, WeaponsMappingContext })
-				{
-					if (UInputMappingContext* MC = Ctx.Get())
-					{
-						Subsystem->RemoveMappingContext(MC);
-					}
-				}
-			}
-		}
+		SetCommanderInputContextsActive(false);
 	}
 
 	ApplyInputMode();
@@ -127,6 +214,21 @@ void ALegionPlayerController::ApplyInputMode()
 		CurrentMouseCursor = EMouseCursor::Default;
 		FInputModeUIOnly Mode;
 		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(Mode);
+		return;
+	}
+
+	// 暂停菜单期间: 保持 GameAndUI 使 Esc (bExecuteWhenPaused) 始终可切换暂停与关闭设置,
+	// 移动/视角/开火已由 IgnoreMove/Look + 卸载 IMC + IsGameplayInputBlocked 彻底阻断
+	if (bPauseMenuOpen)
+	{
+		bShowMouseCursor = true;
+		bEnableClickEvents = true;
+		bEnableMouseOverEvents = true;
+		CurrentMouseCursor = EMouseCursor::Default;
+		FInputModeGameAndUI Mode;
+		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		Mode.SetHideCursorDuringCapture(false);
 		SetInputMode(Mode);
 		return;
 	}
@@ -182,25 +284,7 @@ void ALegionPlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ALegionPlayerController::OnEscape).bExecuteWhenPaused = true;
 
 	// FP 模板 Enhanced Input 映射 (移动/跳跃/视角/开火由指挥官化身自绑)
-	if (IsLocalPlayerController())
-	{
-		if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
-			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
-		{
-			for (const TSoftObjectPtr<UInputMappingContext>& Ctx :
-				{ DefaultMappingContext, MouseLookMappingContext, WeaponsMappingContext })
-			{
-				if (UInputMappingContext* MC = Ctx.LoadSynchronous())
-				{
-					Subsystem->AddMappingContext(MC, 0);
-				}
-				else
-				{
-					UE_LOG(LogERLegion, Warning, TEXT("[Legion] InputMappingContext failed to load: %s"), *Ctx.ToString());
-				}
-			}
-		}
-	}
+	SetCommanderInputContextsActive(true);
 }
 
 // ---------------- Tick ----------------
@@ -220,7 +304,7 @@ void ALegionPlayerController::PlayerTick(float DeltaTime)
 		return;
 	}
 
-	if (bDeploymentInputLocked || bBattleOverInputLocked)
+	if (IsGameplayInputBlocked())
 	{
 		return;
 	}
@@ -582,7 +666,7 @@ bool ALegionPlayerController::TraceGroundAim(FVector& OutWorld) const
 
 void ALegionPlayerController::OnLeftPressed()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked) { return; }
+	if (IsGameplayInputBlocked()) { return; }
 	float MX = 0.0f, MY = 0.0f;
 	const bool bHasMouse = GetMousePosition(MX, MY);
 
@@ -619,7 +703,7 @@ void ALegionPlayerController::OnLeftPressed()
 
 void ALegionPlayerController::OnLeftReleased()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked) { bLeftDown = false; return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen) { bLeftDown = false; return; }
 	if (!bMapOpen)
 	{
 		bLeftDown = false;
@@ -638,7 +722,7 @@ void ALegionPlayerController::OnLeftReleased()
 
 void ALegionPlayerController::OnMidPressed()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked) { return; }
+	if (IsGameplayInputBlocked()) { return; }
 	if (!bMapOpen || UERAICommandPanel::IsAnyPanelHoveredOrFocused()) { return; }
 	bMidDown = true;
 	float MX = 0.0f, MY = 0.0f;
@@ -647,7 +731,7 @@ void ALegionPlayerController::OnMidPressed()
 
 void ALegionPlayerController::OnRightPressed()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked) { return; }
+	if (IsGameplayInputBlocked()) { return; }
 	if (bMapOpen)
 	{
 		if (UERAICommandPanel::IsAnyPanelHoveredOrFocused()) { return; }
@@ -692,7 +776,7 @@ void ALegionPlayerController::OnRightPressed()
 
 void ALegionPlayerController::OnRightReleased()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked) { bRightDragging = false; return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen) { bRightDragging = false; return; }
 	if (!bRightDragging) { return; }
 	bRightDragging = false;
 
@@ -773,7 +857,7 @@ void ALegionPlayerController::SetStrategicMapOpen(bool bOpen)
 
 void ALegionPlayerController::OnMapWheel(int32 Dir)
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked) { return; }
+	if (IsGameplayInputBlocked()) { return; }
 	if (!bMapOpen || UERAICommandPanel::IsAnyPanelHoveredOrFocused()) { return; }
 	float MX = 0.0f, MY = 0.0f;
 	if (GetMousePosition(MX, MY)) { ZoomMapAt(Dir, FVector2D(MX, MY)); }
@@ -1170,7 +1254,7 @@ void ALegionPlayerController::OrderAttack(ALegionUnit* Target)
 
 void ALegionPlayerController::OnKeySelect(int32 Index)
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	ALegionGameMode* GM = GetLegionGM(GetWorld());
 	if (!GM) { return; }
 	const TArray<TObjectPtr<ALegionUnit>>& Ls = GM->GetPlayerLegions();
@@ -1193,7 +1277,7 @@ void ALegionPlayerController::OnKeySelect(int32 Index)
 
 void ALegionPlayerController::OnKeyX()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	PruneInvalidSelections();
 	for (const TWeakObjectPtr<ALegionUnit>& Ptr : SelectedLegions)
 	{
@@ -1207,7 +1291,7 @@ void ALegionPlayerController::OnKeyX()
 
 void ALegionPlayerController::OnKeyG()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	if (ALegionGameMode* GM = GetLegionGM(GetWorld()))
 	{
 		FollowLegions.Reset();
@@ -1217,7 +1301,7 @@ void ALegionPlayerController::OnKeyG()
 
 void ALegionPlayerController::OnKeyF()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	ALegionGameMode* GM = GetLegionGM(GetWorld());
 	if (!GM) { return; }
 	PruneInvalidSelections();
@@ -1250,7 +1334,7 @@ void ALegionPlayerController::OnKeyF()
 
 void ALegionPlayerController::OnKeyGuard()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	ALegionGameMode* GM = GetLegionGM(GetWorld());
 	if (!GM) { return; }
 	PruneInvalidSelections();
@@ -1285,7 +1369,7 @@ void ALegionPlayerController::OnKeyGuard()
 
 void ALegionPlayerController::OnKeyPatrol()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	ALegionGameMode* GM = GetLegionGM(GetWorld());
 	if (!GM) { return; }
 	PruneInvalidSelections();
@@ -1327,7 +1411,7 @@ void ALegionPlayerController::OnKeyPatrol()
 
 void ALegionPlayerController::OnKeyRecon()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	ALegionGameMode* GM = GetLegionGM(GetWorld());
 	if (!GM) { return; }
 	PruneInvalidSelections();
@@ -1353,24 +1437,38 @@ void ALegionPlayerController::OnKeyRecon()
 
 void ALegionPlayerController::OnEscape()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked) { return; }
+	if (bPauseMenuOpen)
+	{
+		if (ALegionHUD* HUD = Cast<ALegionHUD>(MyHUD))
+		{
+			if (HUD->IsPauseSettingsOpen())
+			{
+				HUD->ClosePauseSettings();
+				return;
+			}
+		}
+		SetPauseMenuOpen(false);
+		return;
+	}
+	if (UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	if (bMapOpen)
 	{
 		SetStrategicMapOpen(false);
 		return;
 	}
-	ClearSelection();
+	SetPauseMenuOpen(true);
 }
 
 void ALegionPlayerController::OnKeyMapToggle()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	SetStrategicMapOpen(!bMapOpen);
 }
 
 void ALegionPlayerController::OnKeyRestart()
 {
-	if (bBattleOverInputLocked || bDeploymentInputLocked || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
+	if (bBattleOverInputLocked || bDeploymentInputLocked || bPauseMenuOpen || UERAICommandPanel::IsAnyTextInputFocused()) { return; }
 	if (UWorld* World = GetWorld())
 	{
 		UGameplayStatics::SetGamePaused(this, false);

@@ -283,8 +283,8 @@ void ALegionGameMode::StartPlay()
 	SetTacticalTimeMode(ELegionTimeMode::Normal);
 
 	// 自动化截图链路与显式跳过参数不走接驳屏, 战斗立即打响;
-	// 正常玩家流程由 ALegionHUD 挂载 ULegionDeployScreen, 点击「进入战场」后调 BeginBattle
-	const bool bSkipDeployScreen = bAutoShotRequested || bSkyShotRequested || bMapShotRequested || bCloseupShotRequested || bAIShotRequested || bResultShotRequested || bPerfTestRequested
+	// 正常玩家流程由 ALegionHUD 挂载 ULegionDeployScreen, 点击「接入虹膜」后调 BeginBattle
+	const bool bSkipDeployScreen = bAutoShotRequested || bSkyShotRequested || bMapShotRequested || bCloseupShotRequested || bAIShotRequested || bResultShotRequested || bPauseShotRequested || bPerfTestRequested
 		|| FParse::Param(FCommandLine::Get(), TEXT("NoDeployScreen"));
 	bBattleStarted = bSkipDeployScreen;
 

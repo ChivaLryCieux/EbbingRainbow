@@ -10,7 +10,9 @@
 class ALegionGameMode;
 class ALegionPlayerController;
 class ALegionUnit;
+class UERGalaCommandPanel;
 class ULegionHUDWidget;
+class ULegionPauseScreen;
 class UTexture2D;
 
 /**
@@ -53,9 +55,19 @@ public:
 	/** 同步等高线地图视角状态到 UMG 控件 (地图视角下隐藏底部四张部队卡) */
 	void NotifyStrategicMapOpen(bool bMapOpen);
 
+	/** Esc 暂停界面与设置弹窗生命周期 */
+	void SetPauseMenuVisible(bool bVisible);
+	void OpenPauseSettings();
+	void ClosePauseSettings();
+	bool IsPauseMenuVisible() const;
+	bool IsPauseSettingsOpen() const;
+	ULegionPauseScreen* GetPauseScreen() const { return PauseScreen.Get(); }
+
 	ULegionHUDWidget* GetHUDWidget() const { return Widget.Get(); }
 
 private:
+	UFUNCTION()
+	void HandlePauseSettingsClosed();
 	void LoadPlaceholderLogos();
 	UTexture2D* GetClassLogoTexture(ELegionClass Archetype, bool bAlly) const;
 	void DrawMinimap(ALegionGameMode* GM, ALegionPlayerController* PC);
@@ -64,6 +76,9 @@ private:
 	/** Canvas 版「白底墨字彩条」底板: 反白石膏 + 墨黑描边 + 左侧点睛/光谱条 */
 	void DrawBonePlate(float X, float Y, float W, float H, const FLinearColor& Accent,
 		bool bPrism, bool bEmphasis, bool bHover);
+	/** 《控制:共振》式高对比纯字 + 黑色错位阴影 (Canvas 绘制) */
+	void DrawResonantText(const FString& Text, const FLinearColor& Color, float X, float Y,
+		UFont* Font, float Scale, FVector2D ShadowOffset = FVector2D(1.8f, 2.2f), float ShadowAlpha = 0.88f);
 	void DrawOrderOverlays(ALegionGameMode* GM, ALegionPlayerController* PC);
 	void DrawUnitBadge(ALegionUnit* Unit, bool bSelected);
 	void DrawEnemySkyBanner(ALegionUnit* Unit, ALegionPlayerController* PC, bool bHovered, bool bFocusedTarget);
@@ -96,4 +111,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<ULegionHUDWidget> Widget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ULegionPauseScreen> PauseScreen;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UERGalaCommandPanel> SettingsPanel;
 };

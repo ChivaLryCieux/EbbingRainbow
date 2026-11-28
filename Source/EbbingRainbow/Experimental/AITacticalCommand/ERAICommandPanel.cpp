@@ -84,8 +84,8 @@ UERAICommandPanel* UERAICommandPanel::InstallOnLegionMapHUD(UUserWidget* OwnerHU
 		ToggleBtn->Label = INVTEXT("接入 AI");
 		ToggleBtn->bShowArrow = false;
 		ToggleBtn->bPrismAccent = true;
-		ToggleBtn->FontSize = 20;
-		ToggleBtn->ContentPadding = FMargin(18.0f, 8.0f);
+		ToggleBtn->FontSize = 18;
+		ToggleBtn->SetResonantHudStyle(true, false);
 		ToggleBtn->SetVisibility(ESlateVisibility::Collapsed);
 		UCanvasPanelSlot* BtnSlot = RootCanvas->AddChildToCanvas(ToggleBtn);
 		BtnSlot->SetAnchors(FAnchors(1.0f, 0.0f));

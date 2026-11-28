@@ -79,36 +79,113 @@ void UERGalaCommandPanel::SetActiveTab(int32 TabIndex)
 {
 	ActiveTab = bSettingsOnlyMode ? 3 : FMath::Clamp(TabIndex, 0, 3);
 	static const FText Titles[] = {
-		INVTEXT("虹膜基金会  ·  银河委托与战局终端"),
-		INVTEXT("虹膜基金会  ·  虹膜兵团整备终端"),
-		INVTEXT("虹膜基金会  ·  银河局势终端"),
-		INVTEXT("虹膜基金会  ·  终端设置"),
+		INVTEXT("军事委托"),
+		INVTEXT("兵团整备"),
+		INVTEXT("银河局势"),
+		INVTEXT("终端设置"),
 	};
 	if (PanelTitleText)
 	{
 		PanelTitleText->SetText(Titles[ActiveTab]);
 	}
 
+	const UERUITheme* T = ERUI::Theme();
 	UWidget* Pages[] = { ContractsPage, RosterPage, SituationPage, SettingsPage };
 	for (int32 i = 0; i < 4; ++i)
 	{
+		const bool bActive = (i == ActiveTab);
 		if (Pages[i])
 		{
-			Pages[i]->SetVisibility(i == ActiveTab ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+			Pages[i]->SetVisibility(bActive ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		}
-		if (TabButtons.IsValidIndex(i) && TabButtons[i])
+		if (NavTabs.IsValidIndex(i))
 		{
-			TabButtons[i]->SetUrgent(i == ActiveTab);
+			if (NavTabs[i].Label)
+			{
+				ERUI::ApplyResonantText(NavTabs[i].Label, 16, true, 180,
+					bActive ? FLinearColor(0.99f, 0.99f, 0.98f, 1.0f) : FLinearColor(0.99f, 0.99f, 0.98f, 0.48f),
+					FVector2D(1.5f, 2.0f), bActive ? 0.88f : 0.65f);
+			}
+			if (NavTabs[i].Indicator)
+			{
+				NavTabs[i].Indicator->SetColorAndOpacity(bActive ? T->Accent : FLinearColor(0.99f, 0.99f, 0.98f, 0.0f));
+				NavTabs[i].Indicator->SetRenderOpacity(bActive ? 0.96f : 0.0f);
+			}
 		}
 	}
 }
 
-UERActionButton* UERGalaCommandPanel::MakeBoneButton(const FText& Label, int32 FontSize, bool bArrow,
-	TFunction<void()> OnClick)
+UERActionButton* UERGalaCommandPanel::MakeResonantButton(const FText& Label, int32 FontSize, bool bArrow,
+	bool bLeftAlign, TFunction<void()> OnClick)
 {
 	UERActionButton* B = UERActionButton::Make(this, Label, FontSize, bArrow);
+	B->SetResonantHudStyle(true, bLeftAlign);
 	B->SetNativeClick(MoveTemp(OnClick));
 	return B;
+}
+
+UImage* UERGalaCommandPanel::MakeHairlineH(float Alpha)
+{
+	UImage* Line = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+	Line->SetBrush(ERUI::WhiteBrush(FVector2D(1.0f, 1.0f)));
+	Line->SetColorAndOpacity(FLinearColor(0.99f, 0.99f, 0.98f, Alpha));
+	Line->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	return Line;
+}
+
+UImage* UERGalaCommandPanel::MakeHairlineV(float Alpha)
+{
+	UImage* Line = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+	Line->SetBrush(ERUI::WhiteBrush(FVector2D(1.0f, 1.0f)));
+	Line->SetColorAndOpacity(FLinearColor(0.99f, 0.99f, 0.98f, Alpha));
+	Line->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	return Line;
+}
+
+UWidget* UERGalaCommandPanel::MakeSectionKicker(const FText& Text, const FLinearColor& AccentCol)
+{
+	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+	Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+	UOverlay* TickOv = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+	UImage* TickShadow = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+	TickShadow->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 14.0f)));
+	TickShadow->SetColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.85f));
+	TickShadow->SetRenderTranslation(FVector2D(1.5f, 2.0f));
+	TickOv->AddChildToOverlay(TickShadow);
+
+	UImage* Tick = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+	Tick->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 14.0f)));
+	Tick->SetColorAndOpacity(AccentCol);
+	TickOv->AddChildToOverlay(Tick);
+
+	if (UHorizontalBoxSlot* TS = Row->AddChildToHorizontalBox(TickOv))
+	{
+		TS->SetVerticalAlignment(VAlign_Center);
+		TS->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
+	}
+
+	UTextBlock* TB = ERUI::MakeText(this, Text, EERTypeScale::Caption, FLinearColor(0.99f, 0.99f, 0.98f, 0.80f), false);
+	ERUI::ApplyResonantText(TB, 14, true, 220, FLinearColor(0.99f, 0.99f, 0.98f, 0.80f), FVector2D(1.5f, 2.0f), 0.86f);
+	Row->AddChildToHorizontalBox(TB)->SetVerticalAlignment(VAlign_Center);
+	return Row;
+}
+
+UWidget* UERGalaCommandPanel::MakeFactionSeal(EFactionId Faction, float StampSize)
+{
+	UBorder* Stamp = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+	Stamp->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.95f, 0.95f, 0.93f, 0.96f), 1.0f, FLinearColor(0.0f, 0.0f, 0.0f, 0.45f)));
+	Stamp->SetBrushColor(FLinearColor::White);
+	Stamp->SetPadding(FMargin(4.0f));
+
+	if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetFactionLogoAssetPath(Faction)))
+	{
+		if (UImage* Img = ERUI::MakeLogoImage(this, Tex, StampSize))
+		{
+			Stamp->SetContent(Img);
+		}
+	}
+	return Stamp;
 }
 
 void UERGalaCommandPanel::BuildLayout()
@@ -118,24 +195,25 @@ void UERGalaCommandPanel::BuildLayout()
 	UCanvasPanel* Root = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("Root"));
 	WidgetTree->RootWidget = Root;
 
-	// 全屏哑光黑曜石底幕
-	UBorder* Scrim = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("Scrim"));
-	Scrim->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.005f, 0.006f, 0.010f, 0.95f), 0.0f, FLinearColor::Transparent));
-	Scrim->SetBrushColor(FLinearColor::White);
+	// 深墨半透明全屏底幕: 与空间站圣殿形成静谧建筑层次
+	UImage* Scrim = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("Scrim"));
+	Scrim->SetBrush(ERUI::WhiteBrush());
+	Scrim->SetColorAndOpacity(FLinearColor(0.004f, 0.005f, 0.008f, 0.84f));
+	Scrim->SetVisibility(ESlateVisibility::Visible);
 	{
 		UCanvasPanelSlot* S = Root->AddChildToCanvas(Scrim);
 		S->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
 		S->SetOffsets(FMargin(0.0f));
 	}
 
-	// 顶部 3px 通栏虹彩条
+	// 顶部 2px 通栏虹彩标线
 	UERPrismBar* TopPrism = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("TopPrism"));
 	TopPrism->bVertical = false;
-	TopPrism->BarSize = FVector2D(1920.0f, 3.0f);
+	TopPrism->BarSize = FVector2D(1920.0f, 2.0f);
 	{
 		UCanvasPanelSlot* S = Root->AddChildToCanvas(TopPrism);
 		S->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 0.0f));
-		S->SetOffsets(FMargin(0.0f, 0.0f, 0.0f, 3.0f));
+		S->SetOffsets(FMargin(0.0f, 0.0f, 0.0f, 2.0f));
 	}
 
 	// 主纵向容器
@@ -143,23 +221,23 @@ void UERGalaCommandPanel::BuildLayout()
 	{
 		UCanvasPanelSlot* S = Root->AddChildToCanvas(MainCol);
 		S->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
-		S->SetOffsets(FMargin(48.0f, 28.0f, 48.0f, 32.0f));
+		S->SetOffsets(FMargin(64.0f, 38.0f, 64.0f, 40.0f));
 	}
 
-	// ---- 1. 顶栏: 虹膜基金会标题 + 口号 + 经费 + 返回 ----
+	// ---- 1. 顶栏: 巨幅标题 + 基金会口号 + 经费/周期 + 竖发丝分隔 + 断开连接 ----
 	{
 		UHorizontalBox* HeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 
 		UVerticalBox* BrandCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		PanelTitleText = ERUI::MakeText(this, INVTEXT("虹膜基金会  ·  银河军事指挥总署"), EERTypeScale::Title, T->Bone);
-		PanelTitleText->SetFont(ERUI::FontBold(34, 80));
-		BrandCol->AddChildToVerticalBox(PanelTitleText);
-
 		UTextBlock* Slogan = ERUI::MakeText(this,
-			INVTEXT("「 我们面向全银河提供军事指挥服务 」"),
-			EERTypeScale::Caption, T->Accent, false);
-		Slogan->SetFont(ERUI::FontBold(17, 120));
-		BrandCol->AddChildToVerticalBox(Slogan)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+			INVTEXT("虹膜基金会  ·  我们面向全银河提供军事指挥服务"),
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.58f), false);
+		ERUI::ApplyResonantText(Slogan, 12, false, 260, FLinearColor(0.99f, 0.99f, 0.98f, 0.58f), FVector2D(1.5f, 2.0f), 0.85f);
+		BrandCol->AddChildToVerticalBox(Slogan)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
+
+		PanelTitleText = ERUI::MakeText(this, INVTEXT("军事委托"), EERTypeScale::Display, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f));
+		ERUI::ApplyResonantText(PanelTitleText, 42, true, 140, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), FVector2D(3.0f, 4.0f), 0.86f);
+		BrandCol->AddChildToVerticalBox(PanelTitleText);
 
 		{
 			UHorizontalBoxSlot* S = HeaderRow->AddChildToHorizontalBox(BrandCol);
@@ -167,63 +245,104 @@ void UERGalaCommandPanel::BuildLayout()
 			S->SetVerticalAlignment(VAlign_Center);
 		}
 
-		// 经费与周期
+		// 右侧: 经费与周期
 		UVerticalBox* StatCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		CreditsText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, T->Bone, false);
-		CreditsText->SetFont(ERUI::FontBold(28, 40));
+		CreditsText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), false);
+		ERUI::ApplyResonantText(CreditsText, 28, true, 60, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), FVector2D(2.0f, 3.0f), 0.86f);
 		CreditsText->SetJustification(ETextJustify::Right);
 		StatCol->AddChildToVerticalBox(CreditsText);
 
-		CycleText = ERUI::MakeText(this, INVTEXT("第 01 周期 · 虹膜神经链路在线"), EERTypeScale::Micro, T->BoneSecondary, false);
-		CycleText->SetFont(ERUI::FontBold(15, 60));
+		CycleText = ERUI::MakeText(this, INVTEXT("第 01 周期 · 虹膜神经链路在线"), EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.58f), false);
+		ERUI::ApplyResonantText(CycleText, 13, false, 140, FLinearColor(0.99f, 0.99f, 0.98f, 0.58f), FVector2D(1.5f, 2.0f), 0.85f);
 		CycleText->SetJustification(ETextJustify::Right);
-		StatCol->AddChildToVerticalBox(CycleText);
+		StatCol->AddChildToVerticalBox(CycleText)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
 		{
 			UHorizontalBoxSlot* S = HeaderRow->AddChildToHorizontalBox(StatCol);
 			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(0.0f, 0.0f, 28.0f, 0.0f));
 		}
 
-		// 控制台终端关闭后回到第一人称大厅 (标题菜单中的设置入口同样适用)
-		UERActionButton* CloseBtn = MakeBoneButton(INVTEXT("断开连接"), 26, true, [this]() { ClosePanel(); });
-		CloseBtn->SetMinSize(220.0f, 0.0f);
+		// 1px 竖发丝分隔线
+		USizeBox* DivBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		DivBox->SetWidthOverride(1.0f);
+		DivBox->SetHeightOverride(42.0f);
+		DivBox->SetContent(MakeHairlineV(0.20f));
+		{
+			UHorizontalBoxSlot* S = HeaderRow->AddChildToHorizontalBox(DivBox);
+			S->SetVerticalAlignment(VAlign_Center);
+			S->SetPadding(FMargin(28.0f, 0.0f));
+		}
+
+		// 右上断开连接按钮 (纯白错位阴影文字)
+		UERActionButton* CloseBtn = MakeResonantButton(INVTEXT("断开连接"), 20, true, false, [this]() { ClosePanel(); });
 		HeaderRow->AddChildToHorizontalBox(CloseBtn)->SetVerticalAlignment(VAlign_Center);
 
-		MainCol->AddChildToVerticalBox(HeaderRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+		MainCol->AddChildToVerticalBox(HeaderRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 	}
 
-	// 战役存档状态提示 (无异常时折叠)
-	CampaignSaveNotice = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneSecondary, false);
-	CampaignSaveNotice->SetAutoWrapText(true);
-	CampaignSaveNotice->SetVisibility(ESlateVisibility::Collapsed);
-	MainCol->AddChildToVerticalBox(CampaignSaveNotice)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
-
-	// 分割线
-	UERTechDivider* Div = WidgetTree->ConstructWidget<UERTechDivider>(UERTechDivider::StaticClass());
-	Div->AnchorLength = 42.0f;
-	Div->AnchorColor = T->Accent;
-	Div->LineColor = T->BoneGhost;
-	MainCol->AddChildToVerticalBox(Div)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
-
-	// 控制台是游戏流程的唯一入口, 因此终端必须自带页签导航 (旧版依赖大厅直发按钮)。
+	// ---- 2. 纯排印导航条 + 1px 建筑通栏线 ----
 	{
-		UHorizontalBox* TabRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TerminalTabRow"));
-		TerminalTabRow = TabRow;
+		UVerticalBox* TabWrap = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("TerminalTabRow"));
+		TerminalTabRow = TabWrap;
+
+		UHorizontalBox* TabRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		static const FText TabLabels[4] = {
 			INVTEXT("接取委托"), INVTEXT("兵团整备"), INVTEXT("银河局势"), INVTEXT("终端设置")
 		};
-		TabButtons.Reset();
+		const FSlateBrush Tr = ERUI::TransparentBrush();
+		FButtonStyle TabBtnStyle;
+		TabBtnStyle.SetNormal(Tr); TabBtnStyle.SetHovered(Tr); TabBtnStyle.SetPressed(Tr); TabBtnStyle.SetDisabled(Tr);
+		TabBtnStyle.SetNormalPadding(FMargin(0.0f, 6.0f));
+		TabBtnStyle.SetPressedPadding(FMargin(0.0f, 6.0f));
+
+		NavTabs.Reset();
 		for (int32 Tab = 0; Tab < 4; ++Tab)
 		{
-			const int32 TabIndex = Tab;
-			UERActionButton* TabBtn = MakeBoneButton(TabLabels[Tab], 17, false,
-				[this, TabIndex]() { SetActiveTab(TabIndex); });
-			TabBtn->SetMinSize(150.0f, 0.0f);
-			TabButtons.Add(TabBtn);
-			TabRow->AddChildToHorizontalBox(TabBtn)->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
+			UButton* TabBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+			TabBtn->SetStyle(TabBtnStyle);
+			TabBtn->SetCursor(EMouseCursor::Hand);
+
+			UVerticalBox* TabCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+			TabCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+			TabBtn->SetContent(TabCol);
+
+			UTextBlock* TabLbl = ERUI::MakeText(this, TabLabels[Tab], EERTypeScale::Body, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), false);
+			ERUI::ApplyResonantText(TabLbl, 16, true, 180, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), FVector2D(1.5f, 2.0f), 0.70f);
+			TabCol->AddChildToVerticalBox(TabLbl)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+
+			UImage* Bar = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+			Bar->SetBrush(ERUI::WhiteBrush(FVector2D(1.0f, 2.0f)));
+			Bar->SetColorAndOpacity(T->Accent);
+			Bar->SetRenderOpacity(0.0f);
+			TabCol->AddChildToVerticalBox(Bar);
+
+			switch (Tab)
+			{
+			case 0: TabBtn->OnClicked.AddDynamic(this, &UERGalaCommandPanel::OnTabClicked0); break;
+			case 1: TabBtn->OnClicked.AddDynamic(this, &UERGalaCommandPanel::OnTabClicked1); break;
+			case 2: TabBtn->OnClicked.AddDynamic(this, &UERGalaCommandPanel::OnTabClicked2); break;
+			default: TabBtn->OnClicked.AddDynamic(this, &UERGalaCommandPanel::OnTabClicked3); break;
+			}
+
+			TabRow->AddChildToHorizontalBox(TabBtn)->SetPadding(FMargin(0.0f, 0.0f, 36.0f, 0.0f));
+
+			FResonantTabItem Item;
+			Item.Button = TabBtn;
+			Item.Label = TabLbl;
+			Item.Indicator = Bar;
+			NavTabs.Add(MoveTemp(Item));
 		}
-		MainCol->AddChildToVerticalBox(TabRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
+
+		TabWrap->AddChildToVerticalBox(TabRow);
+		TabWrap->AddChildToVerticalBox(MakeHairlineH(0.18f));
+		MainCol->AddChildToVerticalBox(TabWrap)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 20.0f));
 	}
+
+	// 战役存档状态提示 (无异常时折叠)
+	CampaignSaveNotice = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, FLinearColor(1.0f, 0.45f, 0.30f, 0.95f), false);
+	ERUI::ApplyResonantText(CampaignSaveNotice, 13, false, 80, FLinearColor(1.0f, 0.45f, 0.30f, 0.95f), FVector2D(1.5f, 2.0f), 0.85f);
+	CampaignSaveNotice->SetAutoWrapText(true);
+	CampaignSaveNotice->SetVisibility(ESlateVisibility::Collapsed);
+	MainCol->AddChildToVerticalBox(CampaignSaveNotice)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
 	// =========================================================================
 	// 内容区: Overlay 页签
@@ -235,7 +354,7 @@ void UERGalaCommandPanel::BuildLayout()
 	}
 
 	// =========================================================================
-	// TAB 0: 银河委托 (仅合同卡片, 从左至右三张排布)
+	// TAB 0: 军事委托 (三栏建筑竖分栏, 无白底卡片)
 	// =========================================================================
 	{
 		UVerticalBox* Page0 = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ContractsPage"));
@@ -247,15 +366,17 @@ void UERGalaCommandPanel::BuildLayout()
 		}
 
 		UHorizontalBox* ContractHeader = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		UTextBlock* SubHint = ERUI::MakeText(this, INVTEXT("当前周期加密频道  ·  择一委托接入前线神经链路"),
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.54f), false);
+		ERUI::ApplyResonantText(SubHint, 13, false, 100, FLinearColor(0.99f, 0.99f, 0.98f, 0.54f), FVector2D(1.5f, 2.0f), 0.85f);
 		{
-			UHorizontalBoxSlot* S = ContractHeader->AddChildToHorizontalBox(ERUI::MakeSectionBar(this, INVTEXT("待接取军事委托"), 22));
+			UHorizontalBoxSlot* S = ContractHeader->AddChildToHorizontalBox(SubHint);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
 		}
-		RefreshContractsButton = MakeBoneButton(INVTEXT("刷新加密频道"), 21, false, [this]() { OnRefreshContractsClicked(); });
+		RefreshContractsButton = MakeResonantButton(INVTEXT("刷新加密频道"), 15, false, false, [this]() { OnRefreshContractsClicked(); });
 		ContractHeader->AddChildToHorizontalBox(RefreshContractsButton)->SetVerticalAlignment(VAlign_Center);
-		Page0->AddChildToVerticalBox(ContractHeader)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		Page0->AddChildToVerticalBox(ContractHeader)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
 		ContractListBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		{
@@ -266,7 +387,7 @@ void UERGalaCommandPanel::BuildLayout()
 	}
 
 	// =========================================================================
-	// TAB 2: 银河局势 (三方势力态势 + 重点星区归属 + 上一战况)
+	// TAB 2: 银河局势 (左 42% 暗底控制率环图 + 战报 | 右 58% 势力简报 + 星区归属)
 	// =========================================================================
 	{
 		UHorizontalBox* Page2 = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("SituationPage"));
@@ -278,70 +399,96 @@ void UERGalaCommandPanel::BuildLayout()
 			S->SetVerticalAlignment(VAlign_Fill);
 		}
 
-		// 左列: 单幅黑灰控制率环图
-		UScrollBox* LeftScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+		// 左列: 控制率环图 + 上一战况
 		UVerticalBox* LeftCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		LeftScroll->AddChild(LeftCol);
 		{
-			UHorizontalBoxSlot* S = Page2->AddChildToHorizontalBox(LeftScroll);
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			S->SetPadding(FMargin(0.0f, 0.0f, 24.0f, 0.0f));
+			UHorizontalBoxSlot* S = Page2->AddChildToHorizontalBox(LeftCol);
+			FSlateChildSize LeftSz(ESlateSizeRule::Fill);
+			LeftSz.Value = 0.42f;
+			S->SetSize(LeftSz);
+			S->SetVerticalAlignment(VAlign_Fill);
 		}
 
-		LeftCol->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("银河总体控制率"), 22, ERUI::InkText(), false))
+		LeftCol->AddChildToVerticalBox(MakeSectionKicker(INVTEXT("银河总体控制率"), T->Bone))
 			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
-		ERUI::FBoneCard Chart = ERUI::MakeBoneCard(this, ERUI::InkText(), false, FMargin(18.0f, 12.0f));
-		ControlShareCard = Chart.Root;
+		UVerticalBox* ChartWrap = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		ControlShareCard = ChartWrap;
 		ControlShareCard->SetVisibility(ESlateVisibility::Collapsed);
+
 		ControlSharePie = WidgetTree->ConstructWidget<UERControlSharePie>(UERControlSharePie::StaticClass());
+		ControlSharePie->SetLightOnDark(true);
 		ControlSharePie->SetVisibility(ESlateVisibility::HitTestInvisible);
-		Chart.Content->AddChildToVerticalBox(ControlSharePie)->SetHorizontalAlignment(HAlign_Fill);
-		UTextBlock* ChartNote = ERUI::MakeText(this, INVTEXT("扇区面积对应控制率，不按重点星区数量计算"), EERTypeScale::Micro, ERUI::InkText(0.65f), false);
-		ChartNote->SetFont(ERUI::FontRegular(14, 20));
+		{
+			UVerticalBoxSlot* PS = ChartWrap->AddChildToVerticalBox(ControlSharePie);
+			PS->SetHorizontalAlignment(HAlign_Center);
+		}
+
+		UTextBlock* ChartNote = ERUI::MakeText(this, INVTEXT("扇区面积对应控制率，不按重点星区数量计算"),
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), false);
+		ERUI::ApplyResonantText(ChartNote, 12, false, 60, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), FVector2D(1.5f, 2.0f), 0.85f);
 		ChartNote->SetJustification(ETextJustify::Center);
 		ChartNote->SetAutoWrapText(true);
-		Chart.Content->AddChildToVerticalBox(ChartNote)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 8.0f));
-		LeftCol->AddChildToVerticalBox(Chart.Root);
+		ChartWrap->AddChildToVerticalBox(ChartNote)->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 0.0f));
 
-		// 右列: 势力简报 + 星区控制表 + 上局战报
+		LeftCol->AddChildToVerticalBox(ChartWrap)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 20.0f));
+
+		// 上一战况 (3px 虹彩竖条 + 纯白阴影摘要, 无白底框, 默认折叠)
+		LastOutcomeBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+		LastOutcomeBox->SetBrush(ERUI::TransparentBrush());
+		LastOutcomeBox->SetPadding(FMargin(0.0f));
+		LastOutcomeBox->SetVisibility(ESlateVisibility::Collapsed);
+		{
+			UHorizontalBox* OutRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			LastOutcomeBox->SetContent(OutRow);
+
+			UERPrismBar* OutPrism = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass());
+			OutPrism->bVertical = true;
+			OutPrism->BarSize = FVector2D(3.0f, 44.0f);
+			OutRow->AddChildToHorizontalBox(OutPrism)->SetPadding(FMargin(0.0f, 2.0f, 14.0f, 2.0f));
+
+			LastOutcomeText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, FLinearColor(0.99f, 0.99f, 0.98f, 0.94f), false);
+			ERUI::ApplyResonantText(LastOutcomeText, 15, true, 40, FLinearColor(0.99f, 0.99f, 0.98f, 0.94f), FVector2D(1.5f, 2.0f), 0.86f);
+			LastOutcomeText->SetAutoWrapText(true);
+			UHorizontalBoxSlot* TS = OutRow->AddChildToHorizontalBox(LastOutcomeText);
+			TS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			TS->SetVerticalAlignment(VAlign_Center);
+		}
+		LeftCol->AddChildToVerticalBox(LastOutcomeBox);
+
+		// 中央 1px 竖发丝分割
+		{
+			UHorizontalBoxSlot* LS = Page2->AddChildToHorizontalBox(MakeHairlineV(0.14f));
+			LS->SetVerticalAlignment(VAlign_Fill);
+			LS->SetPadding(FMargin(32.0f, 0.0f));
+		}
+
+		// 右列: 势力简报 + 重点星区归属
 		UScrollBox* RightScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
 		UVerticalBox* RightCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		RightScroll->AddChild(RightCol);
 		{
 			UHorizontalBoxSlot* S = Page2->AddChildToHorizontalBox(RightScroll);
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			FSlateChildSize RightSz(ESlateSizeRule::Fill);
+			RightSz.Value = 0.58f;
+			S->SetSize(RightSz);
 		}
 
-		RightCol->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("势力简报"), 22, ERUI::InkText(), false))
+		RightCol->AddChildToVerticalBox(MakeSectionKicker(INVTEXT("势力简报"), T->Bone))
 			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
 		FactionListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		RightCol->AddChildToVerticalBox(FactionListBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
+		RightCol->AddChildToVerticalBox(FactionListBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 22.0f));
 
-		RightCol->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("重点星区归属"), 22))
+		RightCol->AddChildToVerticalBox(MakeSectionKicker(INVTEXT("重点星区归属"), T->Accent))
 			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
 		SectorListBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		RightCol->AddChildToVerticalBox(SectorListBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
-
-		// 上一战况 (骨白栏目卡, 默认折叠)
-		LastOutcomeBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-		LastOutcomeBox->SetBrush(FSlateBrush());
-		LastOutcomeBox->SetVisibility(ESlateVisibility::Collapsed);
-		{
-			ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->Accent, true, FMargin(18.0f, 12.0f));
-			LastOutcomeBox->SetContent(Card.Root);
-			LastOutcomeText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, ERUI::InkText(), false);
-			LastOutcomeText->SetFont(ERUI::FontBold(16, 30));
-			LastOutcomeText->SetAutoWrapText(true);
-			Card.Content->AddChildToVerticalBox(LastOutcomeText);
-		}
-		RightCol->AddChildToVerticalBox(LastOutcomeBox);
+		RightCol->AddChildToVerticalBox(SectorListBox);
 	}
 
 	// =========================================================================
-	// TAB 3: 设置 (AI 战术指挥接入配置)
+	// TAB 3: 终端设置 (限定 820px 宽的极简暗曜石编辑排版)
 	// =========================================================================
 	{
 		UVerticalBox* Page3 = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SettingsPage"));
@@ -353,10 +500,18 @@ void UERGalaCommandPanel::BuildLayout()
 			S->SetVerticalAlignment(VAlign_Fill);
 		}
 
-		Page3->AddChildToVerticalBox(ERUI::MakeSectionBar(this, INVTEXT("终端设置"), 22))
-			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		USizeBox* FormWidthBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		FormWidthBox->SetWidthOverride(820.0f);
+		{
+			UVerticalBoxSlot* FS = Page3->AddChildToVerticalBox(FormWidthBox);
+			FS->SetHorizontalAlignment(HAlign_Left);
+			FS->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 0.0f));
+		}
 
-		CampaignSaveRetryButton = MakeBoneButton(INVTEXT("重试战役存档"), 18, false, [this]() {
+		UVerticalBox* Inner = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		FormWidthBox->SetContent(Inner);
+
+		CampaignSaveRetryButton = MakeResonantButton(INVTEXT("重试战役存档"), 16, false, true, [this]() {
 			if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
 			{
 				Camp->RetryCampaignSave();
@@ -364,44 +519,38 @@ void UERGalaCommandPanel::BuildLayout()
 			}
 		});
 		CampaignSaveRetryButton->SetVisibility(ESlateVisibility::Collapsed);
-		Page3->AddChildToVerticalBox(CampaignSaveRetryButton)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		Inner->AddChildToVerticalBox(CampaignSaveRetryButton)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 
-		// ---- AI 战术指挥接入卡: 协议预设 + 接口/模型/密钥 + 保存 ----
-		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->Accent, false, FMargin(24.0f, 18.0f));
-		UVerticalBox* Inner = Card.Content;
-
-		UTextBlock* AITitle = ERUI::MakeText(this, INVTEXT("AI 战术指挥接入"), EERTypeScale::Title, ERUI::InkText(), false);
-		AITitle->SetFont(ERUI::FontBold(20, 40));
-		Inner->AddChildToVerticalBox(AITitle)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
+		Inner->AddChildToVerticalBox(MakeSectionKicker(INVTEXT("AI 战术指挥接入"), T->Accent))
+			->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
 		UTextBlock* AIDesc = ERUI::MakeText(this,
-			INVTEXT("配置大模型接口后, 战场上可通过右上「接入 AI」以自然语言指挥全军。接口地址同时决定通信协议: 以 /messages 结尾走 Anthropic 协议, 其余走 OpenAI 兼容协议。"),
-			EERTypeScale::Micro, ERUI::InkText(0.55f), false);
-		AIDesc->SetFont(ERUI::FontRegular(13, 20));
+			INVTEXT("配置大模型接口后，战场上可通过右上「接入 AI」以自然语言指挥全军。接口地址同时决定通信协议：以 /messages 结尾走 Anthropic 协议，其余走 OpenAI 兼容协议。"),
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.62f), false);
+		ERUI::ApplyResonantText(AIDesc, 13, false, 30, FLinearColor(0.99f, 0.99f, 0.98f, 0.62f), FVector2D(1.5f, 2.0f), 0.85f);
 		AIDesc->SetAutoWrapText(true);
-		Inner->AddChildToVerticalBox(AIDesc)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+		Inner->AddChildToVerticalBox(AIDesc)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 20.0f));
 
-		// 输入行: 标签固定宽 + 输入框通栏
 		auto AddInputRow = [this, Inner](const FText& Label, TObjectPtr<UEditableTextBox>& OutInput, const FText& Hint, bool bPassword)
 		{
 			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 
 			USizeBox* LabelBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-			LabelBox->SetWidthOverride(90.0f);
-			UTextBlock* Lbl = ERUI::MakeText(this, Label, EERTypeScale::Micro, ERUI::InkText(0.72f), false);
-			Lbl->SetFont(ERUI::FontBold(14, 60));
+			LabelBox->SetWidthOverride(104.0f);
+			UTextBlock* Lbl = ERUI::MakeText(this, Label, EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.82f), false);
+			ERUI::ApplyResonantText(Lbl, 14, true, 80, FLinearColor(0.99f, 0.99f, 0.98f, 0.82f), FVector2D(1.5f, 2.0f), 0.86f);
 			LabelBox->AddChild(Lbl);
 			Row->AddChildToHorizontalBox(LabelBox)->SetVerticalAlignment(VAlign_Center);
 
 			UEditableTextBox* InputWidget = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass());
-			StyleBoneInputBox(InputWidget, Hint, bPassword);
+			StyleDarkInputBox(InputWidget, Hint, bPassword);
 			OutInput = InputWidget;
 			{
 				UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(InputWidget);
 				S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 				S->SetVerticalAlignment(VAlign_Center);
 			}
-			Inner->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+			Inner->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 		};
 
 		AddInputRow(INVTEXT("接口地址"), SettingsEndpointInput, INVTEXT("https://api.deepseek.com/v1/chat/completions"), false);
@@ -409,21 +558,20 @@ void UERGalaCommandPanel::BuildLayout()
 		AddInputRow(INVTEXT("API Key"), SettingsApiKeyInput,   INVTEXT("sk-... (仅保存于本地 Saved/ER_AIConfig.json)"), true);
 
 		UTextBlock* KeyNote = ERUI::MakeText(this,
-			INVTEXT("密钥仅保存在本机 Saved/ER_AIConfig.json, 不上传任何其他服务器, 也不进入版本库。"),
-			EERTypeScale::Micro, ERUI::InkText(0.45f), false);
-		KeyNote->SetFont(ERUI::FontRegular(12, 20));
+			INVTEXT("密钥仅保存在本机 Saved/ER_AIConfig.json，不上传任何其他服务器，也不进入版本库。"),
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), false);
+		ERUI::ApplyResonantText(KeyNote, 12, false, 30, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), FVector2D(1.5f, 2.0f), 0.85f);
 		KeyNote->SetAutoWrapText(true);
-		Inner->AddChildToVerticalBox(KeyNote)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+		Inner->AddChildToVerticalBox(KeyNote)->SetPadding(FMargin(104.0f, 0.0f, 0.0f, 18.0f));
 
-		// 保存行: 按钮 + 状态反馈
 		{
 			UHorizontalBox* SaveRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-			UERActionButton* SaveBtn = MakeBoneButton(INVTEXT("保存配置"), 18, true,
+			UERActionButton* SaveBtn = MakeResonantButton(INVTEXT("保存配置"), 18, true, true,
 				[this]() { OnSaveAIConfigClicked(); });
-			SaveRow->AddChildToHorizontalBox(SaveBtn)->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+			SaveRow->AddChildToHorizontalBox(SaveBtn)->SetPadding(FMargin(104.0f, 0.0f, 20.0f, 0.0f));
 
-			SettingsStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, ERUI::InkText(0.55f), false);
-			SettingsStatusText->SetFont(ERUI::FontRegular(13, 20));
+			SettingsStatusText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.65f), false);
+			ERUI::ApplyResonantText(SettingsStatusText, 14, false, 30, FLinearColor(0.99f, 0.99f, 0.98f, 0.65f), FVector2D(1.5f, 2.0f), 0.85f);
 			SettingsStatusText->SetAutoWrapText(true);
 			{
 				UHorizontalBoxSlot* S = SaveRow->AddChildToHorizontalBox(SettingsStatusText);
@@ -432,20 +580,18 @@ void UERGalaCommandPanel::BuildLayout()
 			}
 			Inner->AddChildToVerticalBox(SaveRow);
 		}
-		Page3->AddChildToVerticalBox(Card.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 
-		// ---- 画面与音频 (后续周期开放) ----
-		ERUI::FBoneCard StubCard = ERUI::MakeBoneCard(this, T->BoneGhost, false, FMargin(24.0f, 14.0f));
+		Inner->AddChildToVerticalBox(MakeHairlineH(0.14f))->SetPadding(FMargin(0.0f, 26.0f, 0.0f, 16.0f));
+
 		UTextBlock* Placeholder = ERUI::MakeText(this,
 			INVTEXT("画面、音频与指挥终端偏好将在后续周期开放。"),
-			EERTypeScale::Body, ERUI::InkText(0.5f), false);
-		Placeholder->SetFont(ERUI::FontRegular(14, 20));
-		StubCard.Content->AddChildToVerticalBox(Placeholder);
-		Page3->AddChildToVerticalBox(StubCard.Root);
+			EERTypeScale::Body, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), false);
+		ERUI::ApplyResonantText(Placeholder, 13, false, 40, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), FVector2D(1.5f, 2.0f), 0.85f);
+		Inner->AddChildToVerticalBox(Placeholder);
 	}
 
 	// =========================================================================
-	// TAB 1: 虹膜兵团整备与扩编
+	// TAB 1: 兵团整备与扩编 (极简账本式列表 + 1px 横发丝分割)
 	// =========================================================================
 	{
 		UVerticalBox* Page1 = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("RosterPage"));
@@ -458,20 +604,22 @@ void UERGalaCommandPanel::BuildLayout()
 		}
 
 		UHorizontalBox* TopBar = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		RosterSummaryText = ERUI::MakeText(this, INVTEXT("虹膜链接兵团"), EERTypeScale::Body, T->Bone, false);
-		RosterSummaryText->SetFont(ERUI::FontBold(21, 60));
+		RosterSummaryText = ERUI::MakeText(this, INVTEXT("虹膜链接兵团"), EERTypeScale::Body, FLinearColor(0.99f, 0.99f, 0.98f, 0.92f), false);
+		ERUI::ApplyResonantText(RosterSummaryText, 18, true, 80, FLinearColor(0.99f, 0.99f, 0.98f, 0.92f), FVector2D(2.0f, 2.5f), 0.86f);
 		{
 			UHorizontalBoxSlot* S = TopBar->AddChildToHorizontalBox(RosterSummaryText);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			S->SetVerticalAlignment(VAlign_Center);
 		}
 
-		ReinforceAllButton = MakeBoneButton(INVTEXT("一键满编补员"), 24, false, [this]() { OnReinforceAllClicked(); });
+		ReinforceAllButton = MakeResonantButton(INVTEXT("一键满编补员"), 17, false, false, [this]() { OnReinforceAllClicked(); });
 		TopBar->AddChildToHorizontalBox(ReinforceAllButton)->SetVerticalAlignment(VAlign_Center);
-		Page1->AddChildToVerticalBox(TopBar)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		Page1->AddChildToVerticalBox(TopBar)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
 		RecruitBarBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		Page1->AddChildToVerticalBox(RecruitBarBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
+		Page1->AddChildToVerticalBox(RecruitBarBox)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+
+		Page1->AddChildToVerticalBox(MakeHairlineH(0.16f));
 
 		UScrollBox* RosterScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
 		{
@@ -550,10 +698,10 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 {
 	UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this);
 	if (!Campaign || !FactionListBox || !SectorListBox) { return; }
-	const UERUITheme* T = ERUI::Theme();
 
 	const TArray<FFactionStatus>& Factions = Campaign->GetFactions();
-	static const FColor GrayRanks[] = { FColor(26, 26, 26), FColor(84, 84, 84), FColor(151, 151, 151) };
+	// 暗底环图采用高对比单色灰阶层次
+	static const FColor DarkModeGrayRanks[] = { FColor(235, 235, 230), FColor(145, 145, 142), FColor(68, 68, 72) };
 	TArray<FERControlShareSlice> Slices;
 	Slices.Reserve(Factions.Num());
 	for (const FFactionStatus& F : Factions)
@@ -567,7 +715,7 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 				++Rank;
 			}
 		}
-		Slices.Add({ Share, FLinearColor::FromSRGBColor(GrayRanks[FMath::Min(Rank, static_cast<int32>(UE_ARRAY_COUNT(GrayRanks)) - 1)]) });
+		Slices.Add({ Share, FLinearColor::FromSRGBColor(DarkModeGrayRanks[FMath::Min(Rank, static_cast<int32>(UE_ARRAY_COUNT(DarkModeGrayRanks)) - 1)]) });
 	}
 
 	FactionListBox->ClearChildren();
@@ -575,7 +723,8 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 	{
 		const FFactionStatus& F = Factions[Index];
 		const FLinearColor SliceFill = Slices[Index].Fill;
-		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, SliceFill, false, FMargin(14.0f, 8.0f));
+
+		UVerticalBox* EntryCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		UBorder* Key = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
@@ -588,40 +737,50 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 		Key->SetContent(KeyText);
 		{
 			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(Key);
-			S->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
+			S->SetPadding(FMargin(0.0f, 0.0f, 12.0f, 0.0f));
 			S->SetVerticalAlignment(VAlign_Center);
 		}
 
-		// 势力 Logo (纯 logo 无底片, 纵横比自适应)
-		if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetFactionLogoAssetPath(F.Faction)))
+		// 紧凑骨白印章托住黑墨势力徽标
 		{
-			if (UImage* LogoImg = ERUI::MakeLogoImage(this, Tex, 30.0f))
-			{
-				UHorizontalBoxSlot* LS = Row->AddChildToHorizontalBox(LogoImg);
-				LS->SetPadding(FMargin(0.0f, 0.0f, 12.0f, 0.0f));
-				LS->SetVerticalAlignment(VAlign_Center);
-			}
+			UWidget* Seal = MakeFactionSeal(F.Faction, 26.0f);
+			UHorizontalBoxSlot* LS = Row->AddChildToHorizontalBox(Seal);
+			LS->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
+			LS->SetVerticalAlignment(VAlign_Center);
 		}
-		UTextBlock* NameTxt = ERUI::MakeText(this, FText::FromString(F.DisplayName), EERTypeScale::Caption, ERUI::InkText(), false);
-		NameTxt->SetFont(ERUI::FontBold(21, 60));
+
+		UTextBlock* NameTxt = ERUI::MakeText(this, FText::FromString(F.DisplayName), EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), false);
+		ERUI::ApplyResonantText(NameTxt, 21, true, 60, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), FVector2D(2.0f, 2.5f), 0.86f);
 		{
 			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(NameTxt);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			S->SetVerticalAlignment(VAlign_Center);
 		}
+
 		UTextBlock* PctTxt = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("控制率 %.1f%%  ·  声望 %+d"), F.GalacticControl, F.Reputation)),
-			EERTypeScale::Micro, ERUI::InkText(0.8f), false);
-		PctTxt->SetFont(ERUI::FontBold(16, 40));
-		Row->AddChildToHorizontalBox(PctTxt);
-		Card.Content->AddChildToVerticalBox(Row);
+			FText::FromString(FString::Printf(TEXT("控制率 %.1f%%"), F.GalacticControl)),
+			EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 0.96f), false);
+		ERUI::ApplyResonantText(PctTxt, 19, true, 40, FLinearColor(0.99f, 0.99f, 0.98f, 0.96f), FVector2D(1.5f, 2.0f), 0.86f);
+		Row->AddChildToHorizontalBox(PctTxt)->SetVerticalAlignment(VAlign_Center);
 
-		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(F.DoctrineBrief), EERTypeScale::Micro, ERUI::InkText(0.62f), false);
-		Brief->SetFont(ERUI::FontRegular(14, 20));
+		UTextBlock* RepTxt = ERUI::MakeText(this,
+			FText::FromString(FString::Printf(TEXT("  ·  声望 %+d"), F.Reputation)),
+			EERTypeScale::Caption, FLinearColor(0.99f, 0.99f, 0.98f, 0.66f), false);
+		ERUI::ApplyResonantText(RepTxt, 14, false, 40, FLinearColor(0.99f, 0.99f, 0.98f, 0.66f), FVector2D(1.5f, 2.0f), 0.85f);
+		Row->AddChildToHorizontalBox(RepTxt)->SetVerticalAlignment(VAlign_Center);
+
+		EntryCol->AddChildToVerticalBox(Row);
+
+		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(F.DoctrineBrief), EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.58f), false);
+		ERUI::ApplyResonantText(Brief, 13, false, 20, FLinearColor(0.99f, 0.99f, 0.98f, 0.58f), FVector2D(1.5f, 2.0f), 0.85f);
 		Brief->SetAutoWrapText(true);
-		Card.Content->AddChildToVerticalBox(Brief)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+		EntryCol->AddChildToVerticalBox(Brief)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
 
-		FactionListBox->AddChildToVerticalBox(Card.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+		FactionListBox->AddChildToVerticalBox(EntryCol)->SetPadding(FMargin(0.0f, 10.0f, 0.0f, 10.0f));
+		if (Index + 1 < Factions.Num())
+		{
+			FactionListBox->AddChildToVerticalBox(MakeHairlineH(0.12f));
+		}
 	}
 
 	if (ControlShareCard)
@@ -635,27 +794,38 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 	}
 
 	SectorListBox->ClearChildren();
-	for (const FGalacticSector& Sec : Campaign->GetSectors())
+	const TArray<FGalacticSector>& Sectors = Campaign->GetSectors();
+	for (int32 s = 0; s < Sectors.Num(); ++s)
 	{
+		const FGalacticSector& Sec = Sectors[s];
 		const FLinearColor OwnerCol = ERGalacticMeta::GetFactionColor(Sec.ControllingFaction);
-		ERUI::FBoneCard Row = ERUI::MakeBoneCard(this, OwnerCol, false, FMargin(14.0f, 8.0f), false);
 
 		UHorizontalBox* H = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		UTextBlock* SecName = ERUI::MakeText(this, FText::FromString(Sec.Name), EERTypeScale::Micro, ERUI::InkText(), false);
-		SecName->SetFont(ERUI::FontBold(18, 40));
+
+		UImage* Tick = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		Tick->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 16.0f)));
+		Tick->SetColorAndOpacity(OwnerCol);
+		H->AddChildToHorizontalBox(Tick)->SetPadding(FMargin(0.0f, 0.0f, 12.0f, 0.0f));
+
+		UTextBlock* SecName = ERUI::MakeText(this, FText::FromString(Sec.Name), EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.94f), false);
+		ERUI::ApplyResonantText(SecName, 16, true, 40, FLinearColor(0.99f, 0.99f, 0.98f, 0.94f), FVector2D(1.5f, 2.0f), 0.85f);
 		{
 			UHorizontalBoxSlot* S = H->AddChildToHorizontalBox(SecName);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			S->SetVerticalAlignment(VAlign_Center);
 		}
 
 		UTextBlock* OwnerTxt = ERUI::MakeText(this,
 			FText::FromString(ERGalacticMeta::GetFactionName(Sec.ControllingFaction)),
-			EERTypeScale::Micro, ERUI::InkText(0.78f), false);
-		OwnerTxt->SetFont(ERUI::FontBold(17, 60));
-		H->AddChildToHorizontalBox(OwnerTxt);
-		Row.Content->AddChildToVerticalBox(H);
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.78f), false);
+		ERUI::ApplyResonantText(OwnerTxt, 14, true, 60, FLinearColor(0.99f, 0.99f, 0.98f, 0.78f), FVector2D(1.5f, 2.0f), 0.85f);
+		H->AddChildToHorizontalBox(OwnerTxt)->SetVerticalAlignment(VAlign_Center);
 
-		SectorListBox->AddChildToVerticalBox(Row.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 6.0f));
+		SectorListBox->AddChildToVerticalBox(H)->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 8.0f));
+		if (s + 1 < Sectors.Num())
+		{
+			SectorListBox->AddChildToVerticalBox(MakeHairlineH(0.10f));
+		}
 	}
 
 	if (LastOutcomeBox && LastOutcomeText)
@@ -665,7 +835,7 @@ void UERGalaCommandPanel::RebuildFactionAndSectorList()
 		{
 			LastOutcomeBox->SetVisibility(ESlateVisibility::Visible);
 			LastOutcomeText->SetText(FText::FromString(FString::Printf(
-				TEXT("上一战况 [%s]: %s\n经费 +%d 银河币 · 我方伤亡 %d · %s控制率 %+.1f%%"),
+				TEXT("上一战况 [%s]：%s\n经费 +%d 银河币  ·  我方伤亡 %d  ·  %s控制率 %+.1f%%"),
 				Out.bVictory ? TEXT("胜利") : TEXT("撤离"),
 				*Out.ContractTitle,
 				Out.CreditsEarned,
@@ -687,136 +857,154 @@ void UERGalaCommandPanel::RebuildContractList()
 	const UERUITheme* T = ERUI::Theme();
 
 	ContractListBox->ClearChildren();
-	for (const FGalacticContract& C : Campaign->GetAvailableContracts())
+	const TArray<FGalacticContract>& Contracts = Campaign->GetAvailableContracts();
+	for (int32 Idx = 0; Idx < Contracts.Num(); ++Idx)
 	{
-		const FLinearColor EmpCol = ERGalacticMeta::GetFactionColor(C.Employer);
-		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, EmpCol, false, FMargin(22.0f, 16.0f));
-		if (UOverlaySlot* CS = Cast<UOverlaySlot>(Card.Content->Slot))
+		const FGalacticContract& C = Contracts[Idx];
+		if (Idx > 0)
 		{
+			UHorizontalBoxSlot* SepSlot = ContractListBox->AddChildToHorizontalBox(MakeHairlineV(0.14f));
+			SepSlot->SetVerticalAlignment(VAlign_Fill);
+			SepSlot->SetPadding(FMargin(28.0f, 4.0f));
+		}
+
+		const FLinearColor EmpCol = ERGalacticMeta::GetFactionColor(C.Employer);
+		UVerticalBox* Inner = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		{
+			UHorizontalBoxSlot* CS = ContractListBox->AddChildToHorizontalBox(Inner);
+			CS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			CS->SetVerticalAlignment(VAlign_Fill);
 		}
-		UVerticalBox* Inner = Card.Content;
 
 		const FGalacticSector* Sec = Campaign->FindSector(C.TargetSectorId);
 		const FString SecName = Sec ? Sec->Name : TEXT("未知星区");
 
-		// ---- 卡片正文: 七要素垂直排列, 每行独占一个横带, 行间留白 ----
+		// 1. 顶部 3px 雇主阵营色横条
+		UImage* TopBar = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		TopBar->SetBrush(ERUI::WhiteBrush(FVector2D(1.0f, 3.0f)));
+		TopBar->SetColorAndOpacity(EmpCol);
+		Inner->AddChildToVerticalBox(TopBar)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
-		// 1. 交战双方势力 Logo 英雄区: 去除占位技能图标, 雇主/敌对大 logo 同高居中,
-		//    合计宽度 ~470px (1080p 下卡片宽 588px 的 80%), 高度按双方纵横比联立求解
+		// 2. 序号 (01/02/03) + 右侧交战双方印章徽标
 		{
-			UTexture2D* EmpTex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetFactionLogoAssetPath(C.Employer));
-			UTexture2D* EneTex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetFactionLogoAssetPath(C.EnemyFaction));
-			if (EmpTex && EneTex)
+			UHorizontalBox* TopRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			UTextBlock* NumTxt = ERUI::MakeText(this, FText::FromString(FString::Printf(TEXT("%02d"), Idx + 1)),
+				EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 0.28f), true);
+			ERUI::ApplyResonantText(NumTxt, 34, true, 40, FLinearColor(0.99f, 0.99f, 0.98f, 0.28f), FVector2D(2.0f, 3.0f), 0.70f);
 			{
-				const float A1 = (float)EmpTex->GetSizeX() / FMath::Max(1.0f, (float)EmpTex->GetSizeY());
-				const float A2 = (float)EneTex->GetSizeX() / FMath::Max(1.0f, (float)EneTex->GetSizeY());
-				const float Gap = 28.0f;
-				const float Height = 446.0f / (A1 + A2);
-
-				UHorizontalBox* HeroRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-				if (UImage* EmpImg = ERUI::MakeLogoImage(this, EmpTex, Height))
-				{
-					UHorizontalBoxSlot* S = HeroRow->AddChildToHorizontalBox(EmpImg);
-					S->SetPadding(FMargin(0.0f, 0.0f, Gap, 0.0f));
-					S->SetVerticalAlignment(VAlign_Center);
-				}
-				if (UImage* EneImg = ERUI::MakeLogoImage(this, EneTex, Height))
-				{
-					UHorizontalBoxSlot* S = HeroRow->AddChildToHorizontalBox(EneImg);
-					S->SetVerticalAlignment(VAlign_Center);
-				}
-				UVerticalBoxSlot* HS = Inner->AddChildToVerticalBox(HeroRow);
-				HS->SetHorizontalAlignment(HAlign_Center);
-				HS->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 18.0f));
+				UHorizontalBoxSlot* S = TopRow->AddChildToHorizontalBox(NumTxt);
+				S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+				S->SetVerticalAlignment(VAlign_Center);
 			}
+
+			TopRow->AddChildToHorizontalBox(MakeFactionSeal(C.Employer, 38.0f))->SetVerticalAlignment(VAlign_Center);
+
+			UTextBlock* VsTxt = ERUI::MakeText(this, INVTEXT("×"), EERTypeScale::Caption, FLinearColor(0.99f, 0.99f, 0.98f, 0.50f), true);
+			ERUI::ApplyResonantText(VsTxt, 14, true, 0, FLinearColor(0.99f, 0.99f, 0.98f, 0.50f), FVector2D(1.5f, 2.0f), 0.85f);
+			{
+				UHorizontalBoxSlot* VS = TopRow->AddChildToHorizontalBox(VsTxt);
+				VS->SetVerticalAlignment(VAlign_Center);
+				VS->SetPadding(FMargin(10.0f, 0.0f));
+			}
+
+			TopRow->AddChildToHorizontalBox(MakeFactionSeal(C.EnemyFaction, 38.0f))->SetVerticalAlignment(VAlign_Center);
+
+			Inner->AddChildToVerticalBox(TopRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 		}
 
-		// 2. 任务名字 (独占整宽, 不与 Logo/星级抢横向空间)
-		UTextBlock* Title = ERUI::MakeText(this, FText::FromString(C.Title), EERTypeScale::Title, ERUI::InkText(), false);
-		Title->SetFont(ERUI::FontBold(24, 40));
+		// 3. 任务标题 (大字纯白 + 错位黑影)
+		UTextBlock* Title = ERUI::MakeText(this, FText::FromString(C.Title), EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), false);
+		ERUI::ApplyResonantText(Title, 25, true, 50, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), FVector2D(2.5f, 3.5f), 0.86f);
 		Title->SetAutoWrapText(true);
-		Inner->AddChildToVerticalBox(Title)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+		Inner->AddChildToVerticalBox(Title)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
-		// 3. 任务地点: 标签浅墨 + 星区名重墨
+		// 4. 任务地点 + 难度星级同行
 		{
-			UHorizontalBox* LocRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-			UTextBlock* LocLabel = ERUI::MakeText(this, INVTEXT("任务地点"), EERTypeScale::Micro, ERUI::InkText(0.48f), false);
-			LocLabel->SetFont(ERUI::FontBold(13, 80));
-			LocRow->AddChildToHorizontalBox(LocLabel)->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
-			UTextBlock* LocValue = ERUI::MakeText(this, FText::FromString(SecName), EERTypeScale::Caption, ERUI::InkText(0.92f), false);
-			LocValue->SetFont(ERUI::FontBold(16, 50));
-			LocRow->AddChildToHorizontalBox(LocValue);
-			Inner->AddChildToVerticalBox(LocRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
+			UHorizontalBox* LocStarRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			UTextBlock* LocLabel = ERUI::MakeText(this, INVTEXT("任务地点 "), EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), false);
+			ERUI::ApplyResonantText(LocLabel, 12, false, 60, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), FVector2D(1.5f, 2.0f), 0.85f);
+			LocStarRow->AddChildToHorizontalBox(LocLabel)->SetVerticalAlignment(VAlign_Center);
+
+			UTextBlock* LocValue = ERUI::MakeText(this, FText::FromString(SecName), EERTypeScale::Caption, FLinearColor(0.99f, 0.99f, 0.98f, 0.94f), false);
+			ERUI::ApplyResonantText(LocValue, 15, true, 50, FLinearColor(0.99f, 0.99f, 0.98f, 0.94f), FVector2D(1.5f, 2.0f), 0.85f);
+			{
+				UHorizontalBoxSlot* S = LocStarRow->AddChildToHorizontalBox(LocValue);
+				S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+				S->SetVerticalAlignment(VAlign_Center);
+			}
+
+			FString Stars;
+			const int32 Rating = FMath::Clamp(C.DangerRating, 1, 5);
+			for (int32 s = 0; s < 5; ++s) { Stars += (s < Rating) ? TEXT("★") : TEXT("☆"); }
+			UTextBlock* DangerTxt = ERUI::MakeText(this, FText::FromString(Stars), EERTypeScale::Caption, T->Accent, false);
+			ERUI::ApplyResonantText(DangerTxt, 15, true, 40, T->Accent, FVector2D(1.5f, 2.0f), 0.86f);
+			LocStarRow->AddChildToHorizontalBox(DangerTxt)->SetVerticalAlignment(VAlign_Center);
+
+			Inner->AddChildToVerticalBox(LocStarRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 6.0f));
 		}
 
-		// 雇主 → 敌对 (tertiary 情报行, 纯文本: 大 logo 已在顶部承担视觉身份)
+		// 5. 雇主 · 敌对 · 地形倾向
 		UTextBlock* Meta = ERUI::MakeText(this,
 			FText::FromString(FString::Printf(TEXT("雇主 %s  ·  敌对 %s  ·  %s"),
 				*ERGalacticMeta::GetFactionName(C.Employer),
 				*ERGalacticMeta::GetFactionName(C.EnemyFaction),
 				*ERGalacticMeta::GetTacticalProfileName(C.TacticalProfile))),
-			EERTypeScale::Micro, ERUI::InkText(0.55f), false);
-		Meta->SetFont(ERUI::FontRegular(13, 30));
-		Inner->AddChildToVerticalBox(Meta)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.56f), false);
+		ERUI::ApplyResonantText(Meta, 13, false, 30, FLinearColor(0.99f, 0.99f, 0.98f, 0.56f), FVector2D(1.5f, 2.0f), 0.85f);
+		Meta->SetAutoWrapText(true);
+		Inner->AddChildToVerticalBox(Meta)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
 
-		// 4. 难度星级: 最低一星, 标签浅墨 + 琥珀星同行
-		{
-			UHorizontalBox* StarRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-			UTextBlock* StarLabel = ERUI::MakeText(this, INVTEXT("任务难度"), EERTypeScale::Micro, ERUI::InkText(0.48f), false);
-			StarLabel->SetFont(ERUI::FontBold(13, 80));
-			{
-				UHorizontalBoxSlot* S = StarRow->AddChildToHorizontalBox(StarLabel);
-				S->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
-				S->SetVerticalAlignment(VAlign_Center);
-			}
-			FString Stars;
-			const int32 Rating = FMath::Clamp(C.DangerRating, 1, 5);
-			for (int32 s = 0; s < 5; ++s) { Stars += (s < Rating) ? TEXT("★") : TEXT("☆"); }
-			UTextBlock* DangerTxt = ERUI::MakeText(this, FText::FromString(Stars),
-				EERTypeScale::Caption, FLinearColor(0.58f, 0.31f, 0.0f, 1.0f), false);
-			DangerTxt->SetFont(ERUI::FontBold(17, 40));
-			StarRow->AddChildToHorizontalBox(DangerTxt);
-			Inner->AddChildToVerticalBox(StarRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
-		}
+		Inner->AddChildToVerticalBox(MakeHairlineH(0.12f))->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 
-		// 5. 任务简述: 占据弹性空间, 把报酬与按钮压到底部
-		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(C.Briefing), EERTypeScale::Body, ERUI::InkText(0.66f), false);
-		Brief->SetFont(ERUI::FontRegular(15, 20));
+		// 6. 简报正文 (占据弹性高)
+		UTextBlock* Brief = ERUI::MakeText(this, FText::FromString(C.Briefing), EERTypeScale::Body, FLinearColor(0.99f, 0.99f, 0.98f, 0.78f), false);
+		ERUI::ApplyResonantText(Brief, 14, false, 20, FLinearColor(0.99f, 0.99f, 0.98f, 0.78f), FVector2D(1.5f, 2.0f), 0.85f);
 		Brief->SetAutoWrapText(true);
 		{
 			UVerticalBoxSlot* S = Inner->AddChildToVerticalBox(Brief);
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			S->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+			S->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 		}
 
-		// ---- 任务报酬 (要素 6): 标签/酬金/控制权/敌情各自成行 ----
-		UTextBlock* RewardLabel = ERUI::MakeText(this, INVTEXT("任务报酬"), EERTypeScale::Micro, ERUI::InkText(0.48f), false);
-		RewardLabel->SetFont(ERUI::FontBold(13, 80));
-		Inner->AddChildToVerticalBox(RewardLabel)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
+		Inner->AddChildToVerticalBox(MakeHairlineH(0.14f))->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 
-		UTextBlock* RewardValue = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("+%d 银河币"), C.RewardCredits)),
-			EERTypeScale::Caption, ERUI::InkText(), false);
-		RewardValue->SetFont(ERUI::FontBold(21, 30));
-		Inner->AddChildToVerticalBox(RewardValue)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 3.0f));
+		// 7. 任务报酬 + 控制权收益同行
+		{
+			UHorizontalBox* PayRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			UTextBlock* RewardVal = ERUI::MakeText(this,
+				FText::FromString(FString::Printf(TEXT("+%d"), C.RewardCredits)),
+				EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), true);
+			ERUI::ApplyResonantText(RewardVal, 30, true, 20, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), FVector2D(2.0f, 3.0f), 0.86f);
+			PayRow->AddChildToHorizontalBox(RewardVal)->SetVerticalAlignment(VAlign_Bottom);
 
-		UTextBlock* ControlTxt = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("控制权 %+.1f%%"), C.ControlShift)),
-			EERTypeScale::Micro, ERUI::InkText(0.78f), false);
-		ControlTxt->SetFont(ERUI::FontBold(14, 30));
-		Inner->AddChildToVerticalBox(ControlTxt)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 6.0f));
+			UTextBlock* UnitLbl = ERUI::MakeText(this, INVTEXT(" 银河币"), EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.62f), false);
+			ERUI::ApplyResonantText(UnitLbl, 13, false, 40, FLinearColor(0.99f, 0.99f, 0.98f, 0.62f), FVector2D(1.5f, 2.0f), 0.85f);
+			{
+				UHorizontalBoxSlot* US = PayRow->AddChildToHorizontalBox(UnitLbl);
+				US->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+				US->SetVerticalAlignment(VAlign_Bottom);
+				US->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 4.0f));
+			}
+
+			UTextBlock* ControlTxt = ERUI::MakeText(this,
+				FText::FromString(FString::Printf(TEXT("控制权 %+.1f%%"), C.ControlShift)),
+				EERTypeScale::Caption, T->Accent, false);
+			ERUI::ApplyResonantText(ControlTxt, 15, true, 40, T->Accent, FVector2D(1.5f, 2.0f), 0.86f);
+			PayRow->AddChildToHorizontalBox(ControlTxt)->SetVerticalAlignment(VAlign_Bottom);
+
+			Inner->AddChildToVerticalBox(PayRow)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 6.0f));
+		}
 
 		UTextBlock* Intel = ERUI::MakeText(this,
 			FText::FromString(FString::Printf(TEXT("敌情 %d 波次 · %d 名作战单位"),
 				C.EnemyWaves.Num(), C.GetTotalEnemySoldiers())),
-			EERTypeScale::Micro, ERUI::InkText(0.55f), false);
-		Intel->SetFont(ERUI::FontRegular(13, 30));
-		Inner->AddChildToVerticalBox(Intel)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.56f), false);
+		ERUI::ApplyResonantText(Intel, 13, false, 30, FLinearColor(0.99f, 0.99f, 0.98f, 0.56f), FVector2D(1.5f, 2.0f), 0.85f);
+		Inner->AddChildToVerticalBox(Intel)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
-		// ---- 接取按钮 (要素 7): 通栏主按钮 ----
+		// 8. 接取按钮 (《控制:共振》式纯白阴影文字)
 		const int32 ContractId = C.ContractId;
-		UERActionButton* DeployBtn = MakeBoneButton(INVTEXT("接取委托 · 出击部署"), 22, true,
+		UERActionButton* DeployBtn = MakeResonantButton(INVTEXT("接取委托 · 出击部署"), 19, true, true,
 			[this, ContractId]()
 			{
 				UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this);
@@ -826,9 +1014,8 @@ void UERGalaCommandPanel::RebuildContractList()
 				// 先盖上静态「神经接驳」过渡屏, 随后直接调 OpenLevel —
 				// SetClientTravel 本就延迟到下一帧引擎 tick 才处理 (UEngine::TickWorldTravel),
 				// 本帧过渡屏照常光栅化, 关卡加载卡顿发生在接驳屏上,
-				// 与 Lvl_Legion 内的交互式接驳屏视觉连续 (草皮构筑期间玩家不会盯着黑屏)。
-				// 切勿经 FTSTicker 转一手: 核心 ticker 回调脱离 PIE 世界上下文 (GPlayInEditorID==-1),
-				// 此时 GetCurrentPlayWorld() 返回空, 部署静默失败 —— 已踩过 (2026-11)
+				// 与 Lvl_Legion 内的交互式接驳屏视觉连续。
+				// 切勿经 FTSTicker 转一手: 核心 ticker 回调脱离 PIE 世界上下文 (GPlayInEditorID==-1)。
 				ULegionDeployScreen* Screen = nullptr;
 				if (UWorld* World = GetWorld())
 				{
@@ -845,7 +1032,6 @@ void UERGalaCommandPanel::RebuildContractList()
 
 				if (!Camp->AcceptAndDeployContract(ContractId, this))
 				{
-					// 部署被拒绝 (合同失效/无存活士兵等): 撤销过渡屏并解锁按钮
 					bDeployInTransit = false;
 					if (Screen) { Screen->RemoveFromParent(); }
 					RefreshAll();
@@ -853,14 +1039,7 @@ void UERGalaCommandPanel::RebuildContractList()
 			});
 		{
 			UVerticalBoxSlot* S = Inner->AddChildToVerticalBox(DeployBtn);
-			S->SetHorizontalAlignment(HAlign_Fill);
-		}
-
-		if (UHorizontalBoxSlot* S = ContractListBox->AddChildToHorizontalBox(Card.Root))
-		{
-			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			S->SetVerticalAlignment(VAlign_Fill);
-			S->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+			S->SetHorizontalAlignment(HAlign_Left);
 		}
 	}
 }
@@ -880,13 +1059,13 @@ void UERGalaCommandPanel::RebuildRosterList()
 	if (RosterSummaryText)
 	{
 		RosterSummaryText->SetText(FText::FromString(FString::Printf(
-			TEXT("现役虹膜链接兵团: %d / %d 支   |   总可用兵力: %d / %d"),
+			TEXT("现役虹膜链接兵团 %d / %d 支   ·   总可用兵力 %d / %d"),
 			Campaign->GetPlayerLegions().Num(), UGalacticCampaignSubsystem::MaxPlayerLegions, TotalAlive, TotalMax)));
 	}
 
 	RecruitBarBox->ClearChildren();
-	UTextBlock* RecLabel = ERUI::MakeText(this, INVTEXT("新兵团扩编："), EERTypeScale::Micro, T->BoneSecondary, false);
-	RecLabel->SetFont(ERUI::FontBold(18, 60));
+	UTextBlock* RecLabel = ERUI::MakeText(this, INVTEXT("新兵团扩编"), EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.55f), false);
+	ERUI::ApplyResonantText(RecLabel, 13, true, 80, FLinearColor(0.99f, 0.99f, 0.98f, 0.55f), FVector2D(1.5f, 2.0f), 0.85f);
 	RecruitBarBox->AddChildToHorizontalBox(RecLabel)->SetVerticalAlignment(VAlign_Center);
 
 	static const ELegionClass AllClasses[4] = {
@@ -898,9 +1077,9 @@ void UERGalaCommandPanel::RebuildRosterList()
 		const ELegionClass Cls = AllClasses[i];
 		const int32 Cost = Campaign->GetRecruitCost(Cls);
 		const bool bCanAfford = bCanRecruitMore && (Campaign->GetCredits() >= Cost);
-		UERActionButton* Btn = MakeBoneButton(
+		UERActionButton* Btn = MakeResonantButton(
 			FText::FromString(FString::Printf(TEXT("招募%s · %d 银河币"), *ERGalacticMeta::GetClassName(Cls), Cost)),
-			20, false,
+			14, false, true,
 			[this, Cls]()
 			{
 				if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
@@ -908,29 +1087,40 @@ void UERGalaCommandPanel::RebuildRosterList()
 					if (Camp->RecruitLegion(Cls)) { RefreshAll(); }
 				}
 			});
-		Btn->SetAccentColor(T->AllyMark, false);
 		Btn->SetButtonEnabled(bCanAfford);
-		RecruitBarBox->AddChildToHorizontalBox(Btn)->SetPadding(FMargin(10.0f, 0.0f, 0.0f, 0.0f));
+		RecruitBarBox->AddChildToHorizontalBox(Btn)->SetPadding(FMargin(20.0f, 0.0f, 0.0f, 0.0f));
 	}
 
 	RosterListBox->ClearChildren();
-	for (const FManagedLegionData& L : Campaign->GetPlayerLegions())
+	const TArray<FManagedLegionData>& Legions = Campaign->GetPlayerLegions();
+	for (int32 i = 0; i < Legions.Num(); ++i)
 	{
-		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, L.GetMissingSoldiers() > 0 ? T->Accent : T->AllyMark, false, FMargin(20.0f, 14.0f));
+		const FManagedLegionData& L = Legions[i];
+		const bool bDamaged = L.GetMissingSoldiers() > 0;
+		const FLinearColor BarCol = bDamaged ? T->Accent : T->AllyMark;
 
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		Card.Content->AddChildToVerticalBox(Row);
 
-		// 部队占位 Logo
+		// 1. 左侧 3px 状态竖条
+		UImage* StatusBar = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		StatusBar->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 44.0f)));
+		StatusBar->SetColorAndOpacity(BarCol);
+		{
+			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(StatusBar);
+			S->SetVerticalAlignment(VAlign_Center);
+			S->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+		}
+
+		// 2. 部队占位 Logo (1px 暗影框)
 		{
 			UBorder* LogoBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-			LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.012f, 0.013f, 0.018f, 0.94f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.5f)));
+			LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.010f, 0.014f, 0.85f), 1.0f, FLinearColor(0.99f, 0.99f, 0.98f, 0.16f)));
 			LogoBox->SetBrushColor(FLinearColor::White);
-			LogoBox->SetPadding(FMargin(3.0f));
+			LogoBox->SetPadding(FMargin(2.0f));
 
 			UImage* LogoImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 			FSlateBrush IconBrush;
-			IconBrush.ImageSize = FVector2D(46.0f, 46.0f);
+			IconBrush.ImageSize = FVector2D(44.0f, 44.0f);
 			IconBrush.DrawAs = ESlateBrushDrawType::Image;
 			if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, ERGalacticMeta::GetClassLogoAssetPath(L.Archetype, true)))
 			{
@@ -942,10 +1132,11 @@ void UERGalaCommandPanel::RebuildRosterList()
 			if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(LogoBox))
 			{
 				S->SetVerticalAlignment(VAlign_Center);
-				S->SetPadding(FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+				S->SetPadding(FMargin(0.0f, 0.0f, 18.0f, 0.0f));
 			}
 		}
 
+		// 3. 番号 / 兵种 / 同步等级 / 定位
 		UVerticalBox* InfoCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		InfoCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		{
@@ -954,39 +1145,61 @@ void UERGalaCommandPanel::RebuildRosterList()
 			S->SetVerticalAlignment(VAlign_Center);
 		}
 
-		UTextBlock* NameTxt = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("%s   ·   %s   ·   虹膜同步 %d 级"),
-				*L.Callsign, *ERGalacticMeta::GetClassName(L.Archetype), L.SyncLevel)),
-			EERTypeScale::Title, ERUI::InkText(), false);
-		NameTxt->SetFont(ERUI::FontBold(23, 40));
-		InfoCol->AddChildToVerticalBox(NameTxt);
-
-		UTextBlock* RoleTxt = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("定位: %s   |   战历: %d 场"),
-				*ERGalacticMeta::GetClassRoleDesc(L.Archetype),
-				L.BattlesSurvived)),
-			EERTypeScale::Micro, ERUI::InkText(0.66f), false);
-		RoleTxt->SetFont(ERUI::FontBold(15, 20));
-		InfoCol->AddChildToVerticalBox(RoleTxt)->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 0.0f));
-
-		UTextBlock* CountTxt = ERUI::MakeText(this,
-			FText::FromString(FString::Printf(TEXT("兵员  %d / %d"), L.AliveSoldiers, L.MaxSoldiers)),
-			EERTypeScale::Title, L.GetMissingSoldiers() > 0 ? FLinearColor(0.58f, 0.31f, 0.0f, 1.0f) : FLinearColor(0.02f, 0.30f, 0.62f, 1.0f), false);
-		CountTxt->SetFont(ERUI::FontBold(24, 40));
 		{
-			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(CountTxt);
-			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(0.0f, 0.0f, 22.0f, 0.0f));
+			UHorizontalBox* TitleLine = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			UTextBlock* NameTxt = ERUI::MakeText(this, FText::FromString(L.Callsign), EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), false);
+			ERUI::ApplyResonantText(NameTxt, 23, true, 60, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), FVector2D(2.0f, 2.5f), 0.86f);
+			TitleLine->AddChildToHorizontalBox(NameTxt)->SetVerticalAlignment(VAlign_Bottom);
+
+			UTextBlock* MetaTxt = ERUI::MakeText(this,
+				FText::FromString(FString::Printf(TEXT("   ·   %s   ·   虹膜同步 %d 级"), *ERGalacticMeta::GetClassName(L.Archetype), L.SyncLevel)),
+				EERTypeScale::Caption, FLinearColor(0.99f, 0.99f, 0.98f, 0.68f), false);
+			ERUI::ApplyResonantText(MetaTxt, 14, false, 40, FLinearColor(0.99f, 0.99f, 0.98f, 0.68f), FVector2D(1.5f, 2.0f), 0.85f);
+			{
+				UHorizontalBoxSlot* MS = TitleLine->AddChildToHorizontalBox(MetaTxt);
+				MS->SetVerticalAlignment(VAlign_Bottom);
+				MS->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 3.0f));
+			}
+			InfoCol->AddChildToVerticalBox(TitleLine);
 		}
 
+		UTextBlock* RoleTxt = ERUI::MakeText(this,
+			FText::FromString(FString::Printf(TEXT("定位：%s   |   战历：%d 场"),
+				*ERGalacticMeta::GetClassRoleDesc(L.Archetype), L.BattlesSurvived)),
+			EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.54f), false);
+		ERUI::ApplyResonantText(RoleTxt, 13, false, 20, FLinearColor(0.99f, 0.99f, 0.98f, 0.54f), FVector2D(1.5f, 2.0f), 0.85f);
+		InfoCol->AddChildToVerticalBox(RoleTxt)->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 0.0f));
+
+		// 4. 巨型兵员读数
+		{
+			UVerticalBox* CountCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+			const FLinearColor CountColTint = bDamaged ? T->Accent : FLinearColor(0.99f, 0.99f, 0.98f, 0.98f);
+			UTextBlock* CountTxt = ERUI::MakeText(this,
+				FText::FromString(FString::Printf(TEXT("%d / %d"), L.AliveSoldiers, L.MaxSoldiers)),
+				EERTypeScale::Title, CountColTint, true);
+			ERUI::ApplyResonantText(CountTxt, 26, true, 40, CountColTint, FVector2D(2.0f, 2.5f), 0.86f);
+			CountTxt->SetJustification(ETextJustify::Right);
+			CountCol->AddChildToVerticalBox(CountTxt);
+
+			UTextBlock* CountLbl = ERUI::MakeText(this, INVTEXT("在编兵员"), EERTypeScale::Micro, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), false);
+			ERUI::ApplyResonantText(CountLbl, 11, false, 120, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f), FVector2D(1.5f, 2.0f), 0.85f);
+			CountLbl->SetJustification(ETextJustify::Right);
+			CountCol->AddChildToVerticalBox(CountLbl);
+
+			UHorizontalBoxSlot* CS = Row->AddChildToHorizontalBox(CountCol);
+			CS->SetVerticalAlignment(VAlign_Center);
+			CS->SetPadding(FMargin(0.0f, 0.0f, 32.0f, 0.0f));
+		}
+
+		// 5. 补员与同步升级按钮 (纯白错位阴影)
 		const int32 ReinforceCost = L.GetFullReinforceCost();
-		const bool bNeedReinforce = L.GetMissingSoldiers() > 0 && Campaign->GetCredits() >= L.GetReinforceCostPerSoldier();
+		const bool bNeedReinforce = bDamaged && Campaign->GetCredits() >= L.GetReinforceCostPerSoldier();
 		const int32 LegionId = L.LegionId;
-		UERActionButton* ReinfBtn = MakeBoneButton(
-			FText::FromString(L.GetMissingSoldiers() > 0
+		UERActionButton* ReinfBtn = MakeResonantButton(
+			FText::FromString(bDamaged
 				? FString::Printf(TEXT("补充兵员 · %d 银河币"), ReinforceCost)
 				: TEXT("兵员满编")),
-			20, false,
+			15, false, false,
 			[this, LegionId]()
 			{
 				if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
@@ -998,16 +1211,16 @@ void UERGalaCommandPanel::RebuildRosterList()
 		Row->AddChildToHorizontalBox(ReinfBtn)->SetVerticalAlignment(VAlign_Center);
 
 		USpacer* Gap = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
-		Gap->SetSize(FVector2D(12.0f, 1.0f));
+		Gap->SetSize(FVector2D(22.0f, 1.0f));
 		Row->AddChildToHorizontalBox(Gap);
 
 		const int32 SyncCost = L.GetSyncUpgradeCost();
 		const bool bCanUpgrade = (L.SyncLevel < 5) && (Campaign->GetCredits() >= SyncCost);
-		UERActionButton* UpgBtn = MakeBoneButton(
+		UERActionButton* UpgBtn = MakeResonantButton(
 			FText::FromString(L.SyncLevel >= 5
 				? TEXT("虹膜同步已满级")
 				: FString::Printf(TEXT("升级同步 · %d 银河币"), SyncCost)),
-			20, false,
+			15, false, false,
 			[this, LegionId]()
 			{
 				if (UGalacticCampaignSubsystem* Camp = UGalacticCampaignSubsystem::Get(this))
@@ -1015,11 +1228,14 @@ void UERGalaCommandPanel::RebuildRosterList()
 					if (Camp->UpgradeLegionSync(LegionId)) { RefreshAll(); }
 				}
 			});
-		UpgBtn->SetAccentColor(T->AllyMark, false);
 		UpgBtn->SetButtonEnabled(bCanUpgrade);
 		Row->AddChildToHorizontalBox(UpgBtn)->SetVerticalAlignment(VAlign_Center);
 
-		RosterListBox->AddChildToVerticalBox(Card.Root)->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+		RosterListBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 16.0f));
+		if (i + 1 < Legions.Num())
+		{
+			RosterListBox->AddChildToVerticalBox(MakeHairlineH(0.12f));
+		}
 	}
 }
 
@@ -1043,21 +1259,21 @@ void UERGalaCommandPanel::OnReinforceAllClicked()
 	}
 }
 
-void UERGalaCommandPanel::StyleBoneInputBox(UEditableTextBox* Box, const FText& Hint, bool bIsPassword)
+void UERGalaCommandPanel::StyleDarkInputBox(UEditableTextBox* Box, const FText& Hint, bool bIsPassword)
 {
 	if (!Box) { return; }
 	const UERUITheme* T = ERUI::Theme();
 
-	// 白底墨字主题: 浅骨底 + 墨色文字, 聚焦时描边转虹彩
+	// 深墨半透输入框 + 纯白文字 + 聚焦转暖金发丝框
 	FEditableTextBoxStyle Style = Box->GetWidgetStyle();
 	Style.SetFont(ERUI::FontRegular(14, 20));
-	Style.SetForegroundColor(FSlateColor(ERUI::InkText()));
-	Style.SetFocusedForegroundColor(FSlateColor(ERUI::InkText()));
-	Style.SetBackgroundColor(FSlateColor(FLinearColor::White));
-	Style.SetBackgroundImageNormal(ERUI::RoundedBrush(0.0f, FLinearColor(0.93f, 0.925f, 0.90f, 1.0f), 1.0f, ERUI::InkText(0.22f)));
-	Style.SetBackgroundImageHovered(ERUI::RoundedBrush(0.0f, FLinearColor(0.95f, 0.945f, 0.92f, 1.0f), 1.0f, ERUI::InkText(0.45f)));
-	Style.SetBackgroundImageFocused(ERUI::RoundedBrush(0.0f, FLinearColor(0.97f, 0.965f, 0.94f, 1.0f), 1.2f, T->Accent));
-	Style.SetPadding(FMargin(10.0f, 7.0f));
+	Style.SetForegroundColor(FSlateColor(FLinearColor(0.99f, 0.99f, 0.98f, 1.0f)));
+	Style.SetFocusedForegroundColor(FSlateColor(FLinearColor(0.99f, 0.99f, 0.98f, 1.0f)));
+	Style.SetBackgroundColor(FSlateColor(FLinearColor(0.014f, 0.016f, 0.022f, 0.94f)));
+	Style.SetBackgroundImageNormal(ERUI::RoundedBrush(0.0f, FLinearColor(0.014f, 0.016f, 0.022f, 0.92f), 1.0f, FLinearColor(0.99f, 0.99f, 0.98f, 0.24f)));
+	Style.SetBackgroundImageHovered(ERUI::RoundedBrush(0.0f, FLinearColor(0.020f, 0.022f, 0.030f, 0.96f), 1.0f, FLinearColor(0.99f, 0.99f, 0.98f, 0.48f)));
+	Style.SetBackgroundImageFocused(ERUI::RoundedBrush(0.0f, FLinearColor(0.022f, 0.025f, 0.034f, 0.98f), 1.2f, T->Accent));
+	Style.SetPadding(FMargin(12.0f, 9.0f));
 	Box->SetWidgetStyle(Style);
 	Box->SetHintText(Hint);
 	Box->SetIsPassword(bIsPassword);
@@ -1074,7 +1290,7 @@ void UERGalaCommandPanel::SyncSettingsInputsFromService()
 		if (SettingsStatusText)
 		{
 			SettingsStatusText->SetText(INVTEXT("AI 指挥模块未编译启用 (ER_WITH_AI_COMMAND=0)"));
-			SettingsStatusText->SetColorAndOpacity(FSlateColor(ERUI::InkText(0.55f)));
+			SettingsStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.99f, 0.99f, 0.98f, 0.65f)));
 		}
 		return;
 	}
@@ -1086,9 +1302,11 @@ void UERGalaCommandPanel::SyncSettingsInputsFromService()
 
 	if (SettingsStatusText)
 	{
+		const bool bReady = Service->HasApiKey();
 		SettingsStatusText->SetText(FText::FromString(
-			Service->HasApiKey() ? TEXT("密钥已就绪 · 战场中可接入 AI") : TEXT("未配置密钥 · AI 接入不可用")));
-		SettingsStatusText->SetColorAndOpacity(FSlateColor(ERUI::InkText(0.55f)));
+			bReady ? TEXT("密钥已就绪 · 战场中可接入 AI") : TEXT("未配置密钥 · AI 接入不可用")));
+		SettingsStatusText->SetColorAndOpacity(FSlateColor(
+			bReady ? FLinearColor(0.42f, 0.92f, 0.56f, 0.96f) : FLinearColor(0.99f, 0.72f, 0.24f, 0.96f)));
 	}
 }
 
@@ -1112,8 +1330,8 @@ void UERGalaCommandPanel::OnSaveAIConfigClicked()
 	{
 		const bool bReady = Service->HasApiKey();
 		SettingsStatusText->SetText(FText::FromString(
-			bReady ? TEXT("配置已保存 · 密钥已就绪") : TEXT("配置已保存 · 警告: 密钥为空, 远程接口将鉴权失败")));
+			bReady ? TEXT("配置已保存 · 密钥已就绪") : TEXT("配置已保存 · 警告：密钥为空，远程接口将鉴权失败")));
 		SettingsStatusText->SetColorAndOpacity(FSlateColor(
-			bReady ? FLinearColor(0.15f, 0.45f, 0.2f, 1.0f) : FLinearColor(0.6f, 0.3f, 0.05f, 1.0f)));
+			bReady ? FLinearColor(0.42f, 0.92f, 0.56f, 1.0f) : FLinearColor(0.99f, 0.72f, 0.24f, 1.0f)));
 	}
 }

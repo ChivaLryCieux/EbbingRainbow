@@ -4,15 +4,17 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Campaign/GalacticCampaignTypes.h"
 #include "Components/Button.h"
 #include "ERGalaCommandPanel.generated.h"
 
 class UBorder;
 class UCanvasPanel;
 class UERActionButton;
+class UERControlSharePie;
 class UEditableTextBox;
 class UHorizontalBox;
-class UERControlSharePie;
+class UImage;
 class UScrollBox;
 class UTextBlock;
 class UVerticalBox;
@@ -20,13 +22,12 @@ class UVerticalBox;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnGalaPanelClosed);
 
 /**
- * 虹膜基金会银河军事指挥终端 (大厅内全屏终端面板):
- *  - 展示基金会口号「我们面向全银河提供军事指挥服务」;
- *  - 页签由大厅左部四按钮入口直达 (面板内不设导航);
- *  - 页签 0: 委托合同接取/出击部署 (三卡片从左至右排布);
- *  - 页签 1: 常备虹膜链接兵团编制查看、补员、AI 同步升级与新兵团招募;
- *  - 页签 2: 三大阵营战局控制度、星区态势与上一战况;
- *  - 页签 3: 终端设置 (占位)。
+ * 虹膜基金会银河军事指挥终端 (大厅内全屏终端面板 / 战场暂停设置弹窗):
+ *  - 采用《控制:共振》式极简架构排印 + 深墨半透明底幕 + 1px 结构发丝线 + 纯白错位黑影汉字;
+ *  - 页签 0: 接取委托 (三栏等宽建筑分栏, 无白底卡片);
+ *  - 页签 1: 兵团整备 (极简账本式纵列与实时兵员数值);
+ *  - 页签 2: 银河局势 (暗底高对比控制率环图 + 势力简报 + 重点星区归属 + 上一战况);
+ *  - 页签 3: 终端设置 (AI 战术指挥接入配置)。
  */
 UCLASS()
 class EBBINGRAINBOW_API UERGalaCommandPanel : public UUserWidget
@@ -34,8 +35,8 @@ class EBBINGRAINBOW_API UERGalaCommandPanel : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	/** bSettingsOnlyMode=true 时只显示设置页并隐藏页签导航, 供标题菜单「设置」使用;
-	 *  这样才能保证委托/整备/银河局势只能由大厅控制台唤醒。 */
+	/** bSettingsOnlyMode=true 时只显示设置页并隐藏页签导航, 供标题菜单与战场暂停「设置」使用;
+	 *  保证委托/整备/银河局势只能由大厅控制台唤醒。 */
 	UFUNCTION(BlueprintCallable, Category = "ERUI|Galactic")
 	void OpenPanel(int32 InitialTab = 0, bool bSettingsOnlyMode = false);
 
@@ -55,6 +56,13 @@ protected:
 	virtual void NativeConstruct() override;
 
 private:
+	struct FResonantTabItem
+	{
+		TObjectPtr<UButton> Button = nullptr;
+		TObjectPtr<UTextBlock> Label = nullptr;
+		TObjectPtr<UImage> Indicator = nullptr;
+	};
+
 	void RefreshCampaignSaveStatus();
 	void BuildLayout();
 	void RebuildFactionAndSectorList();
@@ -65,13 +73,24 @@ private:
 	void OnRefreshContractsClicked();
 	void OnReinforceAllClicked();
 
+	UFUNCTION() void OnTabClicked0() { SetActiveTab(0); }
+	UFUNCTION() void OnTabClicked1() { SetActiveTab(1); }
+	UFUNCTION() void OnTabClicked2() { SetActiveTab(2); }
+	UFUNCTION() void OnTabClicked3() { SetActiveTab(3); }
+
 	/** 终端设置页: AI 战术指挥接入配置 (与战场 AI 面板共用 Saved/ER_AIConfig.json) */
 	void SyncSettingsInputsFromService();
 	void OnSaveAIConfigClicked();
-	void StyleBoneInputBox(UEditableTextBox* Box, const FText& Hint, bool bIsPassword);
+	void StyleDarkInputBox(UEditableTextBox* Box, const FText& Hint, bool bIsPassword);
 
-	/** 「白底墨字彩条」按钮 (只含中文); OnClick 用 lambda 承载载荷 */
-	UERActionButton* MakeBoneButton(const FText& Label, int32 FontSize, bool bArrow, TFunction<void()> OnClick);
+	/** 《控制:共振》式纯白字+错位黑影轻量按钮 */
+	UERActionButton* MakeResonantButton(const FText& Label, int32 FontSize, bool bArrow, bool bLeftAlign, TFunction<void()> OnClick);
+
+	/** UI 结构微元 */
+	UImage* MakeHairlineH(float Alpha = 0.16f);
+	UImage* MakeHairlineV(float Alpha = 0.14f);
+	UWidget* MakeSectionKicker(const FText& Text, const FLinearColor& AccentCol);
+	UWidget* MakeFactionSeal(EFactionId Faction, float StampSize);
 
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> PanelTitleText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CreditsText;
@@ -81,7 +100,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UERActionButton> RefreshContractsButton;
 	UPROPERTY(Transient) TObjectPtr<UERActionButton> ReinforceAllButton;
 	UPROPERTY(Transient) TObjectPtr<UWidget> TerminalTabRow;
-	UPROPERTY(Transient) TArray<TObjectPtr<UERActionButton>> TabButtons;
+	TArray<FResonantTabItem> NavTabs;
 	UPROPERTY(Transient) TObjectPtr<UWidget> ContractsPage;
 	UPROPERTY(Transient) TObjectPtr<UWidget> RosterPage;
 	UPROPERTY(Transient) TObjectPtr<UWidget> SituationPage;

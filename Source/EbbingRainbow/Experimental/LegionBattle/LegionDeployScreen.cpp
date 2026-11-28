@@ -3,18 +3,17 @@
 #include "Experimental/LegionBattle/LegionDeployScreen.h"
 
 #include "Blueprint/WidgetTree.h"
+#include "Components/Border.h"
+#include "Components/Button.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
-#include "Components/HorizontalBox.h"
-#include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
-#include "Components/ProgressBar.h"
-#include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "ContentStreaming.h"
 #include "Core/ERLog.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Experimental/LegionBattle/LegionGameMode.h"
@@ -24,16 +23,33 @@
 #include "LandscapeProxy.h"
 #include "LandscapeSubsystem.h"
 #include "Misc/Parse.h"
-#include "UI/ERActionButton.h"
 #include "UI/ERUIStatics.h"
 #include "UI/ERUITheme.h"
-#include "UI/Primitives/ERTechPrimitives.h"
 
 namespace
 {
 	/** 大厅过渡屏实例登记: 跨关卡 travel 后若仍存活, 由交互式接驳屏在接管时移除。
 	 *  (视口控件在打包版 travel 中存活是引擎行为, PIE 中则可能被销毁 —— 两条路径都要正确) */
 	TWeakObjectPtr<ULegionDeployScreen> GTransitDeployScreen;
+
+	// ---- 排版常量 (《控制:共振》式巨细对比: 星球名对小字约 10:1) ----
+	/** 星球名字号 —— 全屏绝对主导 */
+	constexpr float PlanetFontSize = 190.0f;
+	/** 虹膜徽标高度 (px) */
+	constexpr float LogoHeight = 100.0f;
+	/** 连接文案字号 */
+	constexpr float FlavorFontSize = 15.0f;
+	/** 「接入虹膜」按钮字号 */
+	constexpr float EnterFontSize = 17.0f;
+
+	/** 白色虹膜徽标 (原 T_UI_Faction_Iris 为墨黑透明底字形, 黑幕上不可见) */
+	const TCHAR* IrisWhiteLogoPath = TEXT("/Game/UI/Textures/T_UI_Faction_Iris_White.T_UI_Faction_Iris_White");
+
+	/** 星球名 —— 当前全战役仅端点星一颗, 占位常量; 后续应由委托/星区数据驱动 */
+	FText GetPlanetDisplayName()
+	{
+		return INVTEXT("端点星");
+	}
 }
 
 TSharedRef<SWidget> ULegionDeployScreen::RebuildWidget()
@@ -58,13 +74,9 @@ void ULegionDeployScreen::SetupInteractive()
 	GTransitDeployScreen.Reset();
 }
 
-void ULegionDeployScreen::SetupTransit(const FText& InTitle, const FText& InSub)
+void ULegionDeployScreen::SetupTransit()
 {
 	bTransit = true;
-	PendingTitle = InTitle;
-	PendingSub = InSub;
-	if (TitleText) { TitleText->SetText(InTitle); }
-	if (SubText) { SubText->SetText(InSub); }
 	GTransitDeployScreen = this;
 }
 
@@ -74,17 +86,6 @@ void ULegionDeployScreen::Build()
 
 	UCanvasPanel* Root = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("Root"));
 	WidgetTree->RootWidget = Root;
-
-	auto Anchor = [](UWidget* W, UCanvasPanel* P, const FAnchors& A, const FVector2D& Align,
-		const FVector2D& Pos, bool bAutoSize = true)
-	{
-		UCanvasPanelSlot* S = P->AddChildToCanvas(W);
-		S->SetAnchors(A);
-		S->SetAlignment(Align);
-		S->SetPosition(Pos);
-		S->SetAutoSize(bAutoSize);
-		return S;
-	};
 
 	// ---- 全屏极深纯墨底幕 (Visible: 吃掉一切落点输入) ----
 	{
@@ -97,113 +98,86 @@ void ULegionDeployScreen::Build()
 		S->SetOffsets(FMargin(0.0f));
 	}
 
-	// ---- 顶部通栏虹彩窄条 ----
-	{
-		UERPrismBar* Prism = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("TopPrism"));
-		Prism->bVertical = false;
-		Prism->BarSize = FVector2D(4000.0f, 3.0f);
-		Anchor(Prism, Root, FAnchors(0.0f, 0.0f), FVector2D(0.0f, 0.0f), FVector2D::ZeroVector);
-	}
-
-	// ---- 中央纵列 ----
+	// ---- 中央纵列: 星球名 / 虹膜徽标 / 连接文案 / 接入按钮, 除此四项无一多余 ----
 	UVerticalBox* CenterCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("CenterCol"));
-	Anchor(CenterCol, Root, FAnchors(0.5f, 0.5f), FVector2D(0.5f, 0.5f), FVector2D::ZeroVector);
-
-	// 标题行: 虹彩竖条 + 微标/标题/子标
 	{
-		UHorizontalBox* TitleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TitleRow"));
+		UCanvasPanelSlot* S = Root->AddChildToCanvas(CenterCol);
+		S->SetAnchors(FAnchors(0.5f, 0.5f));
+		S->SetAlignment(FVector2D(0.5f, 0.5f));
+		S->SetPosition(FVector2D::ZeroVector);
+		S->SetAutoSize(true);
+	}
 
-		UERPrismBar* VPrism = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("VPrism"));
-		VPrism->bVertical = true;
-		VPrism->BarSize = FVector2D(5.0f, 96.0f);
-		TitleRow->AddChildToHorizontalBox(VPrism)->SetPadding(FMargin(0.0f, 0.0f, 18.0f, 0.0f));
+	// 1. 星球名 —— 超大粗体骨白字, 绝对视觉主导
+	PlanetText = ERUI::MakeText(this, GetPlanetDisplayName(), EERTypeScale::Hero, T->Bone, false);
+	PlanetText->SetFont(ERUI::FontBold((int32)PlanetFontSize, 0));
+	PlanetText->SetJustification(ETextJustify::Center);
+	if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(PlanetText))
+	{
+		S->SetHorizontalAlignment(HAlign_Center);
+	}
 
-		UVerticalBox* TitleCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("TitleCol"));
-
-		UTextBlock* Micro = ERUI::MakeText(this, INVTEXT("虹膜神经接驳"), EERTypeScale::Micro, T->BoneTertiary, false);
-		Micro->SetFont(ERUI::FontBold(13, 320));
-		TitleCol->AddChildToVerticalBox(Micro);
-
-		TitleText = ERUI::MakeText(this, INVTEXT("出击部署"), EERTypeScale::Display, T->Bone, false);
-		TitleText->SetFont(ERUI::FontBold(46, 60));
-		TitleCol->AddChildToVerticalBox(TitleText)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
-
-		SubText = ERUI::MakeText(this, INVTEXT("虹膜基金会  ·  银河军事指挥"), EERTypeScale::Caption, T->BoneSecondary, false);
-		SubText->SetFont(ERUI::FontRegular(16, 40));
-		TitleCol->AddChildToVerticalBox(SubText)->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 0.0f));
-
-		TitleRow->AddChildToHorizontalBox(TitleCol);
-		if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(TitleRow))
+	// 2. 虹膜徽标 (白色透明底, 高度驱动等比)
+	if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, IrisWhiteLogoPath))
+	{
+		LogoImage = ERUI::MakeLogoImage(this, Tex, LogoHeight);
+	}
+	if (LogoImage)
+	{
+		if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(LogoImage))
 		{
 			S->SetHorizontalAlignment(HAlign_Center);
+			S->SetPadding(FMargin(0.0f, 64.0f, 0.0f, 0.0f));
 		}
 	}
-
-	// 阶段 + 明细
-	StageText = ERUI::MakeText(this, INVTEXT("正在建立前线神经链路"), EERTypeScale::Title, T->Bone, false);
-	StageText->SetFont(ERUI::FontBold(20, 100));
-	StageText->SetJustification(ETextJustify::Center);
-	if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(StageText))
+	else
 	{
-		S->SetHorizontalAlignment(HAlign_Center);
-		S->SetPadding(FMargin(0.0f, 42.0f, 0.0f, 0.0f));
+		UE_LOG(LogERLegion, Warning, TEXT("[Deploy] 白色虹膜徽标缺失: %s"), IrisWhiteLogoPath);
 	}
 
-	DetailText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Micro, T->BoneTertiary, false);
-	DetailText->SetFont(ERUI::FontBold(13, 120));
-	DetailText->SetJustification(ETextJustify::Center);
-	if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(DetailText))
+	// 3. 连接文案 —— 小字, 与星球名形成夸张巨细对比
+	FlavorText = ERUI::MakeText(this, INVTEXT("连接中……我们所做的一切都是有意义的，对吧？"),
+		EERTypeScale::Caption, T->BoneSecondary, false);
+	FlavorText->SetFont(ERUI::FontRegular((int32)FlavorFontSize, 40));
+	FlavorText->SetJustification(ETextJustify::Center);
+	if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(FlavorText))
 	{
 		S->SetHorizontalAlignment(HAlign_Center);
-		S->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 0.0f));
+		S->SetPadding(FMargin(0.0f, 48.0f, 0.0f, 0.0f));
 	}
 
-	// 进度细条 (520x3, 骨白鬼影轨道 + 折射暖金填充)
+	// 4.「接入虹膜」幽灵按钮 —— 发丝描边无底卡, 悬停反白; 接驳完成前 Hidden (保留占位不跳动)
 	{
-		USizeBox* TrackSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("TrackSize"));
-		TrackSize->SetMinDesiredWidth(520.0f);
-		TrackSize->SetMaxDesiredHeight(3.0f);
+		EnterButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("EnterButton"));
+		FButtonStyle BtnStyle;
+		BtnStyle.SetNormal(ERUI::TransparentBrush());
+		BtnStyle.SetHovered(ERUI::TransparentBrush());
+		BtnStyle.SetPressed(ERUI::TransparentBrush());
+		BtnStyle.SetDisabled(ERUI::TransparentBrush());
+		BtnStyle.SetNormalPadding(FMargin(0.0f));
+		BtnStyle.SetPressedPadding(FMargin(0.0f));
+		EnterButton->SetStyle(BtnStyle);
+		EnterButton->SetCursor(EMouseCursor::Hand);
+		EnterButton->OnClicked.AddDynamic(this, &ULegionDeployScreen::HandleEnterClicked);
 
-		ProgressBar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("Progress"));
-		FProgressBarStyle PBS;
-		FSlateBrush BgBrush = ERUI::WhiteBrush();
-		BgBrush.TintColor = FSlateColor(FLinearColor(T->Bone.R, T->Bone.G, T->Bone.B, 0.14f));
-		PBS.SetBackgroundImage(BgBrush);
-		FSlateBrush FillBrush = ERUI::WhiteBrush();
-		FillBrush.TintColor = FSlateColor(T->Accent);
-		PBS.SetFillImage(FillBrush);
-		ProgressBar->SetWidgetStyle(PBS);
-		ProgressBar->SetPercent(0.0f);
-		TrackSize->AddChild(ProgressBar);
+		EnterBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("EnterBorder"));
+		EnterBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor::Transparent, 1.0f,
+			FLinearColor(T->Bone.R, T->Bone.G, T->Bone.B, 0.55f)));
+		EnterBorder->SetBrushColor(FLinearColor::White);
+		EnterBorder->SetPadding(FMargin(36.0f, 13.0f));
 
-		if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(TrackSize))
+		EnterText = ERUI::MakeText(this, INVTEXT("接入虹膜"), EERTypeScale::Body, T->Bone, false);
+		EnterText->SetFont(ERUI::FontBold((int32)EnterFontSize, 140));
+		EnterBorder->SetContent(EnterText);
+		EnterButton->SetContent(EnterBorder);
+
+		EnterButton->SetVisibility(ESlateVisibility::Hidden);
+		if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(EnterButton))
 		{
 			S->SetHorizontalAlignment(HAlign_Center);
-			S->SetPadding(FMargin(0.0f, 20.0f, 0.0f, 0.0f));
+			S->SetPadding(FMargin(0.0f, 88.0f, 0.0f, 0.0f));
 		}
 	}
-
-	// 「进入战场」按钮 (接驳模式专用; 过渡模式隐藏)
-	EnterButton = UERActionButton::Make(this, INVTEXT("进入战场"), 26, true);
-	EnterButton->SetMinSize(420.0f, 0.0f);
-	EnterButton->SetButtonEnabled(false);
-	EnterButton->SetNativeClick([this]() { HandleEnterClicked(); });
-	if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(EnterButton))
-	{
-		S->SetHorizontalAlignment(HAlign_Center);
-		S->SetPadding(FMargin(0.0f, 34.0f, 0.0f, 0.0f));
-	}
-
-	HintText = ERUI::MakeText(this, INVTEXT("接驳完成后点击进入战场接管前线指挥"), EERTypeScale::Micro, T->BoneTertiary, false);
-	HintText->SetFont(ERUI::FontBold(13, 140));
-	HintText->SetJustification(ETextJustify::Center);
-	if (UVerticalBoxSlot* S = CenterCol->AddChildToVerticalBox(HintText))
-	{
-		S->SetHorizontalAlignment(HAlign_Center);
-		S->SetPadding(FMargin(0.0f, 16.0f, 0.0f, 0.0f));
-	}
-
-	ProgressSpring.SnapTo(0.06f);
 }
 
 void ULegionDeployScreen::NativeConstruct()
@@ -217,25 +191,10 @@ void ULegionDeployScreen::NativeConstruct()
 
 	if (bTransit)
 	{
-		// 过渡模式: 无按钮无轮询, 纯静态视觉 (文案经 Pending 缓存落地, 见 SetupTransit)
-		if (!PendingTitle.IsEmpty() && TitleText) { TitleText->SetText(PendingTitle); }
-		if (!PendingSub.IsEmpty() && SubText) { SubText->SetText(PendingSub); }
-		if (EnterButton) { EnterButton->SetVisibility(ESlateVisibility::Collapsed); }
-		if (HintText) { HintText->SetText(INVTEXT("神经链路建立中  ·  正在抵达战区")); }
-		if (DetailText) { DetailText->SetText(FText::GetEmpty()); }
-		if (ProgressBar) { ProgressBar->SetPercent(0.35f); }
+		// 过渡模式: 无按钮无轮询, 纯静态视觉, 与关卡内接驳屏连续
 		return;
 	}
 
-	// 接驳模式: 标题取战场实况, 开草加速
-	if (UWorld* World = GetWorld())
-	{
-		if (ALegionGameMode* GM = Cast<ALegionGameMode>(World->GetAuthGameMode()))
-		{
-			if (TitleText) { TitleText->SetText(FText::FromString(GM->GetBattleTitleText())); }
-			if (SubText) { SubText->SetText(FText::FromString(GM->GetBattleSubText())); }
-		}
-	}
 	ApplyGrassBoost();
 }
 
@@ -288,11 +247,6 @@ void ULegionDeployScreen::RestoreGrassBoost()
 	bGrassBoosted = false;
 }
 
-void ULegionDeployScreen::SetProgressTarget(float Target)
-{
-	ProgressSpring.SetTarget(FMath::Clamp(Target, 0.0f, 1.0f));
-}
-
 int32 ULegionDeployScreen::CountGrassInstances(bool& bOutAnyLandscape) const
 {
 	bOutAnyLandscape = false;
@@ -330,6 +284,42 @@ int32 ULegionDeployScreen::CountGrassInstances(bool& bOutAnyLandscape) const
 	return Total;
 }
 
+void ULegionDeployScreen::RevealEnterButton()
+{
+	if (bEnterRevealed || !EnterButton) { return; }
+	bEnterRevealed = true;
+	EnterRevealAlpha = 0.0f;
+	EnterButton->SetVisibility(ESlateVisibility::Visible);
+	EnterButton->SetRenderOpacity(0.0f);
+}
+
+void ULegionDeployScreen::TickEnterButtonVisual()
+{
+	if (!EnterButton || !EnterBorder || !EnterText) { return; }
+
+	const bool bHovered = EnterButton->IsHovered();
+	const bool bPressed = EnterButton->IsPressed();
+	if (bHovered == bBtnHovered && bPressed == bBtnPressed) { return; }
+	bBtnHovered = bHovered;
+	bBtnPressed = bPressed;
+
+	const UERUITheme* T = ERUI::Theme();
+	if (bHovered)
+	{
+		// 悬停反白: 骨白填满 + 墨字 (按压略沉)
+		const float Dim = bPressed ? 0.82f : 1.0f;
+		EnterBorder->SetBrush(ERUI::RoundedBrush(0.0f,
+			FLinearColor(T->Bone.R * Dim, T->Bone.G * Dim, T->Bone.B * Dim, 1.0f), 1.0f, T->Bone));
+		EnterText->SetColorAndOpacity(FSlateColor(T->PureInk));
+	}
+	else
+	{
+		EnterBorder->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor::Transparent, 1.0f,
+			FLinearColor(T->Bone.R, T->Bone.G, T->Bone.B, 0.55f)));
+		EnterText->SetColorAndOpacity(FSlateColor(T->Bone));
+	}
+}
+
 void ULegionDeployScreen::PollReadiness()
 {
 	// 1. 渲染资产流送 (纹理/网格): 待流送清零即定论 (只进不退)
@@ -359,35 +349,10 @@ void ULegionDeployScreen::PollReadiness()
 			ForceReadySeconds, (int32)bStreamDone, Grass, StablePolls);
 	}
 
-	// 阶段文案与进度
-	if (!bStreamDone)
-	{
-		StageText->SetText(INVTEXT("战场资产流送"));
-		DetailText->SetText(FText::FromString(FString::Printf(TEXT("剩余流送资源 %d 项"), Wanting)));
-		SetProgressTarget(0.30f);
-	}
-	else if (!bGrassDone)
-	{
-		StageText->SetText(INVTEXT("地表植被构筑"));
-		DetailText->SetText(FText::FromString(FString::Printf(TEXT("植被实例 %d"), Grass)));
-		SetProgressTarget(0.62f);
-	}
-	else
-	{
-		StageText->SetText(INVTEXT("接驳完成"));
-		DetailText->SetText(INVTEXT("战场神经同步就绪"));
-		SetProgressTarget(1.0f);
-	}
-
 	if (bReady && !bReadyApplied)
 	{
 		bReadyApplied = true;
-		if (EnterButton)
-		{
-			EnterButton->SetButtonEnabled(true);
-			EnterButton->SetUrgent(true);
-		}
-		if (HintText) { HintText->SetText(INVTEXT("接驳完成  ·  点击进入战场")); }
+		RevealEnterButton();
 		UE_LOG(LogERLegion, Log, TEXT("[Deploy] Link ready in %.1fs (grass instances=%d)"), LiveTime, Grass);
 	}
 
@@ -403,11 +368,11 @@ void ULegionDeployScreen::PollReadiness()
 
 void ULegionDeployScreen::HandleEnterClicked()
 {
-	// 按钮在就绪前处于禁用态, 玩家无法提前点击; bReady 不再重复校验,
+	// 按钮在亮起前处于 Hidden 态, 玩家无法提前点击; bReady 不再重复校验,
 	// 以便自动化链路 (GameMode 已自行开战) 能经此路径强制撤屏
 	if (bDismissing || bTransit) { return; }
 	bDismissing = true;
-	if (EnterButton) { EnterButton->SetButtonEnabled(false); }
+	if (EnterButton) { EnterButton->SetVisibility(ESlateVisibility::Hidden); }
 
 	// 世界立即激活: 淡出期间玩家已能看到兵团待命
 	if (UWorld* World = GetWorld())
@@ -453,6 +418,14 @@ void ULegionDeployScreen::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 
 	LiveTime += InDeltaTime;
 
+	// 「接入虹膜」淡入 (~0.3s)
+	if (bEnterRevealed && EnterRevealAlpha < 1.0f)
+	{
+		EnterRevealAlpha = FMath::Min(1.0f, EnterRevealAlpha + InDeltaTime / 0.3f);
+		if (EnterButton) { EnterButton->SetRenderOpacity(EnterRevealAlpha); }
+	}
+	TickEnterButtonVisual();
+
 	// 自动化链路兜底: GameMode 若已直接开战 (理论上不会走到, 双保险), 立即撤屏
 	if (UWorld* World = GetWorld())
 	{
@@ -466,9 +439,6 @@ void ULegionDeployScreen::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 		}
 	}
 
-	ProgressSpring.Tick(InDeltaTime);
-	if (ProgressBar) { ProgressBar->SetPercent(ProgressSpring.Value); }
-
 	PollAccum += InDeltaTime;
 	if (PollAccum >= 0.15f)
 	{
@@ -476,7 +446,7 @@ void ULegionDeployScreen::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 		PollReadiness();
 	}
 
-	// -DeployShot 离线验收链路: 就绪后稍作停留 (供 LegionDeployReady 截图), 自动点击「进入战场」;
+	// -DeployShot 离线验收链路: 就绪后稍作停留 (供 LegionDeployReady 截图), 自动点击「接入虹膜」;
 	// LiveTime>=5.5 与就绪+1.2s 取较晚者, 保证 4.5s 的就绪态截图完成前屏幕不会提前退场
 	if (bReady && FParse::Param(FCommandLine::Get(), TEXT("-DeployShot")))
 	{

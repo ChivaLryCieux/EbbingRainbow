@@ -20,17 +20,17 @@ bool FLegionTerrainGrid::FindNearestWalkableCell(int32 StartGX, int32 StartGY, i
 	bool bFound = false;
 	for (int32 R = 1; R <= MaxRadius; ++R)
 	{
-		for (int32 DY = -R; DY <= R; ++DY)
+		for (int32 OffY = -R; OffY <= R; ++OffY)
 		{
 			// Inner cells were all checked in earlier rings; preserve Y/X tie order.
-			const int32 StepX = (DY == -R || DY == R) ? 1 : 2 * R;
-			for (int32 DX = -R; DX <= R; DX += StepX)
+			const int32 StepX = (OffY == -R || OffY == R) ? 1 : 2 * R;
+			for (int32 OffX = -R; OffX <= R; OffX += StepX)
 			{
-				const int32 X = StartGX + DX;
-				const int32 Y = StartGY + DY;
+				const int32 X = StartGX + OffX;
+				const int32 Y = StartGY + OffY;
 				if (X < 0 || X >= GridWidth || Y < 0 || Y >= GridHeight) { continue; }
 				if (!Cells[IndexOf(X, Y)].bWalkable) { continue; }
-				const float D2 = (float)(DX * DX + DY * DY);
+				const float D2 = (float)(OffX * OffX + OffY * OffY);
 				if (D2 < BestD2)
 				{
 					BestD2 = D2;
@@ -60,11 +60,11 @@ FVector FLegionTerrainGrid::ClampToWalkable(const FVector& WorldPos) const
 
 bool FLegionTerrainGrid::HasWalkableLineOfSight(int32 X0, int32 Y0, int32 X1, int32 Y1) const
 {
-	const int32 DX = FMath::Abs(X1 - X0);
-	const int32 DY = FMath::Abs(Y1 - Y0);
+	const int32 DeltaX = FMath::Abs(X1 - X0);
+	const int32 DeltaY = FMath::Abs(Y1 - Y0);
 	const int32 SX = (X0 < X1) ? 1 : -1;
 	const int32 SY = (Y0 < Y1) ? 1 : -1;
-	int32 Err = DX - DY;
+	int32 Err = DeltaX - DeltaY;
 	int32 X = X0;
 	int32 Y = Y0;
 
@@ -74,14 +74,14 @@ bool FLegionTerrainGrid::HasWalkableLineOfSight(int32 X0, int32 Y0, int32 X1, in
 		if (!Cells[IndexOf(X, Y)].bWalkable) { return false; }
 		if (X == X1 && Y == Y1) { return true; }
 		const int32 E2 = 2 * Err;
-		if (E2 > -DY)
+		if (E2 > -DeltaY)
 		{
-			Err -= DY;
+			Err -= DeltaY;
 			X += SX;
 		}
-		if (E2 < DX)
+		if (E2 < DeltaX)
 		{
-			Err += DX;
+			Err += DeltaX;
 			Y += SY;
 		}
 	}
@@ -142,9 +142,9 @@ bool FLegionTerrainGrid::FindPath(const FVector& StartWorld, const FVector& Goal
 
 	auto Heur = [GX, GY](int32 X, int32 Y) -> float
 	{
-		const float DX = (float)FMath::Abs(X - GX);
-		const float DY = (float)FMath::Abs(Y - GY);
-		return (DX + DY) + (1.41421356f - 2.0f) * FMath::Min(DX, DY);
+		const float DeltaX = (float)FMath::Abs(X - GX);
+		const float DeltaY = (float)FMath::Abs(Y - GY);
+		return (DeltaX + DeltaY) + (1.41421356f - 2.0f) * FMath::Min(DeltaX, DeltaY);
 	};
 
 	const int32 StartIdx = IndexOf(SX, SY);

@@ -270,4 +270,21 @@ namespace ERUI
 		Bar.Content->AddChildToVerticalBox(TB);
 		return Bar.Root;
 	}
+
+	void ApplyResonantText(UTextBlock* TB, int32 FontSize, bool bBold, int32 Tracking,
+		FLinearColor Color, FVector2D ShadowOffset, float ShadowAlpha)
+	{
+		if (!TB) { return; }
+		TB->SetFont(bBold ? FontBold(FontSize, Tracking) : FontRegular(FontSize, Tracking));
+		TB->SetColorAndOpacity(FSlateColor(Color));
+
+		FVector2D ResolvedOffset = ShadowOffset;
+		if (ResolvedOffset.X < 0.0f)
+		{
+			ResolvedOffset.X = FMath::Clamp(FontSize * 0.042f, 1.5f, 5.5f);
+			ResolvedOffset.Y = FMath::Clamp(FontSize * 0.058f, 2.0f, 7.5f);
+		}
+		TB->SetShadowOffset(ResolvedOffset);
+		TB->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, FMath::Clamp(ShadowAlpha, 0.0f, 1.0f)));
+	}
 }

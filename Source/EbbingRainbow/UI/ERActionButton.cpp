@@ -143,6 +143,26 @@ void UERActionButton::Build()
 		S->SetPadding(FMargin(FontSize * 1.1f + 8.0f, FontSize * 0.5f + 4.0f));
 	}
 
+	// 共振 HUD 模式专用的左侧悬停/焦点竖条 (黑影 + 纯白/点睛条)
+	ResonantBarContainer = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("ResonantBarContainer"));
+	ResonantBarContainer->SetVisibility(ESlateVisibility::Collapsed);
+	{
+		ResonantBarShadow = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("ResonantBarShadow"));
+		ResonantBarShadow->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 18.0f)));
+		ResonantBarShadow->SetColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.82f));
+		ResonantBarShadow->SetRenderTranslation(FVector2D(1.5f, 2.0f));
+		ResonantBarContainer->AddChildToOverlay(ResonantBarShadow);
+
+		ResonantBar = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("ResonantBar"));
+		ResonantBar->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 18.0f)));
+		ResonantBar->SetColorAndOpacity(FLinearColor(0.99f, 0.99f, 0.98f, 1.0f));
+		ResonantBarContainer->AddChildToOverlay(ResonantBar);
+
+		UHorizontalBoxSlot* BarSlot = ContentRow->AddChildToHorizontalBox(ResonantBarContainer);
+		BarSlot->SetVerticalAlignment(VAlign_Center);
+		BarSlot->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
+	}
+
 	LabelText = ERUI::MakeText(this, Label, EERTypeScale::Body, ERUI::InkText());
 	LabelText->SetFont(ERUI::FontBold(FontSize, 80));
 	ContentRow->AddChildToHorizontalBox(LabelText)->SetVerticalAlignment(VAlign_Center);
@@ -195,6 +215,13 @@ void UERActionButton::SetMinSize(float InMinWidth, float InMinHeight)
 	if (!ButtonSizeBox) { return; }
 	if (InMinWidth > 0.0f) { ButtonSizeBox->SetMinDesiredWidth(InMinWidth); } else { ButtonSizeBox->ClearMinDesiredWidth(); }
 	if (InMinHeight > 0.0f) { ButtonSizeBox->SetMinDesiredHeight(InMinHeight); } else { ButtonSizeBox->ClearMinDesiredHeight(); }
+}
+
+void UERActionButton::SetResonantHudStyle(bool bInResonant, bool bInLeftAlign)
+{
+	bResonantHudStyle = bInResonant;
+	bResonantLeftAlign = bInLeftAlign;
+	ApplyStyle(0.0f);
 }
 
 void UERActionButton::SetLabel(const FText& InLabel)
@@ -280,8 +307,71 @@ void UERActionButton::ApplyStyle(float DeltaTime)
 
 	const float Pulse = IsDesignTime() ? 1.0f : ERMotion::SolemnPulse(UrgentPhase, UrgentPulseSpeed * 0.65f);
 
+	if (bResonantHudStyle)
+	{
+		if (ButtonFrame) { ButtonFrame->SetVisibility(ESlateVisibility::Collapsed); }
+		if (BorderImage) { BorderImage->SetVisibility(ESlateVisibility::Collapsed); }
+		if (ContentRow)
+		{
+			if (UOverlaySlot* S = Cast<UOverlaySlot>(ContentRow->Slot))
+			{
+				S->SetHorizontalAlignment(bResonantLeftAlign ? HAlign_Left : HAlign_Right);
+				S->SetVerticalAlignment(VAlign_Center);
+				S->SetPadding(FMargin(4.0f, 6.0f));
+			}
+		}
+		if (ResonantBarContainer)
+		{
+			ResonantBarContainer->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+			const float BarOpacity = !bEnabledState ? 0.0f : (bUrgent ? (0.65f + 0.35f * Pulse) : H01);
+			ResonantBarContainer->SetRenderOpacity(BarOpacity);
+		}
+		if (ResonantBar)
+		{
+			ResonantBar->SetColorAndOpacity(bUrgent ? T->Accent : FLinearColor(0.99f, 0.99f, 0.98f, 1.0f));
+		}
+
+		const FLinearColor TextCol = !bEnabledState
+			? FLinearColor(0.96f, 0.96f, 0.95f, 0.36f)
+			: (bUrgent ? T->Accent : FLinearColor(0.99f, 0.99f, 0.98f, FMath::Lerp(0.84f, 1.00f, H01)));
+		const FVector2D ShadowOff = FMath::Lerp(FVector2D(2.0f, 3.0f), FVector2D(1.0f, 1.5f), FMath::Clamp(PressA, 0.0f, 1.0f));
+		const float ShadowAlpha = bEnabledState ? 0.86f : 0.45f;
+
+		if (LabelText)
+		{
+			ERUI::ApplyResonantText(LabelText, FontSize, true, 120, TextCol, ShadowOff, ShadowAlpha);
+			LabelText->SetRenderTranslation(FVector2D((bResonantLeftAlign ? 6.0f : -4.0f) * HoverA, 0.0f));
+		}
+		if (ArrowText)
+		{
+			ArrowText->SetVisibility(bShowArrow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+			ERUI::ApplyResonantText(ArrowText, FMath::Max(14, FontSize - 2), true, 0, ERUI::Fade(TextCol, 0.85f), ShadowOff, ShadowAlpha);
+			ArrowText->SetRenderTranslation(FVector2D(4.0f * HoverA, 0.0f));
+		}
+
+		const float Scale = FMath::Lerp(1.0f, 0.965f, FMath::Clamp(PressA, 0.0f, 1.0f));
+		SetRenderTransformPivot(FVector2D(bResonantLeftAlign ? 0.0f : 1.0f, 0.5f));
+		SetRenderScale(FVector2D(Scale, Scale));
+		return;
+	}
+
+	if (ResonantBarContainer)
+	{
+		ResonantBarContainer->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (ContentRow)
+	{
+		if (UOverlaySlot* S = Cast<UOverlaySlot>(ContentRow->Slot))
+		{
+			S->SetHorizontalAlignment(HAlign_Center);
+			S->SetVerticalAlignment(VAlign_Center);
+			S->SetPadding(FMargin(FontSize * 1.1f + 8.0f, FontSize * 0.5f + 4.0f));
+		}
+	}
+
 	if (ButtonFrame)
 	{
+		ButtonFrame->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		// 统一「白底墨字彩条」: 紧急态改用折射暖金单色条并随呼吸提亮, 其余用本按钮的点睛色/光谱条
 		const float Hover = bUrgent ? FMath::Max(H01, Pulse * 0.4f) : H01;
 		ERUI::StyleBoneFrame(ButtonFrame, Hover, bEnabledState, bUrgent,
@@ -311,9 +401,15 @@ void UERActionButton::ApplyStyle(float DeltaTime)
 	const FLinearColor TextCol = ButtonFrame
 		? (bEnabledState ? ERUI::InkText() : ERUI::InkText(0.6f))
 		: (!bEnabledState ? TertiaryCol : (bUrgent ? AccentCol : BoneCol));
-	if (LabelText) { LabelText->SetColorAndOpacity(FSlateColor(TextCol)); }
+	if (LabelText)
+	{
+		LabelText->SetShadowOffset(FVector2D::ZeroVector);
+		LabelText->SetRenderTranslation(FVector2D::ZeroVector);
+		LabelText->SetColorAndOpacity(FSlateColor(TextCol));
+	}
 	if (ArrowText)
 	{
+		ArrowText->SetShadowOffset(FVector2D::ZeroVector);
 		ArrowText->SetVisibility(bShowArrow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 		ArrowText->SetColorAndOpacity(FSlateColor(ButtonFrame ? ERUI::Fade(TextCol, 0.72f) : TextCol));
 		ArrowText->SetRenderTranslation(FVector2D(6.0f * HoverA, 0.0f));

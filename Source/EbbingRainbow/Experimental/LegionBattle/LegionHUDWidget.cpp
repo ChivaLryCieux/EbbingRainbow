@@ -59,19 +59,19 @@ void ULegionHUDWidget::Build()
 		return S;
 	};
 
-	// ---- 左上: 虹彩竖条 + 委托/战场标题 ----
+	// ---- 左上: 虹彩竖条 + 委托/战场标题 (纯白排印 + 错位阴影) ----
 	{
 		TitleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("TitleRow"));
 
 		UERPrismBar* Prism = WidgetTree->ConstructWidget<UERPrismBar>(UERPrismBar::StaticClass(), TEXT("Prism"));
 		Prism->bVertical = true;
-		Prism->BarSize = FVector2D(4.0f, 42.0f);
-		TitleRow->AddChildToHorizontalBox(Prism)->SetPadding(FMargin(0.0f, 0.0f, 12.0f, 0.0f));
+		Prism->BarSize = FVector2D(4.0f, 48.0f);
+		TitleRow->AddChildToHorizontalBox(Prism)->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
 
 		UVerticalBox* TitleCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("TitleCol"));
 
-		TitleText = ERUI::MakeText(this, INVTEXT("端点星"), EERTypeScale::Title, T->Bone);
-		TitleText->SetFont(ERUI::FontBold(38, 90));
+		TitleText = ERUI::MakeText(this, INVTEXT("端点星"), EERTypeScale::Title, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f));
+		ERUI::ApplyResonantText(TitleText, 44, true, 140, FLinearColor(0.99f, 0.99f, 0.98f, 1.0f), FVector2D(3.0f, 4.0f), 0.85f);
 		TitleCol->AddChildToVerticalBox(TitleText);
 
 		TitleRow->AddChildToHorizontalBox(TitleCol);
@@ -79,21 +79,39 @@ void ULegionHUDWidget::Build()
 			FVector2D(T->ScreenMargin, 34.0f));
 	}
 
-	// ---- 左下: 双方编制存活 (白底墨字卡片, 同兵团牌风格) ----
+	// ---- 左下: 双方编制存活 (无底卡纯白字 + 错位黑影 + 阵营竖标) ----
 	{
 		StatusCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("StatusCol"));
 
-		ERUI::FBoneCard AllyCard = ERUI::MakeBoneCard(this, T->AllyMark, false, FMargin(14.0f, 7.0f));
-		StatusAllyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
-		StatusAllyText->SetFont(ERUI::FontBold(18, 60));
-		AllyCard.Content->AddChildToVerticalBox(StatusAllyText);
-		StatusCol->AddChildToVerticalBox(AllyCard.Root);
+		auto MakeStatusRow = [&](const FLinearColor& BarCol, TObjectPtr<UTextBlock>& OutText) -> UHorizontalBox*
+		{
+			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
-		ERUI::FBoneCard EnemyCard = ERUI::MakeBoneCard(this, T->EnemyMark, false, FMargin(14.0f, 7.0f));
-		StatusEnemyText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
-		StatusEnemyText->SetFont(ERUI::FontBold(18, 60));
-		EnemyCard.Content->AddChildToVerticalBox(StatusEnemyText);
-		StatusCol->AddChildToVerticalBox(EnemyCard.Root)->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 0.0f));
+			UOverlay* BarOv = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+			UImage* BarShadow = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+			BarShadow->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 18.0f)));
+			BarShadow->SetColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.84f));
+			BarShadow->SetRenderTranslation(FVector2D(1.5f, 2.0f));
+			BarOv->AddChildToOverlay(BarShadow);
+
+			UImage* Bar = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+			Bar->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 18.0f)));
+			Bar->SetColorAndOpacity(BarCol);
+			BarOv->AddChildToOverlay(Bar);
+
+			UHorizontalBoxSlot* BS = Row->AddChildToHorizontalBox(BarOv);
+			BS->SetVerticalAlignment(VAlign_Center);
+			BS->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
+
+			OutText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, FLinearColor(0.99f, 0.99f, 0.98f, 0.96f), false);
+			ERUI::ApplyResonantText(OutText, 17, true, 90, FLinearColor(0.99f, 0.99f, 0.98f, 0.96f), FVector2D(2.0f, 2.5f), 0.88f);
+			Row->AddChildToHorizontalBox(OutText)->SetVerticalAlignment(VAlign_Center);
+			return Row;
+		};
+
+		StatusCol->AddChildToVerticalBox(MakeStatusRow(T->AllyMark, StatusAllyText));
+		StatusCol->AddChildToVerticalBox(MakeStatusRow(T->EnemyMark, StatusEnemyText))->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
 
 		Anchor(StatusCol, Root, FAnchors(0.0f, 1.0f), FVector2D(0.0f, 1.0f),
 			FVector2D(T->ScreenMargin, -44.0f));
@@ -261,12 +279,26 @@ void ULegionHUDWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+void ULegionHUDWidget::UpdateHUDVisibility()
+{
+	const bool bHideAll = bResultShown || bPauseMenuOpen;
+	if (TitleRow)       { TitleRow->SetVisibility(bHideAll ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible); }
+	if (StatusCol)      { StatusCol->SetVisibility(bHideAll ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible); }
+	if (LegionBar)      { LegionBar->SetVisibility((bHideAll || bMapOpenCached) ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible); }
+	if (FactionLogoRow) { FactionLogoRow->SetVisibility((bHideAll || bMapOpenCached) ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible); }
+	if (AICommandPanel) { AICommandPanel->SetHostVisible(!bHideAll); }
+}
+
 void ULegionHUDWidget::SetStrategicMapMode(bool bMapOpen)
 {
-	if (LegionBar)
-	{
-		LegionBar->SetVisibility((bMapOpen || bResultShown) ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
-	}
+	bMapOpenCached = bMapOpen;
+	UpdateHUDVisibility();
+}
+
+void ULegionHUDWidget::SetPauseMenuMode(bool bPaused)
+{
+	bPauseMenuOpen = bPaused;
+	UpdateHUDVisibility();
 }
 
 void ULegionHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -356,55 +388,69 @@ void ULegionHUDWidget::BuildLegionBar(int32 Count)
 		default: Btn->OnClicked.AddDynamic(this, &ULegionHUDWidget::OnPlateClicked7); break;
 		}
 
-		// 白底墨字彩条部队卡: 固定对称宽, 仅含 部队名称 + Logo + 兵员数量 三要素
-		USizeBox* CardSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-		CardSize->SetMinDesiredWidth(132.0f);
+		// 无底卡纯白字+错位阴影部队行: [竖条] [兵种图标] [旅级番号 / 兵员数量]
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		Btn->SetContent(Row);
 
-		ERUI::FBoneCard Card = ERUI::MakeBoneCard(this, T->AllyMark, false, FMargin(14.0f, 8.0f));
-		CardSize->AddChild(Card.Root);
-		Btn->SetContent(CardSize);
-		LegionPlateFrames.Add(Card.Frame);
-		LegionPlateSelected.Add(false);
-		LegionPlateDead.Add(false);
-		UVerticalBox* Col = Card.Content;
+		UOverlay* BarOv = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		UImage* BarShadow = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		BarShadow->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 38.0f)));
+		BarShadow->SetColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.84f));
+		BarShadow->SetRenderTranslation(FVector2D(1.5f, 2.0f));
+		BarOv->AddChildToOverlay(BarShadow);
 
-		// 1. 部队名称 (如: 第一旅)
-		UTextBlock* Name = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
-		Name->SetFont(ERUI::FontBold(19, 80));
-		Name->SetJustification(ETextJustify::Center);
-		if (UVerticalBoxSlot* S = Col->AddChildToVerticalBox(Name))
+		UImage* Bar = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		Bar->SetBrush(ERUI::WhiteBrush(FVector2D(3.0f, 38.0f)));
+		Bar->SetColorAndOpacity(T->AllyMark);
+		BarOv->AddChildToOverlay(Bar);
+
+		if (UHorizontalBoxSlot* BarSlot = Row->AddChildToHorizontalBox(BarOv))
 		{
-			S->SetHorizontalAlignment(HAlign_Center);
+			BarSlot->SetVerticalAlignment(VAlign_Center);
+			BarSlot->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
 		}
 
-		// 2. 部队占位 Logo (暗曜石方框 + 技能图标占位) —— 竖排空间紧凑, 图标 44px
+		LegionPlateBars.Add(Bar);
+		LegionPlateSelected.Add(false);
+		LegionPlateDead.Add(false);
+
+		// 部队占位 Logo (轻薄暗影框保证与草地/天空边界锐利)
 		UBorder* LogoBox = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-		LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.012f, 0.013f, 0.018f, 0.94f), 1.0f, FLinearColor(0.02f, 0.02f, 0.03f, 0.5f)));
+		LogoBox->SetBrush(ERUI::RoundedBrush(0.0f, FLinearColor(0.008f, 0.010f, 0.014f, 0.56f), 1.0f, FLinearColor(0.0f, 0.0f, 0.0f, 0.55f)));
 		LogoBox->SetBrushColor(FLinearColor::White);
-		LogoBox->SetPadding(FMargin(3.0f));
+		LogoBox->SetPadding(FMargin(2.0f));
 
 		UImage* LogoImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 		FSlateBrush IconBrush;
-		IconBrush.ImageSize = FVector2D(44.0f, 44.0f);
+		IconBrush.ImageSize = FVector2D(36.0f, 36.0f);
 		IconBrush.DrawAs = ESlateBrushDrawType::Image;
 		LogoImg->SetBrush(IconBrush);
 		LogoBox->SetContent(LogoImg);
-		if (UVerticalBoxSlot* S = Col->AddChildToVerticalBox(LogoBox))
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(LogoBox))
 		{
-			S->SetHorizontalAlignment(HAlign_Center);
-			S->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 5.0f));
+			S->SetVerticalAlignment(VAlign_Center);
+			S->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
 		}
 
-		// 3. 兵员数量
-		UTextBlock* CountText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, ERUI::InkText(), false);
-		CountText->SetFont(ERUI::FontBold(18, 40));
-		CountText->SetJustification(ETextJustify::Center);
-		if (UVerticalBoxSlot* S = Col->AddChildToVerticalBox(CountText))
+		UVerticalBox* TextCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		TextCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(TextCol))
 		{
-			S->SetHorizontalAlignment(HAlign_Center);
+			S->SetVerticalAlignment(VAlign_Center);
 		}
 
-		LegionBar->AddChildToVerticalBox(Btn)->SetPadding(FMargin(0.0f, i > 0 ? 10.0f : 0.0f, 0.0f, 0.0f));
+		// 1. 部队名称 (如: 第一旅)
+		UTextBlock* Name = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Body, FLinearColor(0.99f, 0.99f, 0.98f, 0.96f), false);
+		ERUI::ApplyResonantText(Name, 18, true, 100, FLinearColor(0.99f, 0.99f, 0.98f, 0.96f), FVector2D(2.0f, 2.5f), 0.88f);
+		TextCol->AddChildToVerticalBox(Name);
+
+		// 2. 兵员数量
+		UTextBlock* CountText = ERUI::MakeText(this, FText::GetEmpty(), EERTypeScale::Caption, FLinearColor(0.99f, 0.99f, 0.98f, 0.84f), false);
+		ERUI::ApplyResonantText(CountText, 14, true, 60, FLinearColor(0.99f, 0.99f, 0.98f, 0.84f), FVector2D(1.5f, 2.0f), 0.88f);
+		TextCol->AddChildToVerticalBox(CountText)->SetPadding(FMargin(0.0f, 1.0f, 0.0f, 0.0f));
+
+		LegionBar->AddChildToVerticalBox(Btn)->SetPadding(FMargin(0.0f, i > 0 ? 12.0f : 0.0f, 0.0f, 0.0f));
 		LegionNameTexts.Add(Name);
 		LegionLogoImages.Add(LogoImg);
 		LegionCountTexts.Add(CountText);
@@ -419,11 +465,11 @@ void ULegionHUDWidget::RefreshLegionBar()
 	if (!GM || !LegionBar) { return; }
 
 	const int32 Num = GM->GetPlayerLegions().Num();
-	if (Num != LegionPlateFrames.Num())
+	if (Num != LegionPlateBars.Num())
 	{
 		LegionBar->ClearChildren();
 		LegionPlateButtons.Reset();
-		LegionPlateFrames.Reset();
+		LegionPlateBars.Reset();
 		LegionPlateSelected.Reset();
 		LegionPlateDead.Reset();
 		LegionNameTexts.Reset();
@@ -435,9 +481,9 @@ void ULegionHUDWidget::RefreshLegionBar()
 	if (Num == 0) { return; }
 
 	ALegionPlayerController* PC = Cast<ALegionPlayerController>(World->GetFirstPlayerController());
-	const FLinearColor InkAmber(0.58f, 0.31f, 0.0f, 1.0f);
+	const FLinearColor GoldWarn(0.99f, 0.72f, 0.24f, 0.96f);
 
-	for (int32 i = 0; i < LegionPlateFrames.Num(); ++i)
+	for (int32 i = 0; i < LegionPlateBars.Num(); ++i)
 	{
 		ALegionUnit* L = GM->GetPlayerLegions()[i];
 		if (!L) { continue; }
@@ -460,31 +506,42 @@ void ULegionHUDWidget::RefreshLegionBar()
 					CachedCardLogos[i] = Tex;
 					FSlateBrush Brush;
 					Brush.SetResourceObject(Tex);
-					Brush.ImageSize = FVector2D(44.0f, 44.0f);
+					Brush.ImageSize = FVector2D(36.0f, 36.0f);
 					Brush.DrawAs = ESlateBrushDrawType::Image;
 					LegionLogoImages[i]->SetBrush(Brush);
 				}
 			}
-			LegionLogoImages[i]->SetColorAndOpacity(bDead ? FLinearColor(0.35f, 0.35f, 0.38f, 0.65f) : FLinearColor::White);
+			LegionLogoImages[i]->SetColorAndOpacity(bDead ? FLinearColor(0.45f, 0.45f, 0.48f, 0.45f) : FLinearColor::White);
 		}
 
-		LegionNameTexts[i]->SetColorAndOpacity(FSlateColor(ERUI::InkText(bDead ? 0.38f : 1.0f)));
+		LegionNameTexts[i]->SetColorAndOpacity(FSlateColor(
+			bDead ? FLinearColor(0.92f, 0.92f, 0.90f, 0.38f)
+			      : (bSel ? FLinearColor(1.00f, 0.86f, 0.56f, 1.00f) : FLinearColor(0.99f, 0.99f, 0.98f, 0.96f))));
 		const bool bDamaged = !bDead && L->GetAliveCount() < L->GetSoldierCount();
 		LegionCountTexts[i]->SetColorAndOpacity(FSlateColor(
-			bDead ? ERUI::InkText(0.35f) : (bDamaged ? InkAmber : ERUI::InkText(0.88f))));
+			bDead ? FLinearColor(0.92f, 0.92f, 0.90f, 0.35f) : (bDamaged ? GoldWarn : FLinearColor(0.99f, 0.99f, 0.98f, 0.84f))));
 	}
 }
 
 void ULegionHUDWidget::RefreshPlateHover()
 {
-	for (int32 i = 0; i < LegionPlateFrames.Num(); ++i)
+	const UERUITheme* T = ERUI::Theme();
+	for (int32 i = 0; i < LegionPlateBars.Num(); ++i)
 	{
 		const bool bHover = LegionPlateButtons.IsValidIndex(i) && LegionPlateButtons[i] && LegionPlateButtons[i]->IsHovered();
 		const bool bSel = LegionPlateSelected.IsValidIndex(i) && LegionPlateSelected[i];
 		const bool bDead = LegionPlateDead.IsValidIndex(i) && LegionPlateDead[i];
-		const UERUITheme* T = ERUI::Theme();
-		ERUI::StyleBoneFrame(LegionPlateFrames[i], bHover ? 1.0f : 0.0f, !bDead, bSel,
-			bSel ? T->Accent : T->AllyMark, false);
+		if (LegionPlateBars[i])
+		{
+			const FLinearColor BarCol = bDead
+				? FLinearColor(0.6f, 0.6f, 0.62f, 0.35f)
+				: (bSel ? T->Accent : (bHover ? FLinearColor(0.99f, 0.99f, 0.98f, 1.0f) : T->AllyMark));
+			LegionPlateBars[i]->SetColorAndOpacity(BarCol);
+		}
+		if (LegionPlateButtons.IsValidIndex(i) && LegionPlateButtons[i])
+		{
+			LegionPlateButtons[i]->SetRenderTranslation(FVector2D((bHover || bSel) ? 6.0f : 0.0f, 0.0f));
+		}
 	}
 }
 

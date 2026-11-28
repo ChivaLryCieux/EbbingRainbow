@@ -12,6 +12,7 @@ class UButton;
 class UERTechFrame;
 class UHorizontalBox;
 class UImage;
+class UOverlay;
 class USizeBox;
 class UTextBlock;
 class UWidgetAnimation;
@@ -52,6 +53,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ERUI|Button")
 	void SetMinSize(float InMinWidth, float InMinHeight);
 
+	/** 切换为《控制:共振》式纯白排印 + 黑色错位阴影 HUD 风格 (无白底卡片) */
+	UFUNCTION(BlueprintCallable, Category = "ERUI|Button")
+	void SetResonantHudStyle(bool bInResonant, bool bInLeftAlign = false);
+
 	/** 原生回调 (带载荷的动态列表按钮用 lambda, 免去 OnClicked0..N 样板函数) */
 	void SetNativeClick(TFunction<void()> InCallback) { NativeCallback = MoveTemp(InCallback); }
 
@@ -65,6 +70,13 @@ public:
 	/** 中文粗体字号 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Button")
 	int32 FontSize = 22;
+
+	/** 《控制:共振》式纯白字+错位黑影 HUD 模式 (无白底卡片) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Button")
+	bool bResonantHudStyle = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Button", meta = (EditCondition = "bResonantHudStyle"))
+	bool bResonantLeftAlign = false;
 
 	/** 点睛条是否用三段光谱条 (否则用 AccentColor 单色) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERUI|Button")
@@ -142,6 +154,15 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UHorizontalBox> ContentRow;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UOverlay> ResonantBarContainer;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> ResonantBarShadow;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> ResonantBar;
 
 	/** 机能风切角底板 (白底墨字彩条) */
 	UPROPERTY(meta = (BindWidgetOptional))

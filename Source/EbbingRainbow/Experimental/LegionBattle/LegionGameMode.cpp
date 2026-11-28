@@ -97,6 +97,7 @@ void ALegionGameMode::BeginPlay()
 	bCloseupShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-LegionCloseup"));
 	bAIShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-LegionAIShot"));
 	bResultShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-ResultShot"));
+	bPauseShotRequested = FParse::Param(FCommandLine::Get(), TEXT("-PauseShot"));
 	bForceSkeletalSoldiers = FParse::Param(FCommandLine::Get(), TEXT("-LegionForceSkeletal"));
 	bPerfTestRequested = FParse::Param(FCommandLine::Get(), TEXT("-LegionPerf"));
 }
@@ -398,17 +399,8 @@ void ALegionGameMode::CheckBattleEnd()
 	FinishBattle(bPlayerAlive);
 }
 
-void ALegionGameMode::FinishBattle(bool bVictory)
+void ALegionGameMode::CommitOutcomeToCampaign(bool bVictory)
 {
-	if (bBattleOver) { return; }
-
-	bBattleOver = true;
-	bPlayerWon = bVictory;
-
-	// 结算阶段立即暂停游戏世界, 冻结所有兵团、弹道与角色行为
-	SetTacticalTimeMode(ELegionTimeMode::Paused);
-
-	// 统计存活与伤亡并提交给银河战役子系统
 	TMap<int32, int32> SurvivingById;
 	int32 TotalCasualties = 0;
 	for (ALegionUnit* L : PlayerLegions)
@@ -431,9 +423,41 @@ void ALegionGameMode::FinishBattle(bool bVictory)
 	{
 		if (UGalacticCampaignSubsystem* Campaign = UGalacticCampaignSubsystem::Get(this))
 		{
-			Campaign->CommitBattleOutcome(BattleContractId, bPlayerWon, SurvivingById, TotalCasualties, EnemyEliminated);
+			Campaign->CommitBattleOutcome(BattleContractId, bVictory, SurvivingById, TotalCasualties, EnemyEliminated);
 		}
 	}
+}
+
+void ALegionGameMode::AbortBattleAsDefeat()
+{
+	if (bBattleOver) { return; }
+
+	bBattleOver = true;
+	bPlayerWon = false;
+
+	CommitOutcomeToCampaign(false);
+
+	UE_LOG(LogERLegion, Log, TEXT("[Legion] Battle aborted by player -> committed as DEFEAT, returning to Lvl_Hall."));
+
+	if (UWorld* World = GetWorld())
+	{
+		UGameplayStatics::SetGamePaused(World, false);
+		UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
+		UGameplayStatics::OpenLevel(World, FName(TEXT("/Game/Battle/Maps/Lvl_Hall")));
+	}
+}
+
+void ALegionGameMode::FinishBattle(bool bVictory)
+{
+	if (bBattleOver) { return; }
+
+	bBattleOver = true;
+	bPlayerWon = bVictory;
+
+	// 结算阶段立即暂停游戏世界, 冻结所有兵团、弹道与角色行为
+	SetTacticalTimeMode(ELegionTimeMode::Paused);
+
+	CommitOutcomeToCampaign(bPlayerWon);
 
 	// 立刻切断第一人称与战场操控、唤出鼠标并切换为纯 UI 模式
 	if (UWorld* World = GetWorld())

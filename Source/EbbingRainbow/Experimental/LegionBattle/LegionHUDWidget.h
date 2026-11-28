@@ -38,6 +38,9 @@ public:
 	/** 等高线地图视角开关时显隐底部部队卡片与左上「接入 AI」终端 (地图上已直接显示番号与 Logo) */
 	void SetStrategicMapMode(bool bMapOpen);
 
+	/** 暂停菜单开关时隐藏全部战场常驻 HUD */
+	void SetPauseMenuMode(bool bPaused);
+
 	UERAICommandPanel* GetAICommandPanel() const { return AICommandPanel.Get(); }
 
 	bool IsResultOverlayVisible() const;
@@ -49,6 +52,7 @@ protected:
 
 private:
 	void Build();
+	void UpdateHUDVisibility();
 	void RefreshStatus();
 	void RefreshLegionBar();
 	void RefreshPlateHover();
@@ -86,7 +90,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UERAICommandPanel> AICommandPanel;
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> LegionBar;
 	UPROPERTY(Transient) TArray<TObjectPtr<UButton>> LegionPlateButtons;
-	UPROPERTY(Transient) TArray<TObjectPtr<UERTechFrame>> LegionPlateFrames;
+	UPROPERTY(Transient) TArray<TObjectPtr<UImage>> LegionPlateBars;
 	TArray<bool> LegionPlateSelected;
 	TArray<bool> LegionPlateDead;
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> LegionNameTexts;
@@ -100,6 +104,8 @@ private:
 	int32 CachedEnemyAlive = -1;
 	int32 CachedPendingWaves = -1;
 	bool bResultShown = false;
+	bool bPauseMenuOpen = false;
+	bool bMapOpenCached = false;
 	bool bReturningToHall = false;
 	FDelegateHandle BattleEndHandle;
 };

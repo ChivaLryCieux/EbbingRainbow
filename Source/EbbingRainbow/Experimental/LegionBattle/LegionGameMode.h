@@ -271,8 +271,12 @@ public:
 	 *  敌军不会趁玩家还在加载画面里白嫖机动。自动化截图链路直接为 true。 */
 	bool IsBattleStarted() const { return bBattleStarted; }
 
-	/** 玩家点击「进入战场」后由加载屏调用: 解冻战斗时钟与双方接敌逻辑 */
+	/** 玩家点击「接入虹膜」后由加载屏调用: 解冻战斗时钟与双方接敌逻辑 */
 	void BeginBattle();
+
+	/** 暂停界面点击「中止连接」: 按战败结算回写银河战役后返回大厅 */
+	UFUNCTION(BlueprintCallable, Category = "Legion")
+	void AbortBattleAsDefeat();
 
 #if !UE_BUILD_SHIPPING
 	/** 调试/自检用: 直接触发与真实战终完全一致的结算流程 (暂停 + 断控 + 鼠标 + 结算界面) */
@@ -305,6 +309,7 @@ private:
 	void AssignInitialWeakAIDirectives();
 	void CheckBattleEnd();
 	void FinishBattle(bool bVictory);
+	void CommitOutcomeToCampaign(bool bVictory);
 	void HandleAutoShot();
 
 	FLegionTerrainGrid TerrainGrid;
@@ -369,7 +374,7 @@ private:
 	float AggroScanTimer = 0.0f;
 	bool bBattleOver = false;
 	bool bPlayerWon = false;
-	/** 见 IsBattleStarted: StartPlay 末尾按自动化参数决断, 接驳屏点击「进入战场」后置 true */
+	/** 见 IsBattleStarted: StartPlay 末尾按自动化参数决断, 接驳屏点击「接入虹膜」后置 true */
 	bool bBattleStarted = false;
 
 	bool bAutoShotRequested = false;
@@ -383,6 +388,8 @@ private:
 	bool bAIShotRequested = false;
 	/** -ResultShot: 验证战终结算画面 (暂停/断控/光标/返回大厅按钮); 加 -ResultDefeat 测败北态 */
 	bool bResultShotRequested = false;
+	/** -PauseShot: 验证 Esc 暂停界面 (暂停/断控/光标/三按钮/设置弹窗/恢复) */
+	bool bPauseShotRequested = false;
 	/** -LegionForceSkeletal: 无视 MaxAnimatedSoldiersPerSide 阈值强制骨骼表现, 供性能标尺逐档压测 */
 	bool bForceSkeletalSoldiers = false;
 	/** -LegionPerf: 交战稳定后切俯瞰机位采样帧耗时并写 [LegionPerf] 日志 (骨骼兵性能标尺) */

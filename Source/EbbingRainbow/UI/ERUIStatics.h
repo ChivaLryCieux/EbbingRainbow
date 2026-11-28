@@ -101,4 +101,9 @@ namespace ERUI
 	/** 栏目标题条 (章节抬头): 骨白底 + 墨字 + 左侧点睛条, 只含中文 */
 	UWidget* MakeSectionBar(UUserWidget* Owner, const FText& Title, int32 FontSize = 20,
 		const FLinearColor& Accent = FLinearColor(0.96f, 0.56f, 0.04f, 1.0f), bool bPrism = true);
+
+	/** 《控制:共振》式高对比纯白排印 + 黑色错位立体阴影 (用于直接叠在真实 3D 环境上的 HUD) */
+	void ApplyResonantText(UTextBlock* TB, int32 FontSize, bool bBold = true, int32 Tracking = 120,
+		FLinearColor Color = FLinearColor(0.99f, 0.99f, 0.98f, 1.0f),
+		FVector2D ShadowOffset = FVector2D(-1.0f, -1.0f), float ShadowAlpha = 0.86f);
 }
